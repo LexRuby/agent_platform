@@ -1,0 +1,8 @@
+agentscope>=2.0.4
+fastapi
+uvicorn
+httpx
+pyyaml
+pydantic
+python-dotenv
+pytest
