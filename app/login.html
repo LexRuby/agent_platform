@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录 · 智汇平台</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #181b24;
+    --border: #2a2f3d;
+    --text: #e8eaf0;
+    --muted: #8b91a3;
+    --accent: #4f7cff;
+    --accent-hover: #3d6af0;
+    --error: #ff6b6b;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f6fa; --card: #ffffff; --border: #e2e6ef;
+      --text: #1a1d27; --muted: #6b7183;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 380px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 36px 32px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.25);
+  }
+  .logo { text-align: center; margin-bottom: 8px; font-size: 40px; }
+  h1 { text-align: center; font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  .sub { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 26px; }
+  .tabs { display: flex; gap: 6px; background: var(--bg); border-radius: 9px; padding: 4px; margin-bottom: 22px; }
+  .tabs button {
+    flex: 1; border: none; background: transparent; color: var(--muted);
+    padding: 8px 0; border-radius: 7px; font-size: 14px; cursor: pointer; transition: all .15s;
+  }
+  .tabs button.active { background: var(--accent); color: #fff; font-weight: 500; }
+  .field { margin-bottom: 16px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    font-size: 14px; outline: none; transition: border-color .15s;
+  }
+  input:focus { border-color: var(--accent); }
+  .btn {
+    width: 100%; padding: 11px 0; border: none; border-radius: 8px;
+    background: var(--accent); color: #fff; font-size: 15px; font-weight: 500;
+    cursor: pointer; margin-top: 6px; transition: background .15s;
+  }
+  .btn:hover { background: var(--accent-hover); }
+  .btn:disabled { opacity: .6; cursor: wait; }
+  .msg { min-height: 20px; font-size: 13px; color: var(--error); text-align: center; margin-top: 12px; }
+  .logged-in { text-align: center; }
+  .logged-in .who { font-size: 15px; margin-bottom: 20px; }
+  .logged-in .who b { color: var(--accent); }
+  .link-btn {
+    display: block; width: 100%; text-align: center; margin-top: 14px;
+    color: var(--muted); font-size: 13px; cursor: pointer; border: none; background: none;
+  }
+  .link-btn:hover { color: var(--text); text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">🤖</div>
+  <h1>智汇平台 · Agent 控制台</h1>
+  <p class="sub">AgentScope 2.0 智能体平台</p>
+
+  <div id="auth-box" style="display:none">
+    <div class="field">
+      <label>用户名</label>
+      <input id="username" autocomplete="username" placeholder="由管理员在服务器 users 文件夹中创建">
+    </div>
+    <div class="field">
+      <label>密码</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="账号密码">
+    </div>
+    <button class="btn" id="submit" onclick="submit()">登 录</button>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div id="logged-box" class="logged-in" style="display:none">
+    <p class="who">已登录为 <b id="who"></b></p>
+    <button class="btn" onclick="enter()">进入控制台</button>
+    <button class="link-btn" onclick="logout()">退出登录</button>
+  </div>
+</div>
+
+<script>
+async function submit() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const btn = document.getElementById('submit');
+  const msg = document.getElementById('msg');
+  if (!username || !password) { msg.textContent = '请填写用户名和密码'; return; }
+  btn.disabled = true; msg.textContent = '';
+  try {
+    const res = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || ('请求失败 (' + res.status + ')'));
+    // 登录成功：写入官方 UI 所需的本地配置，跳过其 setup 引导页
+    localStorage.setItem('username', username);
+    localStorage.setItem('server_url', location.origin);
+    location.href = '/';
+  } catch (e) {
+    msg.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function logout() {
+  await fetch('/auth/logout', { method: 'POST' });
+  localStorage.removeItem('username');
+  localStorage.removeItem('server_url');
+  location.reload();
+}
+
+function enter() { location.href = '/'; }
+
+document.getElementById('password').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submit();
+});
+
+(async function init() {
+  try {
+    const res = await fetch('/auth/me');
+    if (res.ok) {
+      const data = await res.json();
+      document.getElementById('who').textContent = data.username;
+      localStorage.setItem('username', data.username);
+      localStorage.setItem('server_url', location.origin);
+      document.getElementById('logged-box').style.display = '';
+      return;
+    }
+  } catch (e) {}
+  document.getElementById('auth-box').style.display = '';
+})();
+</script>
+</body>
+</html>

@@ -295,13 +295,28 @@ cp -r dist /home/zhaohongyu/AgentScope/agentforge/webui
 
 **首次使用**（浏览器打开 `http://<服务器>:8300`）：
 
-1. 首页 setup 填用户名即可（同源部署无需填 API 地址）
-2. 「凭据」页 → 新建 → OpenAI API → 填 ARK key + base_url `https://ark.cn-beijing.volces.com/api/v3` + 名称 doubao
+1. **登录**：会自动跳到 `/login`。账号在服务器 `data/users/` 文件夹维护（见下方"用户管理"），初始账号 `admin / admin123`
+2. 登录后进入官方 UI，「凭据」页 → 新建 → OpenAI API → 填 ARK key + base_url `https://ark.cn-beijing.volces.com/api/v3` + 名称 doubao
 3. 「聊天」页 → 新建 Agent/会话 → 模型选 doubao + `doubao-seed-2-1-turbo-260628` → 对话
 4. 工作区默认已挂中台 MCP（检索/写作 4 工具），模型可自主调用
 5. 「MCP」「Skill」「知识库」「定时任务」等页对应各项管理能力
 
-**E2E 冒烟**：`python scripts/smoke_agent_service.py`（建凭据→Agent→会话→真模型对话→SSE 收流→清理，期望输出 PASS）
+**用户管理**（文件驱动，无注册）：
+
+```bash
+# 增加用户：在 data/users/ 下建 <用户名>.txt，内容为明文密码
+echo 'mypassword' > data/users/zhangsan.txt
+
+# 改密码：直接编辑对应文件（下次登录生效，已登录会话最长再保持 7 天）
+# 删除用户：删文件即可（其历史数据仍在 Redis，按用户名隔离）
+```
+
+- 用户名规则：2-32 位字母/数字/下划线/连字符
+- 会话：Redis 存储，7 天滑动过期；`/login` 页可退出登录
+- 安全：未登录一律 401（API）/ 302 跳登录页；客户端伪造 `X-User-ID` 头无效（身份以服务端会话为准）
+- `data/` 已 gitignore，密码文件不会入库
+
+**E2E 冒烟**：`python scripts/smoke_agent_service.py`（登录→建凭据→Agent→会话→真模型对话→SSE 收流→清理，期望输出 PASS）
 
 ### 步骤 8（可选）：外网访问
 

@@ -4,6 +4,8 @@
 - 消息总线：进程内（单 worker 部署；多进程时换 RedisMessageBus）
 - 工作区默认 MCP：中台能力（scripts/midplatform_mcp.py，:9200）
 - Web UI：官方 examples/web_ui 构建产物挂载在同源 "/"（零配置，访问 :8300 即用）
+- 用户管理：文件驱动（data/users/<用户名>.txt = 明文密码）+ Redis 会话 +
+  ASGI 鉴权中间件（未登录 401/302 /login，伪造 X-User-ID 无效）
 
 启动前置：Redis 运行中 + scripts/midplatform_mcp.py 运行中。
 模型凭据在 UI 的「凭据」页配置（豆包 = OpenAI 兼容：ARK key + base_url + 模型名）。
@@ -25,6 +27,9 @@ from agentscope.app.storage import RedisStorage
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.mcp import HttpMCPConfig, MCPClient
 from agentscope.rag import ApproxTokenChunker, QdrantStore
+from fastapi.responses import HTMLResponse
+
+from app.auth import AuthMiddleware, _LOGIN_HTML, auth_router
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -70,10 +75,22 @@ app = create_app(
     ],
 )
 
+# 用户管理：认证 API + 登录页（在静态挂载之前注册，确保路由优先匹配）
+app.include_router(auth_router)
+
+
+@app.get("/login", include_in_schema=False)
+async def login_page() -> HTMLResponse:
+    return HTMLResponse(_LOGIN_HTML)
+
+
 # 官方 Web UI 构建产物（scripts/build_webui.sh 生成），同源挂载免配置
 _web_dir = BASE_DIR / "webui"
 if (_web_dir / "index.html").exists():
     app.mount("/", StaticFiles(directory=str(_web_dir), html=True), name="webui")
+
+# 最外层：鉴权中间件（cookie 会话 → 身份注入；未登录 401 / 页面 302 /login）
+app = AuthMiddleware(app)
 
 if __name__ == "__main__":
     uvicorn.run("agent_service_app:app", host="0.0.0.0", port=8300, reload=False)

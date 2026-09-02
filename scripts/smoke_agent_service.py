@@ -1,7 +1,9 @@
-"""agent-service（形态 B）E2E 冒烟：建 agent → 建会话（豆包）→ 对话 → 收流式回复。
+"""agent-service（形态 B）E2E 冒烟：登录 → 建凭据/agent/会话（豆包）→ 对话 → 收流式回复。
 
 用法: python scripts/smoke_agent_service.py [base_url]
-默认 base_url = http://localhost:8300，用户 ID = smoke（测试数据，跑完可留可删）
+默认 base_url = http://localhost:8300。
+登录用户由 data/users/ 文件夹维护（AGENTFORGE_SMOKE_USER/PASS 环境变量可覆盖，
+默认 admin/admin123——即 data/users/admin.txt）。
 """
 
 import asyncio
@@ -15,7 +17,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8300"
-USER = "smoke"
+USER = os.environ.get("AGENTFORGE_SMOKE_USER", "admin")
+PASSWORD = os.environ.get("AGENTFORGE_SMOKE_PASS", "admin123")
 ARK_KEY = os.environ.get("ARK_API_KEY", "")
 ARK_MODEL = os.environ.get(
     "AGENTFORGE_MODEL", "doubao-seed-2-1-turbo-260628",
@@ -24,6 +27,14 @@ ARK_MODEL = os.environ.get(
 
 async def main() -> None:
     async with httpx.AsyncClient(timeout=120.0) as c:
+        # 0. 登录（cookie 由 client 自动携带）
+        login = await c.post(
+            f"{BASE}/auth/login",
+            json={"username": USER, "password": PASSWORD},
+        )
+        login.raise_for_status()
+        print(f"[0] 登录: {USER}")
+
         headers = {"X-User-ID": USER, "Content-Type": "application/json"}
 
         # 1. 凭据（豆包 = OpenAI 兼容）
