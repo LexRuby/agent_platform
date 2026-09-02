@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智汇平台 · Agent 控制台</title>
+<style>
+:root {
+  --bg: #f5f7fa; --card: #fff; --primary: #2563eb; --primary-h: #1d4ed8;
+  --text: #1f2937; --muted: #6b7280; --border: #e5e7eb;
+  --green: #059669; --amber: #d97706; --red: #dc2626;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); }
+header { background: #fff; border-bottom: 1px solid var(--border); padding: 14px 28px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 10; }
+header h1 { font-size: 18px; }
+header .sub { color: var(--muted); font-size: 13px; }
+nav { display: flex; gap: 4px; margin-left: auto; }
+nav button { border: none; background: none; padding: 8px 16px; font-size: 14px; cursor: pointer; border-radius: 8px; color: var(--muted); }
+nav button.active { background: var(--primary); color: #fff; }
+main { max-width: 1200px; margin: 24px auto; padding: 0 24px; }
+.panel { display: none; }
+.panel.active { display: block; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+.card h2 { font-size: 15px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+input, textarea, select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: inherit; }
+textarea { min-height: 90px; resize: vertical; }
+.btn { background: var(--primary); color: #fff; border: none; padding: 8px 18px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+.btn:hover { background: var(--primary-h); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.ghost { background: none; color: var(--primary); border: 1px solid var(--primary); }
+.btn.danger { background: var(--red); }
+.btn.green { background: var(--green); }
+.btn.amber { background: var(--amber); }
+.btn.sm { padding: 4px 10px; font-size: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; color: var(--muted); font-weight: 500; padding: 8px; border-bottom: 1px solid var(--border); }
+td { padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+.tag.draft { background: #fef3c7; color: var(--amber); }
+.tag.locked { background: #dbeafe; color: var(--primary); }
+.tag.published { background: #d1fae5; color: var(--green); }
+.tag.builtin { background: #f3f4f6; color: var(--muted); }
+.tag.mcp { background: #ede9fe; color: #7c3aed; }
+.toolcheck { display: flex; align-items: flex-start; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; font-size: 13px; cursor: pointer; }
+.toolcheck:hover { background: #f9fafb; }
+.toolcheck .desc { color: var(--muted); font-size: 12px; }
+.chatbox { height: 420px; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: #fafafa; display: flex; flex-direction: column; gap: 12px; }
+.msg { max-width: 82%; padding: 10px 14px; border-radius: 12px; font-size: 14px; white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
+.msg.user { align-self: flex-end; background: var(--primary); color: #fff; }
+.msg.assistant { align-self: flex-start; background: #fff; border: 1px solid var(--border); }
+.msg .meta { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.msg.user .meta { color: #dbeafe; }
+.chat-input { display: flex; gap: 8px; margin-top: 12px; }
+.hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.empty { color: var(--muted); font-size: 13px; text-align: center; padding: 30px 0; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+#toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1f2937; color: #fff; padding: 10px 22px; border-radius: 10px; font-size: 14px; display: none; z-index: 99; }
+</style>
+</head>
+<body>
+<header>
+  <h1>智汇平台 · Agent 控制台</h1>
+  <span class="sub">AgentForge W2 MVP</span>
+  <nav>
+    <button data-tab="tools" class="active">工具与技能</button>
+    <button data-tab="agents">Agent 编排</button>
+    <button data-tab="workspace">工作空间</button>
+    <button data-tab="publish">发布大厅</button>
+  </nav>
+</header>
+<main>
+
+<!-- ============ 1. 工具与技能 ============ -->
+<section id="panel-tools" class="panel active">
+  <div class="grid">
+    <div class="card">
+      <h2>注册 MCP Server</h2>
+      <p class="hint" style="margin-bottom:8px">基于 MCP 协议注册外部技能/工具服务（Streamable HTTP 端点），注册后自动拉取工具清单。</p>
+      <label>名称</label><input id="mcp-name" placeholder="如 weather">
+      <label>端点 URL</label><input id="mcp-url" placeholder="https://example.com/mcp">
+      <label>Bearer Token（可选）</label><input id="mcp-token" type="password" placeholder="留空则不带认证">
+      <label>描述（可选）</label><input id="mcp-desc" placeholder="该服务提供什么能力">
+      <div style="margin-top:14px"><button class="btn" onclick="registerMcp()">注册并拉取工具</button></div>
+    </div>
+    <div class="card">
+      <h2>内置工具（中台能力）</h2>
+      <div id="builtin-list"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>已注册的 MCP Server</h2>
+    <div id="mcp-list"></div>
+  </div>
+</section>
+
+<!-- ============ 2. Agent 编排 ============ -->
+<section id="panel-agents" class="panel">
+  <div class="grid">
+    <div class="card">
+      <h2 id="agent-form-title">新建 Agent</h2>
+      <label>名称</label><input id="agt-name" placeholder="如 高考志愿顾问">
+      <label>描述</label><input id="agt-desc" placeholder="这个 Agent 做什么">
+      <label>系统提示词（角色与运作方式）</label>
+      <textarea id="agt-prompt" placeholder="定义 Agent 的角色、行为准则、输出格式……"></textarea>
+      <label>适配工具/技能</label>
+      <div id="agt-tools" style="max-height:220px;overflow-y:auto"></div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn" id="agt-save" onclick="saveAgent()">创建</button>
+        <button class="btn ghost" onclick="resetAgentForm()">清空</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Agent 列表</h2>
+      <div id="agt-list"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3. 工作空间 ============ -->
+<section id="panel-workspace" class="panel">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div class="row">
+        <h2 style="margin:0">工作空间</h2>
+        <select id="ws-select" style="width:280px" onchange="loadWorkspace()"></select>
+      </div>
+      <div class="row">
+        <button class="btn amber sm" onclick="editInWorkspace()">编辑配置</button>
+        <button class="btn danger sm" onclick="clearWs()">清空会话</button>
+        <button class="btn green" onclick="lockFromWs()">🔒 锁定定稿</button>
+      </div>
+    </div>
+    <p class="hint">在空间中与 draft Agent 持续对话，逐步完善 team 的运作方式和实现逻辑；定稿后锁定，进入发布流程。</p>
+    <div class="chatbox" id="ws-chat"><div class="empty">选择一个 draft Agent 开始对话</div></div>
+    <div class="chat-input">
+      <input id="ws-input" placeholder="输入消息，与 Agent 打磨运作方式…" onkeydown="if(event.key==='Enter')sendWs()">
+      <button class="btn" id="ws-send" onclick="sendWs()">发送</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 4. 发布大厅 ============ -->
+<section id="panel-publish" class="panel">
+  <div class="card">
+    <h2>已锁定（待发布）</h2>
+    <div id="locked-list"></div>
+  </div>
+  <div class="card">
+    <h2>已发布 · 对外可用</h2>
+    <p class="hint" style="margin-bottom:10px">发布的 Agent 通过 <code>POST /api/published/{id}/chat</code> 对外提供服务。</p>
+    <div id="published-list"></div>
+  </div>
+  <div class="card" id="pub-test-card" style="display:none">
+    <h2 id="pub-test-title">体验对话</h2>
+    <div class="chatbox" id="pub-chat" style="height:320px"><div class="empty">开始对话</div></div>
+    <div class="chat-input">
+      <input id="pub-input" placeholder="以外部用户身份提问…" onkeydown="if(event.key==='Enter')sendPub()">
+      <button class="btn" onclick="sendPub()">发送</button>
+    </div>
+  </div>
+</section>
+
+</main>
+<div id="toast"></div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function toast(msg, ok=true) {
+  const t = $('toast');
+  t.textContent = msg; t.style.background = ok ? '#1f2937' : '#dc2626'; t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 2600);
+}
+async function api(path, opts={}) {
+  const resp = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...opts});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.detail || resp.statusText);
+  return data;
+}
+
+/* ---------- Tab 切换 ---------- */
+document.querySelectorAll('nav button').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  $('panel-' + btn.dataset.tab).classList.add('active');
+  ({tools: loadTools, agents: loadAgents, workspace: loadWsOptions, publish: loadPublish})[btn.dataset.tab]();
+});
+
+/* ---------- 1. 工具与技能 ---------- */
+async function loadTools() {
+  const tools = await api('/api/tools');
+  $('builtin-list').innerHTML = tools.filter(t => t.source === 'builtin').map(t =>
+    `<div class="toolcheck"><div><b>${esc(t.name)}</b> <span class="tag builtin">内置</span><div class="desc">${esc(t.description)}</div></div></div>`
+  ).join('');
+  const servers = await api('/api/mcp/servers');
+  $('mcp-list').innerHTML = servers.length ? '<table><tr><th>Server</th><th>工具</th><th>操作</th></tr>' +
+    servers.map(s => `<tr><td><b>${esc(s.name)}</b><div class="hint">${esc(s.description || s.url)}</div></td>
+      <td>${(s.tools||[]).map(t => `<div><b>${esc(t.name)}</b> <span class="tag mcp">MCP</span><div class="hint">${esc((t.description||'').slice(0,80))}</div></div>`).join('') || '<span class="hint">无（点击刷新拉取）</span>'}</td>
+      <td><div class="actions"><button class="btn ghost sm" onclick="refreshMcp('${esc(s.name)}')">刷新</button>
+      <button class="btn danger sm" onclick="deleteMcp('${esc(s.name)}')">删除</button></div></td></tr>`).join('') + '</table>'
+    : '<div class="empty">暂未注册 MCP Server</div>';
+}
+async function registerMcp() {
+  try {
+    const r = await api('/api/mcp/servers', {method: 'POST', body: JSON.stringify({
+      name: $('mcp-name').value.trim(), url: $('mcp-url').value.trim(),
+      token: $('mcp-token').value.trim(), description: $('mcp-desc').value.trim(),
+    })});
+    toast(`注册成功，拉取到 ${r.tools_count} 个工具`);
+    loadTools(); loadAgentToolbox();
+  } catch (e) { toast(e.message, false); }
+}
+async function refreshMcp(name) {
+  try { const r = await api(`/api/mcp/servers/${name}/refresh`, {method: 'POST'});
+    toast(`已刷新，共 ${r.tools_count} 个工具`); loadTools(); loadAgentToolbox();
+  } catch (e) { toast(e.message, false); } }
+async function deleteMcp(name) {
+  try { await api(`/api/mcp/servers/${name}`, {method: 'DELETE'}); toast('已删除'); loadTools(); loadAgentToolbox();
+  } catch (e) { toast(e.message, false); } }
+
+/* ---------- 2. Agent 编排 ---------- */
+let editingId = null;
+async function loadAgentToolbox() {
+  const tools = await api('/api/tools');
+  const selected = new Set(($('agt-prompt').dataset.tools || '').split(',').filter(Boolean));
+  $('agt-tools').innerHTML = tools.map(t => `
+    <label class="toolcheck"><input type="checkbox" value="${esc(t.ref)}" ${selected.has(t.ref)?'checked':''}>
+    <div><b>${esc(t.name)}</b> <span class="tag ${t.source==='builtin'?'builtin':'mcp'}">${esc(t.source)}</span>
+    <div class="desc">${esc(t.description.slice(0,100))}</div></div></label>`).join('');
+}
+async function loadAgents() {
+  loadAgentToolbox();
+  const agents = await api('/api/agents');
+  $('agt-list').innerHTML = agents.length ? '<table><tr><th>Agent</th><th>状态</th><th>工具</th><th>操作</th></tr>' +
+    agents.map(a => `<tr><td><b>${esc(a.name)}</b><div class="hint">${esc(a.description)}</div></td>
+      <td><span class="tag ${a.status}">${a.status}</span></td>
+      <td class="hint">${a.tools.length} 个</td>
+      <td><div class="actions">
+        ${a.status==='draft'?`<button class="btn ghost sm" onclick="editAgent('${a.id}')">编辑</button>
+        <button class="btn amber sm" onclick="lockAgent('${a.id}')">锁定</button>`:''}
+        ${a.status==='locked'?`<button class="btn green sm" onclick="publishAgent('${a.id}')">发布</button>
+        <button class="btn ghost sm" onclick="unlockAgent('${a.id}')">解锁</button>`:''}
+      </div></td></tr>`).join('') + '</table>'
+    : '<div class="empty">暂无 Agent，先在左侧创建</div>';
+}
+function resetAgentForm() {
+  editingId = null;
+  ['agt-name','agt-desc','agt-prompt'].forEach(i => $(i).value = '');
+  $('agt-prompt').dataset.tools = '';
+  $('agent-form-title').textContent = '新建 Agent';
+  $('agt-save').textContent = '创建';
+  loadAgentToolbox();
+}
+function editAgent(id) {
+  api(`/api/agents/${id}`).then(a => {
+    editingId = a.id;
+    $('agt-name').value = a.name; $('agt-desc').value = a.description; $('agt-prompt').value = a.system_prompt;
+    $('agt-prompt').dataset.tools = a.tools.join(',');
+    $('agent-form-title').textContent = `编辑：${a.name}`;
+    $('agt-save').textContent = '保存';
+    loadAgentToolbox();
+    document.querySelector('nav button[data-tab=agents]').click();
+  });
+}
+function editInWorkspace() { if (wsAgentId) editAgent(wsAgentId); }
+async function saveAgent() {
+  const tools = [...$('agt-tools').querySelectorAll('input:checked')].map(i => i.value);
+  const body = {name: $('agt-name').value.trim(), description: $('agt-desc').value.trim(),
+    system_prompt: $('agt-prompt').value, tools};
+  if (!body.name || !body.system_prompt) return toast('名称和系统提示词必填', false);
+  try {
+    if (editingId) { await api(`/api/agents/${editingId}`, {method: 'PUT', body: JSON.stringify(body)}); toast('已保存'); }
+    else { await api('/api/agents', {method: 'POST', body: JSON.stringify(body)}); toast('已创建'); }
+    resetAgentForm(); loadAgents();
+  } catch (e) { toast(e.message, false); }
+}
+async function lockAgent(id) { try { await api(`/api/agents/${id}/lock`, {method: 'POST'}); toast('已锁定定稿'); loadAgents(); }
+  catch (e) { toast(e.message, false); } }
+async function unlockAgent(id) { try { await api(`/api/agents/${id}/unlock`, {method: 'POST'}); toast('已解锁'); loadAgents(); loadPublish(); }
+  catch (e) { toast(e.message, false); } }
+async function publishAgent(id) { try { await api(`/api/agents/${id}/publish`, {method: 'POST'}); toast('已发布'); loadAgents(); loadPublish(); }
+  catch (e) { toast(e.message, false); } }
+
+/* ---------- 3. 工作空间 ---------- */
+let wsAgentId = null;
+async function loadWsOptions() {
+  const agents = await api('/api/agents?status=draft');
+  const sel = $('ws-select');
+  sel.innerHTML = '<option value="">— 选择 draft Agent —</option>' +
+    agents.map(a => `<option value="${a.id}" ${a.id===wsAgentId?'selected':''}>${esc(a.name)}（${a.tools.length} 工具）</option>`).join('');
+  if (wsAgentId && !agents.find(a => a.id === wsAgentId)) wsAgentId = null;
+  loadWorkspace();
+}
+async function loadWorkspace() {
+  wsAgentId = $('ws-select').value;
+  if (!wsAgentId) { $('ws-chat').innerHTML = '<div class="empty">选择一个 draft Agent 开始对话</div>'; return; }
+  const ws = await api(`/api/agents/${wsAgentId}/workspace`);
+  renderChat($('ws-chat'), ws.messages, '暂无对话，开始打磨你的 Agent 吧');
+}
+async function sendWs() {
+  const msg = $('ws-input').value.trim();
+  if (!msg || !wsAgentId) return;
+  $('ws-input').value = ''; $('ws-send').disabled = true;
+  appendMsg($('ws-chat'), 'user', msg);
+  try {
+    const r = await api(`/api/agents/${wsAgentId}/chat`, {method: 'POST', body: JSON.stringify({message: msg})});
+    appendMsg($('ws-chat'), 'assistant', r.reply);
+  } catch (e) { appendMsg($('ws-chat'), 'assistant', '⚠ ' + e.message); }
+  $('ws-send').disabled = false;
+}
+async function clearWs() {
+  if (!wsAgentId) return;
+  try { await api(`/api/agents/${wsAgentId}/workspace`, {method: 'DELETE'}); toast('会话已清空'); loadWorkspace(); }
+  catch (e) { toast(e.message, false); } }
+async function lockFromWs() {
+  if (!wsAgentId) return toast('先选择 Agent', false);
+  await lockAgent(wsAgentId); wsAgentId = null; loadWsOptions();
+}
+
+/* ---------- 4. 发布大厅 ---------- */
+let pubAgentId = null;
+async function loadPublish() {
+  const [locked, published] = await Promise.all([api('/api/agents?status=locked'), api('/api/published')]);
+  $('locked-list').innerHTML = locked.length ? '<table><tr><th>Agent</th><th>操作</th></tr>' +
+    locked.map(a => `<tr><td><b>${esc(a.name)}</b><div class="hint">${esc(a.description)}</div></td>
+    <td><div class="actions"><button class="btn green sm" onclick="publishAgent('${a.id}')">发布</button>
+    <button class="btn ghost sm" onclick="unlockAgent('${a.id}')">退回打磨</button></div></td></tr>`).join('') + '</table>'
+    : '<div class="empty">暂无已锁定的 Agent</div>';
+  $('published-list').innerHTML = published.length ? '<table><tr><th>Agent</th><th>操作</th></tr>' +
+    published.map(a => `<tr><td><b>${esc(a.name)}</b><div class="hint">${esc(a.description)}</div></td>
+    <td><button class="btn ghost sm" onclick="testPub('${a.id}','${esc(a.name)}')">体验对话</button></td></tr>`).join('') + '</table>'
+    : '<div class="empty">暂无已发布的 Agent</div>';
+}
+function testPub(id, name) {
+  pubAgentId = id;
+  $('pub-test-card').style.display = '';
+  $('pub-test-title').textContent = `体验对话：${name}`;
+  $('pub-chat').innerHTML = '<div class="empty">以外部用户身份开始对话</div>';
+  $('pub-test-card').scrollIntoView({behavior: 'smooth'});
+}
+async function sendPub() {
+  const msg = $('pub-input').value.trim();
+  if (!msg || !pubAgentId) return;
+  $('pub-input').value = '';
+  appendMsg($('pub-chat'), 'user', msg);
+  try {
+    const r = await api(`/api/published/${pubAgentId}/chat`, {method: 'POST', body: JSON.stringify({message: msg})});
+    appendMsg($('pub-chat'), 'assistant', r.reply);
+  } catch (e) { appendMsg($('pub-chat'), 'assistant', '⚠ ' + e.message); }
+}
+
+/* ---------- 聊天渲染 ---------- */
+function renderChat(box, messages, emptyText) {
+  if (!messages.length) { box.innerHTML = `<div class="empty">${emptyText}</div>`; return; }
+  box.innerHTML = '';
+  messages.forEach(m => appendMsg(box, m.role, m.content, m.at));
+}
+function appendMsg(box, role, content, at) {
+  const empty = box.querySelector('.empty'); if (empty) empty.remove();
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.innerHTML = `<div class="meta">${role === 'user' ? '我' : 'Agent'}${at ? ' · ' + at : ''}</div>${esc(content)}`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+loadTools();
+</script>
+</body>
+</html>

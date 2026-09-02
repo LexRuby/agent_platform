@@ -1,9 +1,13 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.agent_runner import make_agent_runner
+from app import console
+from app.registry import Registry
 from app.settings import load_settings
 from app.tools.base import close_http, init_http
 from app.workflow import loader
@@ -13,6 +17,8 @@ from app.workflow.store import TaskStore
 settings = load_settings()
 store = TaskStore(settings.store_path)
 engine = WorkflowEngine(settings.templates_dir, make_agent_runner(settings))
+registry = Registry(Path(settings.store_path).parent / "registry.json")
+console._init(settings, registry)
 
 
 @asynccontextmanager
@@ -113,3 +119,10 @@ async def reassign_step(task_id: str, req: ReassignRequest):
     except WorkflowError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     return task.model_dump(mode="json")
+
+
+# 零代码控制台 API + 前端单页
+app.include_router(console.router)
+_static_dir = Path(__file__).resolve().parent.parent / "static"
+if _static_dir.exists():
+    app.mount("/", StaticFiles(directory=str(_static_dir), html=True), name="ui")
