@@ -42,6 +42,8 @@ AgentScope Agent     自动环节：ReAct + 内网中台工具；人工环节：
 - 真实 LLM E2E 全流程通过（豆包 turbo）：模型自主调工具、吸收人工约束生成报告 ✅
 
 - AgentScope Studio tracing 接入验证 ✅（可选组件）
+- W2：控制台（MCP 注册/Agent 编排/工作空间/发布，形态A 自带单页 :8200）✅
+- W2：**官方 Web UI 形态 B 上线**（agent-service :8300，MCP/Skill Hub、Agent Team、多会话、人工干预、知识库、定时任务）✅ E2E PASS
 
 ***
 
@@ -49,8 +51,8 @@ AgentScope Agent     自动环节：ReAct + 内网中台工具；人工环节：
 
 ```
 agentforge/
-├── agent_service_app.py   生产部署形态B：AgentScope 官方 agent-service（多租户，需 Redis）
-├── app/main.py            部署形态A（当前）：工单 FastAPI 服务 ★ 部署目标
+├── agent_service_app.py   部署形态B：AgentScope 官方 agent-service + Web UI（:8300，需 Redis）★ 推荐
+├── app/main.py            部署形态A：工单 FastAPI 服务（:8200）
 ├── app/agent_factory.py   构建 Agent（provider 分支 doubao|dashscope + TracingMiddleware）
 ├── app/agent_runner.py    自动环节执行器（上下文注入 + fake-llm 开关）
 ├── app/settings.py        配置（读 .env）
@@ -61,9 +63,11 @@ agentforge/
 │   └── writing.py         writing_generate / writing_polish
 ├── app/workflow/          models / loader(YAML) / store(JSON) / engine
 ├── scripts/
-│   ├── mock_midplatform.py 假中台（:9000，开发演示用，真实中台就绪后弃）
-│   ├── smoke_llm.py        LLM 直连冒烟（验证 provider/key/模型名）
-│   └── smoke_tools.py      工具层直连冒烟（验证 httpx→中台链路）
+│   ├── mock_midplatform.py    假中台（:9100，开发演示用，真实中台就绪后弃）
+│   ├── midplatform_mcp.py     中台 MCP Server（:9200，四大能力暴露为标准 MCP）
+│   ├── smoke_llm.py           LLM 直连冒烟（验证 provider/key/模型名）
+│   ├── smoke_tools.py         工具层直连冒烟（验证 httpx→中台链路）
+│   └── smoke_agent_service.py 形态B E2E 冒烟（凭据→Agent→会话→真模型→SSE）
 ├── templates/gaokao_volunteer.yaml   流程模板
 ├── tests/test_workflow.py  引擎测试（stub，不需要 LLM）
 ├── .env                   真实配置（含 key，已 gitignore，勿泄露/勿提交）
@@ -236,7 +240,70 @@ as_studio    # :3000，数据落 $HOME/.AgentScope-Studio（Linux 无 macOS 沙�
 `.env` 中 `AGENTFORGE_STUDIO_URL=http://localhost:3000`，重启 agentforge 后每个自动环节自动上报 trace。
 **省资源替代方案**：服务器不装 Studio，`.env` 该项留空（零开销），需要排查时在开发机本地起 Studio。
 
-### 步骤 7（可选）：外网访问
+### 步骤 7：官方 Web UI（agent-service，形态 B）★ 推荐的主入口
+
+> AgentScope Studio（独立 npm 包）**已停止维护并归档**；AgentScope 2.0 官方 Web UI 内置于 agent-service，覆盖 MCP/Skill Hub 管理、Agent Team 编排、多会话聊天、人工干预、知识库、定时任务。
+
+```bash
+# 7.1 Redis（agent-service 的存储后端）
+docker run -d --name agentforge-redis --restart unless-stopped -p 6379:6379 redis:7
+
+# 7.2 中台 MCP Server（把四大能力暴露为标准 MCP，:9200）
+systemctl enable --now agentforge-mcp     # 见下方 unit 文件
+
+# 7.3 agent-service + Web UI（:8300）
+systemctl enable --now agentforge-svc
+```
+
+systemd unit（`/etc/systemd/system/agentforge-mcp.service`、`agentforge-svc.service`）：
+
+```ini
+# agentforge-mcp.service
+[Unit]
+Description=AgentForge midplatform MCP server (:9200)
+After=network.target agentforge-mock.service
+[Service]
+WorkingDirectory=/home/zhaohongyu/AgentScope/agentforge
+EnvironmentFile=/home/zhaohongyu/AgentScope/agentforge/.env
+ExecStart=/root/miniconda3/envs/agentforge/bin/python -m scripts.midplatform_mcp
+Restart=always
+[Install]
+WantedBy=multi-user.target
+
+# agentforge-svc.service
+[Unit]
+Description=AgentForge agent-service (Web UI :8300)
+After=network.target
+Wants=agentforge-mcp.service
+[Service]
+WorkingDirectory=/home/zhaohongyu/AgentScope/agentforge
+EnvironmentFile=/home/zhaohongyu/AgentScope/agentforge/.env
+ExecStart=/root/miniconda3/envs/agentforge/bin/python agent_service_app.py
+Restart=always
+[Install]
+WantedBy=multi-user.target
+```
+
+Web UI 构建产物在 `webui/`（gitignore，不入库）。**重建方法**：
+
+```bash
+git clone --depth 1 https://github.com/agentscope-ai/agentscope.git /tmp/agentscope-src
+cd /tmp/agentscope-src/examples/web_ui/frontend
+npm install && npm run build
+cp -r dist /home/zhaohongyu/AgentScope/agentforge/webui
+```
+
+**首次使用**（浏览器打开 `http://<服务器>:8300`）：
+
+1. 首页 setup 填用户名即可（同源部署无需填 API 地址）
+2. 「凭据」页 → 新建 → OpenAI API → 填 ARK key + base_url `https://ark.cn-beijing.volces.com/api/v3` + 名称 doubao
+3. 「聊天」页 → 新建 Agent/会话 → 模型选 doubao + `doubao-seed-2-1-turbo-260628` → 对话
+4. 工作区默认已挂中台 MCP（检索/写作 4 工具），模型可自主调用
+5. 「MCP」「Skill」「知识库」「定时任务」等页对应各项管理能力
+
+**E2E 冒烟**：`python scripts/smoke_agent_service.py`（建凭据→Agent→会话→真模型对话→SSE 收流→清理，期望输出 PASS）
+
+### 步骤 8（可选）：外网访问
 
 华为云控制台 → 安全组 → 放行 8100（如需公网访问）。**建议仅内网/VPN 访问**；该服务无鉴权，公网裸奔有风险，上公网前需加网关鉴权。
 
