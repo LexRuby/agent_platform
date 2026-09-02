@@ -54,7 +54,9 @@ def _check_password(username: str, password: str) -> bool:
         stored = pw_file.read_text(encoding="utf-8").strip()
     except OSError:
         return False
-    return bool(stored) and secrets.compare_digest(password, stored)
+    return bool(stored) and secrets.compare_digest(
+        password.encode(), stored.encode(),
+    )
 
 
 async def _new_session(username: str) -> str:

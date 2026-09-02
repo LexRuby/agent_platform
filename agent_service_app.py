@@ -31,6 +31,7 @@ from fastapi.responses import HTMLResponse
 
 from app.auth import AuthMiddleware, _LOGIN_HTML, auth_router
 from app.ark_credential import ArkCredential
+from app.startup_hook import StartupHook
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -81,34 +82,15 @@ app = create_app(
 app.include_router(auth_router)
 
 
-class _StartupHook:
-    """ASGI 包装：lifespan startup 完成后启动 ARK 模型心跳。
+def _start_ark_heartbeat() -> None:
+    """lifespan startup 完成后启动 ARK 模型心跳（见 app/startup_hook.py）。"""
+    from app.ark_credential import start_heartbeat
 
-    （create_app 传了自定义 lifespan，FastAPI 的 on_event("startup") 会被忽略，
-    故从 ASGI 层拦截 lifespan.startup.complete 事件。）
-    """
+    start_heartbeat()
 
-    def __init__(self, inner) -> None:
-        self.inner = inner
-        self._started = False
 
-    async def __call__(self, scope, receive, send) -> None:
-        if scope["type"] != "lifespan":
-            await self.inner(scope, receive, send)
-            return
-
-        from app.ark_credential import start_heartbeat
-
-        async def send_wrapper(message) -> None:
-            if (
-                message["type"] == "lifespan.startup.complete"
-                and not self._started
-            ):
-                self._started = True
-                start_heartbeat()
-            await send(message)
-
-        await self.inner(scope, receive, send_wrapper)
+def _StartupHook(inner):
+    return StartupHook(inner, _start_ark_heartbeat)
 
 
 @app.get("/login", include_in_schema=False)
