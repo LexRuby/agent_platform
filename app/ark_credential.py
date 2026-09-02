@@ -13,6 +13,7 @@
 from pathlib import Path
 from typing import Literal, Type, TYPE_CHECKING
 
+import httpx
 from pydantic import ConfigDict, Field, SecretStr
 
 from agentscope.credential import CredentialBase
@@ -20,6 +21,10 @@ from agentscope.credential import CredentialBase
 if TYPE_CHECKING:
     from agentscope.embedding import EmbeddingModelBase
     from agentscope.model import ChatModelBase
+
+import logging
+
+_logger = logging.getLogger("agentforge.ark")
 
 _ARK_MODELS_DIR = Path(__file__).parent / "ark_models"
 
@@ -47,13 +52,17 @@ _EMBEDDING_MODELS = {
 }
 
 
-def _write_model_cards() -> None:
-    """把模型卡目录生成为 YAML（幂等，服务启动时执行一次）。"""
+def _write_chat_cards(names: list[str]) -> None:
+    """把对话模型卡目录整体重写为给定模型列表（清除已下架的旧卡）。"""
     import yaml
 
     chat_dir = _ARK_MODELS_DIR / "chat"
     chat_dir.mkdir(parents=True, exist_ok=True)
-    for name, (label, ctx, out) in _CHAT_MODELS.items():
+    for old in chat_dir.glob("*.yaml"):
+        old.unlink()
+    for name in names:
+        # 已知模型用人工核对过的规格，未知新模型用保守默认值
+        label, ctx, out = _CHAT_MODELS.get(name, (name, 131_072, 16_384))
         card = {
             "name": name,
             "label": label,
@@ -73,6 +82,13 @@ def _write_model_cards() -> None:
             encoding="utf-8",
         )
 
+
+def _write_model_cards() -> None:
+    """初始化模型卡目录（静态兜底；心跳同步成功后被真实列表覆盖）。"""
+    import yaml
+
+    _write_chat_cards(list(_CHAT_MODELS))
+
     emb_dir = _ARK_MODELS_DIR / "embedding"
     emb_dir.mkdir(parents=True, exist_ok=True)
     for name, (label, ctx, dim) in _EMBEDDING_MODELS.items():
@@ -89,6 +105,70 @@ def _write_model_cards() -> None:
             yaml.safe_dump(card, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
+
+
+# ---------------- 模型列表心跳同步 ----------------
+
+ARK_MODELS_URL = "https://ark.cn-beijing.volces.com/api/v3/models"
+SYNC_INTERVAL_SECONDS = 24 * 3600
+
+# 对话模型家族前缀（ARK 同时提供图像/视频/3D/向量等模型，需过滤）
+_CHAT_FAMILIES = ("doubao-", "deepseek", "kimi", "glm", "qwen", "mistral")
+# 对话家族里仍非对话的关键词（向量/视频/图像/语音/旧浏览版/预训练等）
+_CHAT_EXCLUDE = (
+    "embedding", "seedance", "seedream", "seededit", "seed3d", "seaweed",
+    "wan2", "-i2v", "-t2v", "-i2i", "-flf2v", "tts", "audio", "browsing",
+    "ui-tars", "pretrain", "smart-router",
+)
+
+
+def _is_chat_model(model_id: str) -> bool:
+    return model_id.startswith(_CHAT_FAMILIES) and not any(
+        k in model_id for k in _CHAT_EXCLUDE
+    )
+
+
+async def sync_ark_models(api_key: str | None = None) -> int:
+    """从 ARK 拉取真实可用模型列表并刷新模型卡。
+
+    Returns:
+        同步到的对话模型数量；0 表示未同步（无 key 或拉取失败，保留现有卡片）。
+    """
+    import os
+
+    key = api_key or os.environ.get("ARK_API_KEY", "")
+    if not key:
+        return 0
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as c:
+            resp = await c.get(
+                ARK_MODELS_URL, headers={"Authorization": f"Bearer {key}"},
+            )
+            resp.raise_for_status()
+            ids = [m["id"] for m in resp.json().get("data", [])]
+    except Exception as e:  # noqa: BLE001 - 心跳失败不应影响服务
+        _logger.warning("ARK 模型同步失败（保留现有模型卡）: %s", e)
+        return 0
+    names = [i for i in ids if _is_chat_model(i)]
+    _write_chat_cards(names)
+    _logger.info("ARK 模型同步完成：%d 个对话模型", len(names))
+    return len(names)
+
+
+async def _heartbeat_loop() -> None:
+    """启动即同步一次，此后每 24 小时刷新。"""
+    import asyncio
+
+    while True:
+        await sync_ark_models()
+        await asyncio.sleep(SYNC_INTERVAL_SECONDS)
+
+
+def start_heartbeat() -> None:
+    """在事件循环内启动心跳任务（服务 startup 时调用一次）。"""
+    import asyncio
+
+    asyncio.create_task(_heartbeat_loop())
 
 
 _write_model_cards()

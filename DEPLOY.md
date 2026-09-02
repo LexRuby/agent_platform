@@ -301,7 +301,9 @@ cp -r dist /home/zhaohongyu/AgentScope/agentforge/webui
 4. 工作区默认已挂中台 MCP（检索/写作 4 工具），模型可自主调用
 5. 「MCP」「Skill」「知识库」「定时任务」等页对应各项管理能力
 
-> 注：不要用「OpenAI API」类型接 ARK——其模型下拉是 OpenAI 静态目录（GPT 系列），选了无法调用。「豆包 ARK」类型协议相同，但模型目录是 ARK 真实模型。ARK 账号实际可用模型可随时查：`curl -s https://ark.cn-beijing.volces.com/api/v3/models -H "Authorization: Bearer $ARK_API_KEY"`，需要补充模型卡时编辑 `app/ark_credential.py` 里的 `_CHAT_MODELS` 后重启服务。
+> 注：不要用「OpenAI API」类型接 ARK——其模型下拉是 OpenAI 静态目录（GPT 系列），选了无法调用。「豆包 ARK」类型协议相同，但模型目录是 ARK 真实模型。
+>
+> **模型列表心跳同步**：服务启动时及此后每 24 小时，自动用 `.env` 里的 `ARK_API_KEY` 调 `GET /api/v3/models` 拉取账号真实可用模型并刷新模型卡（自动过滤图像/视频/向量/语音等非对话模型，只保留对话家族 doubao/deepseek/kimi/glm/qwen/mistral）。同步失败则保留现有卡片，不影响服务。已知模型的上下文/输出规格写在 `app/ark_credential.py` 的 `_CHAT_MODELS`（新模型自动用保守默认值 128k/16k）。
 
 **用户管理**（文件驱动，无注册）：
 

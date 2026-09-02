@@ -81,6 +81,36 @@ app = create_app(
 app.include_router(auth_router)
 
 
+class _StartupHook:
+    """ASGI 包装：lifespan startup 完成后启动 ARK 模型心跳。
+
+    （create_app 传了自定义 lifespan，FastAPI 的 on_event("startup") 会被忽略，
+    故从 ASGI 层拦截 lifespan.startup.complete 事件。）
+    """
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self._started = False
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "lifespan":
+            await self.inner(scope, receive, send)
+            return
+
+        from app.ark_credential import start_heartbeat
+
+        async def send_wrapper(message) -> None:
+            if (
+                message["type"] == "lifespan.startup.complete"
+                and not self._started
+            ):
+                self._started = True
+                start_heartbeat()
+            await send(message)
+
+        await self.inner(scope, receive, send_wrapper)
+
+
 @app.get("/login", include_in_schema=False)
 async def login_page() -> HTMLResponse:
     return HTMLResponse(_LOGIN_HTML)
@@ -92,7 +122,8 @@ if (_web_dir / "index.html").exists():
     app.mount("/", StaticFiles(directory=str(_web_dir), html=True), name="webui")
 
 # 最外层：鉴权中间件（cookie 会话 → 身份注入；未登录 401 / 页面 302 /login）
-app = AuthMiddleware(app)
+#         + startup 钩子（lifespan 完成后启动 ARK 模型心跳）
+app = _StartupHook(AuthMiddleware(app))
 
 if __name__ == "__main__":
     uvicorn.run("agent_service_app:app", host="0.0.0.0", port=8300, reload=False)
