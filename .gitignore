@@ -7,3 +7,4 @@ data/
 .studio-data/
 .DS_Store
 webui/
+app/ark_models/
