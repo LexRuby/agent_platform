@@ -30,6 +30,7 @@ from agentscope.rag import ApproxTokenChunker, QdrantStore
 from fastapi.responses import HTMLResponse
 
 from app.auth import AuthMiddleware, _LOGIN_HTML, auth_router
+from app.ark_credential import ArkCredential
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -45,7 +46,7 @@ default_mcps = [
         name="midplatform",
         mcp_config=HttpMCPConfig(
             url=os.environ.get(
-                "MIDPLATFORM_MCP_URL", "http://127.0.0.1:9200/mcp/",
+                "MIDPLATFORM_MCP_URL", "http://127.0.0.1:9200/mcp",
             ),
         ),
         is_stateful=False,
@@ -73,6 +74,7 @@ app = create_app(
             allow_headers=["*"],
         ),
     ],
+    extra_credentials=[ArkCredential],
 )
 
 # 用户管理：认证 API + 登录页（在静态挂载之前注册，确保路由优先匹配）

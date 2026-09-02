@@ -37,16 +37,15 @@ async def main() -> None:
 
         headers = {"X-User-ID": USER, "Content-Type": "application/json"}
 
-        # 1. 凭据（豆包 = OpenAI 兼容）
+        # 1. 凭据（自定义 ark_credential 类型：模型下拉显示 ARK 真实模型）
         cred = await c.post(
             f"{BASE}/credential/",
             headers=headers,
             json={
                 "data": {
-                    "type": "openai_credential",
+                    "type": "ark_credential",
                     "name": "smoke-doubao",
                     "api_key": ARK_KEY,
-                    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
                 },
             },
         )
@@ -76,7 +75,7 @@ async def main() -> None:
                 "agent_id": agent_id,
                 "name": "smoke-session",
                 "chat_model_config": {
-                    "type": "openai_credential",
+                    "type": "ark_credential",
                     "credential_id": cred_id,
                     "model": ARK_MODEL,
                     "parameters": {"temperature": 0.3},

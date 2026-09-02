@@ -296,10 +296,12 @@ cp -r dist /home/zhaohongyu/AgentScope/agentforge/webui
 **首次使用**（浏览器打开 `http://<服务器>:8300`）：
 
 1. **登录**：会自动跳到 `/login`。账号在服务器 `data/users/` 文件夹维护（见下方"用户管理"），初始账号 `admin / admin123`
-2. 登录后进入官方 UI，「凭据」页 → 新建 → OpenAI API → 填 ARK key + base_url `https://ark.cn-beijing.volces.com/api/v3` + 名称 doubao
-3. 「聊天」页 → 新建 Agent/会话 → 模型选 doubao + `doubao-seed-2-1-turbo-260628` → 对话
+2. 登录后进入官方 UI，「凭据」页 → 新建 → **豆包 ARK**（自定义凭据类型 `app/ark_credential.py`）→ 填 ARK key 即可（base_url 已内置）
+3. 「聊天」页 → 新建 Agent/会话 → 模型下拉会显示 ARK 真实模型（doubao-seed / deepseek / kimi / glm 等）→ 选 `doubao-seed-2-1-turbo-260628` 开聊
 4. 工作区默认已挂中台 MCP（检索/写作 4 工具），模型可自主调用
 5. 「MCP」「Skill」「知识库」「定时任务」等页对应各项管理能力
+
+> 注：不要用「OpenAI API」类型接 ARK——其模型下拉是 OpenAI 静态目录（GPT 系列），选了无法调用。「豆包 ARK」类型协议相同，但模型目录是 ARK 真实模型。ARK 账号实际可用模型可随时查：`curl -s https://ark.cn-beijing.volces.com/api/v3/models -H "Authorization: Bearer $ARK_API_KEY"`，需要补充模型卡时编辑 `app/ark_credential.py` 里的 `_CHAT_MODELS` 后重启服务。
 
 **用户管理**（文件驱动，无注册）：
 
