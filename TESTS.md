@@ -272,6 +272,48 @@ workspace 对 **stateless** MCPClient 有缓存 bug——第一轮对话正常�
 组合验证稳定。另：HITL confirm 事件重放 POST /chat/ 会触发新 run
 setup 失败（疑似官方 bug，UI 内确认未复现，观察中）。
 
+### 22. `test_sync_scientific_skills.py`（7 例）——科学技能包同步
+
+> 背景（2026-09-04 用户需求）：把 K-Dense-AI/scientific-agent-skills
+> 的全部技能包补充到服务端技能中心。
+> 实现：`scripts/sync_scientific_skills.py` 解析每个技能包 SKILL.md 的
+> YAML frontmatter（name/description/metadata.version），生成
+> skill.json 卡片后整目录同步进 `skill_registry/`（幂等，源侧删除
+> 的文件不残留）；163 个科学技能包全部上架（`/hub/skill/local/cards`）。
+
+- **frontmatter 解析**：顶层标量提取、引号剥壳、metadata.version 识别、
+  无 frontmatter 返回空
+- **同步产出**：卡片字段（name/description/tags/version/author）、
+  SKILL.md 与 references 随目录复制、缺 SKILL.md 或缺 description 的
+  坏包跳过
+- **幂等与清理**：二轮同步不重复；源里删除的文件在 registry 侧消失
+- **与 LocalSkillHub 衔接**：同步产物经 `list_skills` 真实扫描可见
+- **真实链路**（:30000）：卡片搜索 q=rdkit 命中；hub install 201；
+  `/workspace/skill/from-library` 装配 201
+
+### 23. `test_auth_api.py` 新增深链接跳转用例（2026-09-04 E2E 发现）
+
+> 登出后浏览器直接访问/刷新 /chat、/mcp 等深链接收到裸 401 JSON
+> （旧逻辑只对 `/` 做 307）。修复：未登录 GET + Accept 含 text/html
+> 一律 307 → /login；API 客户端仍 401 JSON。
+
+- `test_deep_link_pages_redirect_for_browsers`：/chat /mcp /skill
+  /credential /knowledge 五个前缀 307 断言
+- `test_deep_link_401_for_api_clients`：无 Accept: text/html 的请求
+  保持 401 + 中文 detail
+
+**真实链路验证**（:30000，2026-09-04 浏览器 E2E 全 6 步）：
+未登录访问 / 307 → /login；登录 → 用户菜单显示当前用户 + 退出登录；
+退出 → /login；登出后访问 /chat 被踢回 /login；再登录成功。
+
+### 24. i18n 默认中文（2026-09-04 E2E 发现）
+
+> TeamFlowPanel 曾渲染成英文（"Leader / No role descrip"）：i18n
+> LanguageDetector 跟随 navigator，英文系统/无头浏览器首访即英文。
+> 修复：`webui-src/src/i18n/index.ts` fallbackLng 'zh'、detection 仅
+> localStorage（用户显式切换过才用英文）。浏览器 E2E 复验 SVG 节点
+> 全中文（「主理人（大A）」「暂无职责说明」「团队互动」「N 位成员」）。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量

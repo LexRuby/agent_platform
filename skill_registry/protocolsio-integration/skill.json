@@ -1,0 +1,11 @@
+{
+    "name": "protocolsio-integration",
+    "display_name": "protocolsio-integration",
+    "description": "Read, validate, and safely export protocols.io data with current official REST/MCP contracts, or create non-executing mutation plans. The bundled client makes bounded official-host GET requests only with explicit --execute. Use only for tasks explicitly targeting protocols.io or an exact protocols.io protocol version.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.2",
+    "author": "K-Dense-AI"
+}

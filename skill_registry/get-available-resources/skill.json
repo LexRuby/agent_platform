@@ -1,0 +1,11 @@
+{
+    "name": "get-available-resources",
+    "display_name": "get-available-resources",
+    "description": "Detect host inventory and effective CPU, memory, disk, scheduler, container, and accelerator limits when a user asks for resource-aware planning or before a clearly resource-sensitive local workload. Produces a redacted JSON snapshot and conservative planning helpers without stress tests or assuming visible host hardware is usable.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.3",
+    "author": "K-Dense-AI"
+}

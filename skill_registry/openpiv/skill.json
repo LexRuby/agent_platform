@@ -1,0 +1,11 @@
+{
+    "name": "openpiv",
+    "display_name": "openpiv",
+    "description": "Particle Image Velocimetry (PIV) analysis with OpenPIV. Use when extracting velocity fields from PIV image pairs, analyzing fluid dynamics or flow visualization experiments, cross-correlating interrogation windows, validating and replacing spurious PIV vectors, or computing vorticity, strain rate, and turbulence statistics from measured velocity fields.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.1",
+    "author": "K-Dense-AI"
+}

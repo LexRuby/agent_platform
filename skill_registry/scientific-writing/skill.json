@@ -1,0 +1,11 @@
+{
+    "name": "scientific-writing",
+    "display_name": "scientific-writing",
+    "description": "Draft, revise, and audit scientific manuscripts or reports with explicit evidence provenance, reporting-guideline coverage, authorship accountability, confidentiality controls, and local consistency checks. Use for manuscript sections, references, declarations, tables, figures, or submission preparation when scientific accuracy and traceability matter.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "2.1",
+    "author": "K-Dense-AI"
+}

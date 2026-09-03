@@ -1,0 +1,11 @@
+{
+    "name": "qutip",
+    "display_name": "qutip",
+    "description": "Simulate and audit closed and open quantum-system models with QuTiP 5, including deterministic, trajectory, steady-state, spectral, and phase-space workflows. Use for local quantum-dynamics work where physical assumptions, dimensions, and numerical convergence must be explicit.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.2",
+    "author": "K-Dense-AI"
+}

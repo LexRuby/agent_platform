@@ -1,0 +1,11 @@
+{
+    "name": "what-if-oracle",
+    "display_name": "what-if-oracle",
+    "description": "Run structured What-If scenario analysis with 4–6 branch possibility exploration (best, likely, worst, wild card, contrarian, second-order). Use when the user asks speculative what-if questions about uncertain futures, strategic forks, contingency planning, or stress-testing a decision before committing.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.1",
+    "author": "K-Dense-AI"
+}

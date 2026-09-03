@@ -1,0 +1,11 @@
+{
+    "name": "pytorch-lightning",
+    "display_name": "pytorch-lightning",
+    "description": "Deep learning framework (PyTorch Lightning / lightning package). Organize PyTorch code into LightningModules, configure Trainers for multi-GPU/TPU, implement data pipelines, callbacks, logging (W&B, TensorBoard, MLflow), distributed training (DDP, FSDP, DeepSpeed), for scalable neural network training.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.2",
+    "author": "K-Dense-AI"
+}

@@ -1,0 +1,11 @@
+{
+    "name": "geniml",
+    "display_name": "geniml",
+    "description": "Use Geniml for audited local genomic-interval workflows: validate BED and universe contracts, plan Region2Vec or scEmbed runs, inspect model/tokenizer compatibility, and assess consensus universes.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.2",
+    "author": "K-Dense-AI"
+}

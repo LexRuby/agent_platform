@@ -1,0 +1,11 @@
+{
+    "name": "polars-bio",
+    "display_name": "polars-bio",
+    "description": "High-performance genomic interval operations and bioinformatics file I/O on Polars DataFrames. Overlap, nearest, merge, coverage, complement, subtract for BED/VCF/BAM/GFF intervals. Streaming, cloud-native, faster bioframe alternative.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.1",
+    "author": "K-Dense-AI"
+}

@@ -1,0 +1,11 @@
+{
+    "name": "pymatgen",
+    "display_name": "pymatgen",
+    "description": "Analyze, validate, convert, and transform materials structures and computed materials data with current pymatgen APIs, including local phase diagrams, symmetry sensitivity, electronic-structure I/O, and explicitly bounded Materials Project queries.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.3",
+    "author": "K-Dense-AI"
+}

@@ -1,0 +1,11 @@
+{
+    "name": "clinical-reports",
+    "display_name": "clinical-reports",
+    "description": "Create safety-bounded draft structures and run local deterministic checks for clinical case, diagnostic, trial, safety, and aggregate research reports. Use only with synthetic, de-identified, or aggregate inputs and verified source-fact manifests; every output requires qualified review.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "2.1",
+    "author": "K-Dense-AI"
+}

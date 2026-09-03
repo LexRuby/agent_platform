@@ -1,0 +1,11 @@
+{
+    "name": "pysam",
+    "display_name": "pysam",
+    "description": "Python/HTSlib workflows for genomic files. Use when reading, querying, filtering, or writing SAM/BAM/CRAM, VCF/BCF, FASTA/FASTQ, or tabix data with pysam, including pileup, coverage, indexing, and CRAM references.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "2.1",
+    "author": "K-Dense-AI"
+}

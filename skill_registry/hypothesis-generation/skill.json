@@ -1,0 +1,11 @@
+{
+    "name": "hypothesis-generation",
+    "display_name": "hypothesis-generation",
+    "description": "Formulate evidence-bounded scientific questions, candidate hypotheses, rival explanations, causal or associational claims, discriminating predictions, measurements, and preregistration-ready analysis plans. Use when turning observations or preliminary findings into transparent, testable research plans without treating hypotheses as facts.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "2.2",
+    "author": "K-Dense-AI"
+}

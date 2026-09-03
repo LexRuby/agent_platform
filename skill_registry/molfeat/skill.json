@@ -1,0 +1,11 @@
+{
+    "name": "molfeat",
+    "display_name": "molfeat",
+    "description": "Molecular featurization for ML (100+ featurizers). ECFP, MACCS, descriptors, pretrained models (ChemBERTa), convert SMILES to features, for QSAR and molecular ML.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.2",
+    "author": "K-Dense-AI"
+}

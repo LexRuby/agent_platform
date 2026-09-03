@@ -1,0 +1,11 @@
+{
+    "name": "astropy",
+    "display_name": "astropy",
+    "description": "Core Python library for astronomy and astrophysics workflows that need Astropy APIs, including units/quantities, coordinates, FITS I/O, tables, time systems, WCS, and cosmology. Use when implementing or debugging astronomical data analysis code with Astropy.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.3",
+    "author": "K-Dense-AI"
+}

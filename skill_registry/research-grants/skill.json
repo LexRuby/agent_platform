@@ -1,0 +1,11 @@
+{
+    "name": "research-grants",
+    "display_name": "research-grants",
+    "description": "Write competitive research proposals for NSF, NIH, DOE, DARPA, and Taiwan NSTC. Agency-specific formatting, review criteria, budget preparation, broader impacts, significance statements, innovation narratives, and compliance with submission requirements.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.3",
+    "author": "K-Dense-AI"
+}

@@ -1,0 +1,11 @@
+{
+    "name": "shap",
+    "display_name": "shap",
+    "description": "Explain and audit machine-learning predictions with SHAP. Use for selecting SHAP explainers and maskers, computing and validating feature attributions, handling multi-output explanations, and producing local or global SHAP visualizations.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "2.1",
+    "author": "K-Dense-AI"
+}

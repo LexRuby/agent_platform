@@ -1,0 +1,11 @@
+{
+    "name": "scholar-evaluation",
+    "display_name": "scholar-evaluation",
+    "description": "Provide qualitative-first, evidence-traceable developmental review of scholarly works and audit low-stakes research-assessment rubrics with optional local quality controls. Never use for ranking people or consequential decisions.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "2.2",
+    "author": "K-Dense-AI"
+}

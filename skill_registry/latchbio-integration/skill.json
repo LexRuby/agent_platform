@@ -1,0 +1,11 @@
+{
+    "name": "latchbio-integration",
+    "display_name": "latchbio-integration",
+    "description": "Build, register, debug, and operate bioinformatics workflows on Latch using the Python SDK, CLI, Latch Data and Registry, Nextflow, Snakemake, programmatic execution, and Latch MCP. Use when authoring or deploying Latch workflows, configuring resources or interfaces, moving data, integrating Registry, or launching and monitoring runs.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "2.1",
+    "author": "K-Dense-AI"
+}

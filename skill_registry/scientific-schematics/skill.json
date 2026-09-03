@@ -1,0 +1,11 @@
+{
+    "name": "scientific-schematics",
+    "display_name": "scientific-schematics",
+    "description": "Create publication-quality scientific diagrams using Nano Banana 2 AI with smart iterative refinement. Uses Gemini 3.6 Flash for quality review. Only regenerates if quality is below threshold for your document type. Specialized in neural network architectures, system diagrams, flowcharts, biological pathways, and complex scientific visualizations.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.7",
+    "author": "K-Dense-AI"
+}

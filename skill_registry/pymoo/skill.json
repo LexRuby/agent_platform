@@ -1,0 +1,11 @@
+{
+    "name": "pymoo",
+    "display_name": "pymoo",
+    "description": "Multi-objective optimization framework. NSGA-II, NSGA-III, MOEA/D, Pareto fronts, constraint handling, benchmarks (ZDT, DTLZ), for engineering design and optimization problems.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.4",
+    "author": "K-Dense-AI"
+}

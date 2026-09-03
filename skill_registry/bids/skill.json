@@ -1,0 +1,11 @@
+{
+    "name": "bids",
+    "display_name": "bids",
+    "description": ">",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.1",
+    "author": "K-Dense-AI"
+}

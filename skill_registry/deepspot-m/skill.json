@@ -1,0 +1,11 @@
+{
+    "name": "deepspot-m",
+    "display_name": "deepspot-m",
+    "description": "Generate transcriptome-wide virtual spatial transcriptomics from H&E histology with DeepSpot-M. Use when you need spatial gene expression in log1p-CPM for 224x224 tiles at about 20x, want to query protein-coding genes by symbol instead of a fixed panel, or want to run prediction across a whole slide after tiling with histolab.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.0",
+    "author": "K-Dense-AI"
+}

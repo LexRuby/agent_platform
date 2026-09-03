@@ -1,0 +1,11 @@
+{
+    "name": "imaging-data-commons",
+    "display_name": "imaging-data-commons",
+    "description": "Query and download public cancer imaging data from NCI Imaging Data Commons. Invoke for any question about IDC collections, cancer imaging datasets, DICOM data access, radiology (CT, MR, PET) or pathology AI training sets, metadata queries, visualization, or license checks — even when the user doesn't explicitly mention \"IDC\". No authentication required.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.5",
+    "author": "K-Dense-AI"
+}

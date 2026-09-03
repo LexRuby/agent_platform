@@ -1,0 +1,11 @@
+{
+    "name": "gget",
+    "display_name": "gget",
+    "description": "Fast CLI/Python queries to 20+ bioinformatics databases. Use for quick lookups: gene info, BLAST/BLAT, viral sequence downloads, AlphaFold structures, enrichment analysis, OpenTargets, COSMIC, CELLxGENE, and 8cube mouse specificity/expression data. Best for interactive exploration and simple queries. For batch processing or advanced BLAST use biopython; for multi-database Python workflows use bioservices.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "1.5",
+    "author": "K-Dense-AI"
+}

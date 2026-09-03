@@ -1,0 +1,11 @@
+{
+    "name": "treatment-plans",
+    "display_name": "treatment-plans",
+    "description": "Format and structurally validate local treatment-plan documentation after clinical decisions have already been supplied and verified by authorized licensed professionals. Use for source traceability, clinician-authored intervention records, goals and checkpoints, shared-decision records, reconciliation handoffs, and release gates—not for clinical decision-making.",
+    "tags": [
+        "science",
+        "scientific-agent-skills"
+    ],
+    "version": "2.2",
+    "author": "K-Dense-AI"
+}
