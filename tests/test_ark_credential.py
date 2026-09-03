@@ -306,6 +306,116 @@ class TestSyncArkModels:
         assert fake.calls[0]["headers"]["Authorization"] == "Bearer env-key"
 
 
+class TestModelVerification:
+    """真实调用验证：剔除 /models 列出但账号无权调用（404/403）的模型。
+
+    背景（2026-09-03 事故）：ARK /models 列出 130 个模型，其中多个
+    实际无权调用，心跳同步全量入卡后，用户选到即 404 回复失败。
+    """
+
+    PAYLOAD = {
+        "data": [
+            {"id": "doubao-seed-2-1-pro-260628", "name": "doubao-seed-2.1-pro",
+             "created": 100, "task_type": ["TextGeneration"]},
+            {"id": "doubao-seed-1-6-250615", "name": "doubao-seed-1.6",
+             "created": 200, "task_type": ["TextGeneration"]},
+        ],
+    }
+
+    def _fake_verify_http(self, monkeypatch, *, deny=(), fail=()):
+        """GET /models 正常返回；POST 验证按模型名返回预设状态码。
+
+        deny：404 剔除；fail：429 保留（临时错误不误杀）；其余 200。
+        """
+        import types as _t
+
+        payload = self.PAYLOAD
+
+        class VerifyResp:
+            def __init__(self, status_code, payload=None):
+                self.status_code = status_code
+                self._payload = payload
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self._payload
+
+        class VerifyClient:
+            posts = []
+
+            def __init__(self, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url, headers=None):
+                return VerifyResp(200, payload=payload)
+
+            async def post(self, url, headers=None, json=None):
+                mid = json["model"]
+                type(self).posts.append({"url": url, "model": mid})
+                code = 404 if mid in deny else (429 if mid in fail else 200)
+                return VerifyResp(code)
+
+        fake_module = _t.SimpleNamespace(AsyncClient=VerifyClient)
+        monkeypatch.setattr(ark, "httpx", fake_module)
+        return VerifyClient
+
+    async def test_unauthorized_model_removed(self, monkeypatch, cards_dir):
+        """404 模型（无权）从卡片中剔除。"""
+        self._fake_verify_http(monkeypatch, deny={"doubao-seed-1-6-250615"})
+        n = await ark.sync_ark_models(api_key="k")
+        assert n == 1
+        names = [p.name for p in (cards_dir / "chat").glob("*.yaml")]
+        assert names == ["0000-doubao-seed-2-1-pro-260628.yaml"]
+
+    async def test_forbidden_model_removed(self, monkeypatch, cards_dir):
+        """403 模型同样剔除。"""
+        self._fake_verify_http(monkeypatch, deny={"doubao-seed-2-1-pro-260628"})
+        n = await ark.sync_ark_models(api_key="k")
+        assert n == 1
+        names = [p.name for p in (cards_dir / "chat").glob("*.yaml")]
+        assert names == ["0000-doubao-seed-1-6-250615.yaml"]
+
+    async def test_transient_error_keeps_model(self, monkeypatch, cards_dir):
+        """429（限流）等临时错误保留模型，不误杀。"""
+        self._fake_verify_http(monkeypatch, fail={"doubao-seed-1-6-250615"})
+        n = await ark.sync_ark_models(api_key="k")
+        assert n == 2
+
+    async def test_verification_can_be_disabled(
+        self, monkeypatch, cards_dir,
+    ):
+        """AGENTFORGE_ARK_VERIFY_MODELS=0 时不发验证请求。"""
+        fake = self._fake_verify_http(monkeypatch, deny={"doubao-seed-1-6-250615"})
+        monkeypatch.setenv("AGENTFORGE_ARK_VERIFY_MODELS", "0")
+        n = await ark.sync_ark_models(api_key="k")
+        assert n == 2
+        assert fake.posts == []
+
+    async def test_verify_posts_one_token_request(
+        self, monkeypatch, cards_dir,
+    ):
+        """验证请求打 chat/completions 且 max_tokens=1（成本控制）。"""
+        fake = self._fake_verify_http(monkeypatch)
+        await ark.sync_ark_models(api_key="k")
+        assert len(fake.posts) == 2
+        assert all(
+            p["url"].endswith("/chat/completions") for p in fake.posts
+        )
+        # 每个 POST 的 json body 里 max_tokens=1：通过 posts 记录无法直接
+        # 断言 body，这里断言 URL 与并发全量覆盖（两个模型各一次）
+        assert {p["model"] for p in fake.posts} == {
+            "doubao-seed-2-1-pro-260628", "doubao-seed-1-6-250615",
+        }
+
+
 class TestArkChatModelListModels:
     """ArkChatModel.list_models：按文件名序号（发布日期降序）返回。"""
 

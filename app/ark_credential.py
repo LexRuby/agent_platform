@@ -238,8 +238,14 @@ def _chat_card(m: dict) -> dict:
 async def sync_ark_models(api_key: str | None = None) -> int:
     """从 ARK 拉取真实可用模型列表并刷新模型卡。
 
-    过滤：仅保留可用（未下架/未退役）的对话模型；
+    过滤：仅保留可用（未下架/未退役）的对话模型，且通过真实调用
+    验证（ARK ``/models`` 会列出账号无权调用的模型，选了即 404，
+    见 2026-09-03 高考志愿兵回复失败事故）；
     排序：按发布时间（created）降序，最新的排最前。
+
+    验证方式：对每个候选发一次 ``max_tokens=1`` 的对话补全（并发 8），
+    404/403 判定无权剔除；限流/超时等临时错误保留（不误杀）。
+    环境变量 ``AGENTFORGE_ARK_VERIFY_MODELS=0`` 可关闭验证。
 
     Returns:
         同步到的对话模型数量；0 表示未同步（无 key 或拉取失败，保留现有卡片）。
@@ -263,10 +269,55 @@ async def sync_ark_models(api_key: str | None = None) -> int:
         m for m in models
         if _is_usable(m) and _is_chat_model(m)
     ]
+    if os.environ.get("AGENTFORGE_ARK_VERIFY_MODELS", "1") != "0":
+        usable = await _verify_models(usable, key)
     usable.sort(key=lambda m: -m.get("created", 0))  # 最新发布在前
     _write_chat_cards([_chat_card(m) for m in usable])
     _logger.info("ARK 模型同步完成：%d 个可用对话模型", len(usable))
     return len(usable)
+
+
+_VERIFY_CONCURRENCY = 8
+_VERIFY_TIMEOUT = 12.0
+
+
+async def _verify_models(models: list[dict], api_key: str) -> list[dict]:
+    """逐模型发 1-token 真实调用，剔除账号无权的（404/403）。
+
+    任何异常（限流、超时、网络抖动）一律保留该模型——验证的目的是
+    排除"列表里有但调不动"的模型，不是从严过滤。
+    """
+    import asyncio
+
+    base_url = ARK_MODELS_URL.rsplit("/models", 1)[0]
+    sem = asyncio.Semaphore(_VERIFY_CONCURRENCY)
+
+    async def verify_one(m: dict) -> bool:
+        mid = m.get("id", "")
+        async with sem:
+            try:
+                async with httpx.AsyncClient(timeout=_VERIFY_TIMEOUT) as c:
+                    resp = await c.post(
+                        f"{base_url}/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        json={
+                            "model": mid,
+                            "messages": [{"role": "user", "content": "hi"}],
+                            "max_tokens": 1,
+                        },
+                    )
+                if resp.status_code in (403, 404):
+                    _logger.info(
+                        "ARK 模型 %s 无权调用（HTTP %d），已从列表剔除",
+                        mid, resp.status_code,
+                    )
+                    return False
+                return True
+            except Exception:  # noqa: BLE001 - 临时错误不剔除
+                return True
+
+    results = await asyncio.gather(*(verify_one(m) for m in models))
+    return [m for m, ok in zip(models, results) if ok]
 
 
 async def _heartbeat_loop() -> None:
