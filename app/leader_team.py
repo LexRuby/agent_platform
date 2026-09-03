@@ -39,6 +39,31 @@ _DEFAULT_FILE = _BASE_DIR / "data" / "leader_teams.json"
 # 注入 system_prompt 的名单段落标记（PATCH 时按标记整段替换）
 SECTION_MARKER = "## 预置团队成员"
 
+# 官方 schema 的默认提示词（用户未填写时的兜底）
+_OFFICIAL_DEFAULT_PROMPT = "You're a helpful assistant."
+
+# 主理人（大A）默认模板：用户创建 leader 未写提示词时使用。
+# 含团队纪律——曾因默认 "You're a helpful assistant." 导致：
+# hello 回复普通助手、模型自行中途 TeamDelete 打断未汇报的成员。
+DEFAULT_LEADER_PROMPT = """你是「{name}」，一个团队型智能体的领导者（大A）。
+
+## 你的职责
+用户带着任务来找你。你不是独自回答一切，而是作为主理人统筹全局：
+
+1. **理解与规划**：把用户需求拆解成明确的子任务；
+2. **组建团队**：优先邀请预置成员；按子任务的功能需要选人——
+   每位成员都有明确的名字与职责，邀请时在 prompt 里写清楚
+   要他做什么、交付什么；
+3. **分派与跟踪**：给每位成员下达具体指令，等待并整合他们的汇报；
+4. **整合交付**：把成员产出综合成最终答案回复用户。
+
+## 团队纪律（必须遵守）
+- 所有被邀请成员汇报完成并整合后，才算任务完成；
+- **禁止**在成员尚未汇报时调用 TeamDelete 解散团队——解散会
+  中断正在工作的成员，造成产出丢失；
+- 成员汇报以 team-message 形式到达，逐一整合，不遗漏；
+- 简单寒暄/单点事实问题直接回答，无需组队。"""
+
 
 def _teams_file() -> Path:
     return Path(
@@ -96,16 +121,32 @@ def build_team_section(members: list[dict]) -> str:
     lines = [
         "",
         SECTION_MARKER,
-        "以下是为你预置的团队成员（小A）。执行团队任务时：",
-        "1. 优先用 AgentInvite 邀请下列成员加入团队；",
+        "以下是为你预置的团队成员（小A），每位都有名字与职责：",
+        "1. 按子任务的功能需要，优先用 AgentInvite 邀请对应成员"
+        "（target 填「名字@id」）；",
         "2. 名单不构成限制——任务需要时仍可邀请其他在册 agent，"
-        "或用 AgentCreate 创建新的临时成员；",
-        "3. 成员汇报会以 team-message 形式到达，注意整合他们的产出。",
+        "或用 AgentCreate 创建新的临时成员（必须起有意义的名字并写明职责）；",
+        "3. 成员汇报会以 team-message 形式到达，逐一整合、不遗漏；",
+        "4. 全部成员汇报并整合完成后才可结束任务（不要提前解散团队）。",
     ]
     for m in members:
         desc = (m.get("description") or "").strip()
-        lines.append(f"- {m['name']}" + (f"：{desc}" if desc else ""))
+        lines.append(f"- {m['name']}（@{m['id'][:8]}）" + (f"：{desc}" if desc else ""))
     return "\n".join(lines)
+
+
+def _apply_leader_default_prompt(data: dict) -> None:
+    """leader 未写有效提示词时替换为默认主理人模板（原地修改）。
+
+    官方表单不填 system_prompt 时提交 "You're a helpful assistant."，
+    曾致 leader 回复普通助手、无团队纪律（中途解散团队）。
+    """
+    if data.get("agent_type") != LEADER:
+        return
+    sp = (data.get("system_prompt") or "").strip()
+    if not sp or sp == _OFFICIAL_DEFAULT_PROMPT:
+        name = (data.get("name") or "主理人").strip()
+        data["system_prompt"] = DEFAULT_LEADER_PROMPT.replace("{name}", name)
 
 
 def strip_team_section(system_prompt: str) -> str:
@@ -200,24 +241,29 @@ class LeaderTeamMiddleware:
     async def _run_post(self, scope, receive, send) -> None:
         body = await _read_body(receive)
         new_body, members = extract_team_members(body)
-        receive = _make_receive(new_body)
-        if members is None:
-            await self.app(scope, receive, send)
-            return
         try:
             data = json.loads(new_body)
         except Exception:  # noqa: BLE001
-            data = {}
-        valid = self._validate_members(members) if data.get("agent_type") == LEADER else []
+            data = None
+        if not isinstance(data, dict):
+            # 非 JSON 对象请求体：无法处理，原样透传
+            receive = _make_receive(new_body)
+            await self.app(scope, receive, send)
+            return
+        # 不论是否带成员，创建 leader 都要保证有效的主理人模板
+        _apply_leader_default_prompt(data)
+        valid = self._validate_members(members) if (
+            members is not None and data.get("agent_type") == LEADER
+        ) else []
         if valid:
             data["system_prompt"] = (
                 (data.get("system_prompt") or "").rstrip()
                 + "\n"
                 + build_team_section(valid)
             )
-            receive = _make_receive(
-                json.dumps(data, ensure_ascii=False).encode("utf-8"),
-            )
+        receive = _make_receive(
+            json.dumps(data, ensure_ascii=False).encode("utf-8"),
+        )
         ids = [m["id"] for m in valid]
 
         state = {"start": None, "chunks": []}
@@ -262,6 +308,8 @@ class LeaderTeamMiddleware:
             data = json.loads(new_body)
         except Exception:  # noqa: BLE001
             data = {}
+        # leader 编辑时未写有效提示词同样替换为默认模板
+        _apply_leader_default_prompt(data)
         valid = self._validate_members(members)
         if valid:
             base_prompt = strip_team_section(data.get("system_prompt") or "")

@@ -156,7 +156,7 @@ class TestFullUserJourney:
         leader = agents[lid]
         assert leader["agent_type"] == "leader"
         assert leader["team_members"] == [m1]
-        assert "- 高考志愿兵：志愿专家" in leader["data"]["system_prompt"]
+        assert "- 高考志愿兵（@" in leader["data"]["system_prompt"]
         # 4. 编辑清空名单
         client.patch(f"/agent/{lid}", json={
             "system_prompt": "你是主理人。\n\n## 预置团队成员\n- 高考志愿兵：志愿专家",

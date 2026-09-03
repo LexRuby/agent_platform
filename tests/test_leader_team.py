@@ -119,12 +119,13 @@ class TestStore:
 class TestSection:
     def test_build_format(self):
         s = build_team_section([
-            {"name": "研究员", "description": "政策专家"},
-            {"name": "助手", "description": ""},
+            {"id": "m1", "name": "研究员", "description": "政策专家"},
+            {"id": "m2", "name": "助手", "description": ""},
         ])
         assert "## 预置团队成员" in s
-        assert "- 研究员：政策专家" in s
-        assert "- 助手" in s and "助手：" not in s
+        assert "- 研究员（@m1）：政策专家" in s
+        assert "- 助手（@m2）" in s and "助手（@m2）：" not in s
+        assert "不要提前解散团队" in s  # 团队纪律随段落注入
 
     def test_strip(self):
         prompt = "基础设定\n\n## 预置团队成员\n- 旧成员"
@@ -181,7 +182,7 @@ class TestMiddleware:
         sp = stored["data"]["system_prompt"]
         assert "team_members" not in stored["data"]
         assert "你是主理人。" in sp and "## 预置团队成员" in sp
-        assert "- 研究员：政策" in sp
+        assert "- 研究员（@a1）：政策" in sp
         assert ls.get(lid) == [m1, m2]
 
     def test_post_without_team_members_passthrough(self, stack):
@@ -241,7 +242,7 @@ class TestMiddleware:
         })
         sp = r.json()["data"]["system_prompt"]
         assert sp.count("## 预置团队成员") == 1
-        assert "旧的" not in sp and "新基础" in sp and "- b2：d" in sp
+        assert "旧基础" not in sp and "新基础" in sp and "- b2（@a2）：d" in sp
         assert ls.get(lid) == [m2]
 
     def test_patch_empty_clears(self, stack):
@@ -421,8 +422,8 @@ class TestCreateLeaderEndToEnd:
         sp = leader["data"]["system_prompt"]
         assert "你是高考团队主理人。" in sp
         assert "## 预置团队成员" in sp
-        assert "- 高考志愿兵：志愿填报专家" in sp
-        assert "- 政策研究员：政策解读" in sp
+        assert "- 高考志愿兵（@a1）：志愿填报专家" in sp
+        assert "- 政策研究员（@a2）：政策解读" in sp
         # 成员未被污染
         for mid in m_ids:
             assert agents[mid]["agent_type"] == "member"
@@ -439,3 +440,67 @@ class TestCreateLeaderEndToEnd:
         agents = {a["id"]: a for a in client.get("/agent/").json()["agents"]}
         assert agents[lid]["team_members"] == [m_ids[0]]
         assert agents[lid]["data"]["system_prompt"].count("## 预置团队成员") == 1
+
+
+class TestLeaderDefaultPrompt:
+    """主理人默认模板：未写有效提示词时替换（hello 回复普通助手的事故）。"""
+
+    def test_post_leader_default_prompt_replaced(self, stack):
+        client, _, ls, _ = stack
+        r = client.post("/agent/", json={
+            "name": "高考主理人", "agent_type": "leader",
+            "system_prompt": "You're a helpful assistant.",
+            "team_members": [],
+        })
+        stored = client.get("/agent/").json()["agents"][0]
+        sp = stored["data"]["system_prompt"]
+        # 默认英文助手提示词被替换为主理人模板
+        assert "You're a helpful assistant" not in sp
+        assert "你是「高考主理人」" in sp
+        assert "团队纪律" in sp and "TeamDelete" in sp
+
+    def test_post_leader_without_members_gets_template(self, stack):
+        """不带 team_members 键创建的 leader 也要有模板（透传路径曾漏）。"""
+        client, _, ls, _ = stack
+        r = client.post("/agent/", json={
+            "name": "裸主理人", "agent_type": "leader",
+            "system_prompt": "",
+        })
+        stored = client.get("/agent/").json()["agents"][0]
+        assert "你是「裸主理人」" in stored["data"]["system_prompt"]
+        assert ls.load() == {}
+
+    def test_post_leader_custom_prompt_kept(self, stack):
+        client, _, _, _ = stack
+        client.post("/agent/", json={
+            "name": "自定义主理人", "agent_type": "leader",
+            "system_prompt": "你是资深高考规划师。",
+        })
+        stored = client.get("/agent/").json()["agents"][0]
+        assert stored["data"]["system_prompt"].startswith("你是资深高考规划师。")
+        assert "团队纪律" not in stored["data"]["system_prompt"].split("## 预置")[0]
+
+    def test_post_member_default_prompt_untouched(self, stack):
+        client, _, _, _ = stack
+        client.post("/agent/", json={
+            "name": "普通成员", "agent_type": "member",
+            "system_prompt": "You're a helpful assistant.",
+        })
+        stored = client.get("/agent/").json()["agents"][0]
+        # member 不替换：官方默认行为保持
+        assert stored["data"]["system_prompt"] == "You're a helpful assistant."
+
+    def test_section_has_id_and_discipline(self, stack):
+        """注入段带 @id（供 AgentInvite target）与团队纪律。"""
+        client, _, _, _ = stack
+        m1, = _mk_members(client, 1)
+        lid = client.post("/agent/", json={
+            "name": "L", "agent_type": "leader", "system_prompt": "你是L。",
+            "team_members": [
+                {"id": m1, "name": "高考志愿兵", "description": "志愿专家"},
+            ],
+        }).json()["agent_id"]
+        agents = {a["id"]: a for a in client.get("/agent/").json()["agents"]}
+        sp = agents[lid]["data"]["system_prompt"]
+        assert "- 高考志愿兵（@a1）：志愿专家" in sp
+        assert "不要提前解散团队" in sp
