@@ -264,19 +264,18 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-Web UI 构建产物在 `webui/`（gitignore，不入库）。**重建方法**：
+Web UI **源码已入库 `webui-src/`**（基于官方 examples/web_ui 的定制版：提示词模板下拉 +
+大A/小A 类型徽章分组 + 主理人团队成员选择器/AI 推荐 + 团队互动流程图 + 任务归档对话框 +
+agent 版本封板区；原独立 git clone + patch 的方式已废弃）。构建产物 `webui/`（gitignore，
+不入库）。**重建方法**：
 
 ```bash
-git clone --depth 1 https://github.com/agentscope-ai/agentscope.git /tmp/agentscope-src
-cd /tmp/agentscope-src
-# 应用本仓库的前端定制补丁（提示词模板下拉 + 大A/小A 类型徽章分组 + 主理人团队成员选择器/
-# AI 推荐 + 团队互动流程图 + 任务归档对话框；不应用则重建后丢失这些功能）
-git apply /home/zhaohongyu/AgentScope/agentforge/scripts/webui-customizations.patch
-cd examples/web_ui/frontend
-npm install && npm run build
-rm -rf /home/zhaohongyu/AgentScope/agentforge/webui && mkdir /home/zhaohongyu/AgentScope/agentforge/webui
-cp -r dist/* /home/zhaohongyu/AgentScope/agentforge/webui/
+bash scripts/build_webui.sh   # npm install（首跑）+ 构建 + 部署到 webui/
 ```
+
+跟踪官方上游变更时，从 https://github.com/agentscope-ai/agentscope 的
+`examples/web_ui/frontend` 对比 `webui-src/` 手工合并（参考
+`tests/test_webui_static.py` 的定制点回归锁）。
 
 **首次使用**（浏览器打开 `http://<服务器>:30000`）：
 

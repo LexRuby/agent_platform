@@ -8,3 +8,6 @@ data/
 .DS_Store
 webui/
 app/ark_models/
+# 前端源码（webui-src/）构建产物不入库；源码本身入库（原 agentscope-src 定制版）
+webui-src/node_modules/
+webui-src/dist/
