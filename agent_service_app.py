@@ -136,12 +136,19 @@ if (_web_dir / "index.html").exists():
 #         + agent_type 叠加（POST/PATCH 捕获、GET 注入、DELETE 清理）
 #         + leader 预置团队叠加（team_members 捕获/提示词注入/GET 注入）
 #         + startup 钩子（lifespan 完成后启动 ARK 模型心跳）
+from app.spa_static import SPAPageFallbackMiddleware  # noqa: E402
+
+# SPAPageFallbackMiddleware（鉴权内层）：浏览器刷新 /mcp、/skill 等与
+# API 路径冲突的前端页面时返回 index.html 而不是 JSON；未登录仍先跳 /login
 app = _StartupHook(
     AuthMiddleware(
-        PromptTemplateSchemaMiddleware(
-            AgentVersionMiddleware(
-                LeaderTeamMiddleware(AgentTypeMiddleware(app)),
+        SPAPageFallbackMiddleware(
+            PromptTemplateSchemaMiddleware(
+                AgentVersionMiddleware(
+                    LeaderTeamMiddleware(AgentTypeMiddleware(app)),
+                ),
             ),
+            index_path=str(_web_dir / "index.html"),
         ),
     ),
 )
