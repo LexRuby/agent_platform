@@ -1,6 +1,9 @@
 # 测试用例说明（TESTS.md）
 
-自动化测试体系：**376 个用例**，`pytest` 一条命令全量回归（约 15 秒，不依赖任何真实外部服务）。
+自动化测试体系：**384 个用例**，`pytest` 一条命令全量回归（约 18 秒，不依赖任何真实外部服务）。
+
+> 2026-09-03：旧工单服务（`app/main.py`、`app/console.py`、`app/workflow/`）及其测试
+> （test_main_api / test_console_api / test_workflow，共 55 例）随服务下线一并删除。
 
 ## 快速使用
 
@@ -72,17 +75,7 @@ bash scripts/smoke_agent_service.py  # 真模型 E2E 冒烟（形态 B）
 | TestWorkspace | 空工作空间自动创建；消息追加顺序与时间戳；清空；**多 Agent 工作空间隔离** |
 | TestPersistence | 重启（重建 Registry）后 MCP/Agent/消息完整恢复；父目录不存在时自动创建且产物是合法 JSON |
 
-### 5. `test_console_api.py` — 控制台 API /api（29 例）
-
-| 组 | 覆盖点 |
-|---|---|
-| TestToolsEndpoint | 内置工具列出；MCP 工具注册后合并（ref 格式 `mcp:srv:tool`） |
-| TestMcpRegistration | **注册失败回滚不留脏数据**（502）；刷新不存在 404；刷新更新工具；删除；**list 永不暴露 token** |
-| TestAgentEndpoints | 建查；缺失 404；draft 可改；**locked 改 409**；锁定要求 draft；解锁恢复 draft；**发布要求 locked（draft 直接发布 409）**；锁定缺失 404 |
-| TestWorkspace | 对话历史持久化（user/assistant 交替）；**锁定后打磨对话 409**；不存在 404；清空；fake 回复包含工具数 |
-| TestPublishedHall | 只列 published；发布后可对话；**draft/locked 不能走对外入口（404）**；缺失 404；**对外会话不污染打磨工作空间** |
-
-### 6. `test_tools.py` — 中台工具层（13 例）
+### 5. `test_tools.py` — 中台工具层（13 例）
 
 | 组 | 覆盖点 |
 |---|---|
@@ -90,7 +83,7 @@ bash scripts/smoke_agent_service.py  # 真模型 E2E 冒烟（形态 B）
 | TestToChunk | JSON 序列化；中文不转义；**超长截断到 8000** |
 | TestWritingTools | 端点绑定 `/writing/generate`；input_schema 必填字段；元数据；call 全链路（含 mock 中台回包） |
 
-### 7. `test_mcp_client.py` — MCP 客户端协议（13 例）
+### 6. `test_mcp_client.py` — MCP 客户端协议（13 例）
 
 | 组 | 覆盖点 |
 |---|---|
@@ -100,26 +93,11 @@ bash scripts/smoke_agent_service.py  # 真模型 E2E 冒烟（形态 B）
 | TestListTools | 全流程 connect→tools/list；字段映射；缺 schema/description 容错 |
 | TestCallTool | 多文本块拼接、非文本块忽略；工具错误抛 McpError；空结果返回空串 |
 
-### 8. `test_main_api.py` — 工单服务 HTTP 层（19 例）
-
-隔离：环境变量指向 tmp + `importlib.reload(app.main)` + 假 runner。
-
-| 组 | 覆盖点 |
-|---|---|
-| TestTemplates | 模板列表 |
-| TestCreateTask | 创建停在人工环节（waiting_human/assignee/历史）；未知模板 400；缺必填变量 400；持久化并可列表 |
-| TestGetTask | 缺失 404；按状态过滤 |
-| TestSubmit | 提交恢复至完成（历史顺序 + submit 审计）；错误环节 409；缺失任务 409 |
-| TestSkip | 跳过当前人工环节；跳过计划环节（最终历史不含） |
-| TestRedo | 重做已完成环节插入副本（不中断当前人工；提交后副本先于后续执行） |
-| TestReassign | 改派成功；错误环节 409 |
-| TestErrorMapping | 业务异常→400/404/409 完整映射 |
-
-### 9. `test_startup_hook.py` — ASGI lifespan 钩子（5 例）
+### 7. `test_startup_hook.py` — ASGI lifespan 钩子（5 例）
 
 startup complete 触发回调；**重复 complete 仅触发一次**；startup failed 不触发；shutdown 不触发；普通 HTTP scope 透传无注入。
 
-### 10. `test_prompt_templates.py` — 提示词模板（21 例）
+### 8. `test_prompt_templates.py` — 提示词模板（21 例）
 
 | 组 | 覆盖点 |
 |---|---|
@@ -127,13 +105,13 @@ startup complete 触发回调；**重复 complete 仅触发一次**；startup fa
 | TestPromptTemplatesApi | GET /prompt-templates 返回模板列表；空目录返回空列表 |
 | TestSchemaMiddleware | **注入 system_prompt.prompt_templates 且保留原属性**；**content-length 与改写后 body 一致**；分片响应重组；其他路径透传；**非 GET 透传不注入**；模板为空保持官方 schema；非 200 透传；非 JSON 透传；**坏 JSON body 原样返回不抛异常**；缺目标字段原样返回；lifespan 等非 http scope 透传 |
 
-### 11. `test_spa_static.py` — SPA 深链接回退（8 例）
+### 9. `test_spa_static.py` — SPA 深链接回退（8 例）
 
 | 覆盖点 |
 |---|
 | 根路径 / 真实静态文件正常服务；**深链接（/chat/<agent>/<session>）浏览器刷新回退 index.html**；多级深链接回退；**API 客户端（json Accept）404 不被 HTML 掩盖**；无 Accept 头保持 404；目录无 index.html 时 fallback 自身 404 不抛异常；路径穿越不泄漏敏感文件 |
 
-### 12. `test_agent_type.py` — 大A/小A 类型（27 例）
+### 10. `test_agent_type.py` — 大A/小A 类型（27 例）
 
 | 组 | 覆盖点 |
 |---|---|
@@ -142,11 +120,7 @@ startup complete 触发回调；**重复 complete 仅触发一次**；startup fa
 | TestMiddlewareWrite | **POST 剥离透传 + 响应拿 id 存映射**；POST 无 agent_type 不写文件；PATCH 按路径存；**PATCH 非法值忽略**；DELETE 清理；DELETE 不存在的 agent；**POST 无 agent_type 透传不挂起**（body 消费后必须重建 receive） |
 | TestMiddlewareRead | 列表注入 leader/member；空列表；非 agent 路径透传；lifespan 等非 http scope 透传 |
 
-### 13. `test_workflow.py` — 工单引擎（原有，8 例）
-
-创建停在人工门；提交完成；跳过当前/计划；失败重做；完成环节重做插副本；改派；缺变量；错误提交拒绝；持久化。
-
-### 14. `test_leader_team.py` — 主理人预置团队成员 + AI 推荐（29 例）
+### 11. `test_leader_team.py` — 主理人预置团队成员 + AI 推荐（29 例）
 
 | 组 | 覆盖点 |
 |---|---|
@@ -157,7 +131,7 @@ startup complete 触发回调；**重复 complete 仅触发一次**；startup fa
 | TestRecommend | 未登录 401；空上下文 422；**无候选返回空**；LLM 成功返回推荐+理由；**LLM 失败降级空推荐不 5xx**；候选排除 leader 自身与其他 leader |
 | TestLLMUtils | extract_json：裸 JSON / ```json 围栏 / 文本内嵌 / 非法返回 None |
 
-### 15. `test_team_archive.py` — 任务归档（封档）（16 例）
+### 12. `test_team_archive.py` — 任务归档（封档）（16 例）
 
 | 组 | 覆盖点 |
 |---|---|
@@ -166,7 +140,7 @@ startup complete 触发回调；**重复 complete 仅触发一次**；startup fa
 | TestSummarize | **LLM 成功生成总结+工作流步骤+新 agent 草案**；**LLM 失败降级基础草稿**（不 5xx）；会话不可读降级；空会话降级；未登录 401 |
 | TestArchive | 创建封档 + GET 列表；**封档时新 agent 自动注册入库**（agent_type=member）；空名 422；不存在 404；**注册失败不阻断封档**（非致命） |
 
-### 16. `test_webui_static.py` — webui 产物与前端定制补丁回归（8 例）
+### 13. `test_webui_static.py` — webui 产物与前端定制补丁回归（8 例）
 
 > 来源事故：曾把前端 `getBaseUrl()` 改成返回空字符串，`new URL(path, '')` 运行时抛
 > "Invalid URL"，**前端全部 API 请求失败**（历史会话/凭据/表单 schema 全加载不出，
@@ -179,7 +153,7 @@ startup complete 触发回调；**重复 complete 仅触发一次**；startup fa
 | TestPatchSameOrigin | **补丁含 `getBaseUrl = () => window.location.origin`**；**空字符串基址出现即失败**（事故根因回归锁）；**401 → /login 跳转存在** |
 | TestPatchNoSetupGate | **setupComplete 门禁移除**（防"连接到服务器"设置页回归）；**/setup 路由重定向 /chat** |
 
-### 17. `test_official_contract.py` — 官方 API 契约快照（9 例）
+### 14. `test_official_contract.py` — 官方 API 契约快照（9 例）
 
 > 背景：三处中间件/router 解析官方 `POST /agent/` 响应取 id 时只找 `id`/`agent.id`，
 > 而真实响应顶层是 `agent_id`，导致创建 leader 类型落回 member、预置成员名单
@@ -189,27 +163,27 @@ startup complete 触发回调；**重复 complete 仅触发一次**；startup fa
 API 的 mock 必须经其工厂函数构造（禁止测试内联手写结构）。本文件用快照断言
 锁死契约键列表，官方版本升级时最先转红，强制重新录制契约并同步修实现。
 
-### 18. `test_llm_utils.py` — LLM 直连工具（8 例）
+### 15. `test_llm_utils.py` — LLM 直连工具（8 例）
 
 | 组 | 覆盖点 |
 |---|---|
 | TestExtractJson | 纯对象/数组；```json 围栏（带/不带语言标记）；前后杂文包裹（对象/数组）；字符串内花括号不破坏平衡；非法输入报错；**数组包对象取最外层**（曾因先扫 `{` 返回内层对象，丢数组语义——推荐成员场景会只剩 1 个，已修） |
 | TestLlmChat | MockTransport 模拟 ARK：请求契约（URL/Authorization/messages 顺序）；缺 key 报错；`llm_chat_json` 全链路（ARK 响应 → 围栏文本 → dict） |
 
-### 19. `test_leader_team.py` 新增 `TestCreateLeaderEndToEnd`（1 例）
+### 16. `test_leader_team.py` 新增 `TestCreateLeaderEndToEnd`（1 例）
 
 用户完整使用逻辑：建成员 → 建主理人（带成员）→ GET 回读同时验证
 类型 + 成员名单 + 提示词注入 → 编辑换名单（段落重写）。任何一层断裂
 （各层单测全绿、组合链路断裂的事故形态）都会在此暴露。
 
-### 20. `test_stack_integration.py` — 生产中间件栈整链（10 例）
+### 17. `test_stack_integration.py` — 生产中间件栈整链（10 例）
 
 复刻 `agent_service_app.py` 的真实包装顺序（Auth→PromptTemplate→LeaderTeam→
 AgentType），跑用户真实使用序列：鉴权门禁（业务端点未登录全 401）、
 带成员建主理人三件事回读、**recommend-members 端点不被路径匹配吞掉**、
 schema/v2 双注入不冲突、封档 API 鉴权。
 
-### 21. 冒烟修复的回归锁（真实环境全旅程发现）
+### 18. 冒烟修复的回归锁（真实环境全旅程发现）
 
 上线前用真实服务（真 Redis + 真 ARK LLM）走完整用户旅程，抓出两个
 单测无法发现的 bug，均已按"先失败用例→修→转绿"处理：
@@ -222,7 +196,7 @@ schema/v2 双注入不冲突、封档 API 鉴权。
 **教训**：mock 不校验参数约束（如 limit 上限）与不计时，是单测假绿的
 另两种形态；上线前真实环境冒烟不可省略。
 
-### 22. `test_leader_team.py` 新增 `TestLeaderDefaultPrompt`（5 例）+ 注入格式强化
+### 19. `test_leader_team.py` 新增 `TestLeaderDefaultPrompt`（5 例）+ 注入格式强化
 
 > 背景（2026-09-03 用户实测反馈）：创建 leader 未写提示词时官方默认提交
 > "You're a helpful assistant."，导致 ① hello 回复普通助手、② 模型无团队
@@ -236,7 +210,7 @@ schema/v2 双注入不冲突、封档 API 鉴权。
 **教训**：前端 EditAgentDialog 曾回退 `id.slice(0,8)` 作为成员名，注入后
 提示词只剩裸 id——名字/职责类展示数据禁止用 id 截断兜底，必须查真实档案。
 
-### 23. `test_agent_version.py`（25 例）——agent 版本封板
+### 20. `test_agent_version.py`（25 例）——agent 版本封板
 
 > 背景（2026-09-03 用户需求"培育 → 封板 → 对外服务"）：agent 可 freeze
 > 出版本号，冻结期间自我迭代停止（PATCH 403）；解冻进开放模式可继续迭代，
@@ -261,7 +235,7 @@ schema/v2 双注入不冲突、封档 API 鉴权。
 同构 fake 复刻此语义）。真实服务冒烟：freeze→403→unfreeze→save v2→
 restore v1 全链路已在 :30000 验证通过。
 
-### 24. `test_smart_writing.py`（31 例）——智能写作 MCP Server
+### 21. `test_smart_writing.py`（31 例）——智能写作 MCP Server
 
 > 背景（2026-09-03 用户需求）：把 mcp_data 的智能写作注册包
 > （9 工具 → 2 个后端 13 个 method）注册为平台可用 MCP。

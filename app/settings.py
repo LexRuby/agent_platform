@@ -18,8 +18,6 @@ class Settings:
     midplatform_base_url: str
     midplatform_token: str
     studio_url: str
-    store_path: str
-    templates_dir: str
     fake_llm: bool
 
 
@@ -33,8 +31,6 @@ def load_settings() -> Settings:
         midplatform_base_url=os.environ.get("MIDPLATFORM_BASE_URL", "http://127.0.0.1:9000"),
         midplatform_token=os.environ.get("MIDPLATFORM_TOKEN", ""),
         studio_url=os.environ.get("AGENTFORGE_STUDIO_URL", ""),
-        store_path=os.environ.get("AGENTFORGE_STORE", "./data/tasks.json"),
-        templates_dir=os.environ.get("AGENTFORGE_TEMPLATES_DIR", "./templates"),
         # 无 API Key 的本地 E2E 演示模式：跳过大模型调用
         fake_llm=os.environ.get("AGENTFORGE_FAKE_LLM", "") == "1",
     )

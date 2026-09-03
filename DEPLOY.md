@@ -7,7 +7,7 @@
 ## 一、项目背景（是什么、为什么）
 
 **项目**：智汇平台——基于开源框架 AgentScope 2.0 的智能体执行平台。
-**核心形态**：工单式（BPM 审批流模型）任务处理——任务由多个环节组成，自动环节由大模型智能体执行（可调用内网四大能力服务），人工环节挂起等待提交，支持运行时人工干预。
+**核心形态**：AgentScope 官方 agent-service 多租户平台（Web UI :30000）——MCP/Skill Hub、Agent Team（大A/小A）编排、多会话聊天、知识库、定时任务、版本封板。早期工单式（BPM）演示形态已于 2026-09-03 下线删除。
 
 **关键决策记录**（详见本地 trae/2026-09-02\_AgentScope选型与提速分析.md）：
 
@@ -19,31 +19,23 @@
 | 人工干预   | 按钮式（submit/skip/redo/reassign）已实现；表单式（W2）、拖拽式（后置） |
 | 大模型    | 火山方舟豆包（OpenAI 兼容协议），远端 API，**无本地推理，不需要 GPU**      |
 
-**三层架构**：
+**架构**：
 
 ```
-templates/*.yaml     流程模板（静态默认流程）
-       │ instantiate
+Web UI（webui-src/ → webui/，:30000）
+       │ HTTP/SSE
        ▼
-TaskInstance 工单    history(不可变) | current(可重做) | planned(可调整) + interventions 审计
-       │ engine 逐环节驱动
+agent-service（agent_service_app.py，多租户，Redis 存储）
+       │
        ▼
-AgentScope Agent     自动环节：ReAct + 内网中台工具；人工环节：waiting_human 挂起
+AgentScope Agent（大A 主理人 / 小A 成员团队编排 + 版本封板 + MCP/Skill/知识库）
 ```
 
-**当前状态（W1 已完成并验证）**：
-
-- 工单引擎（创建/提交/跳过/重做/改派 + 持久化 + 审计）✅ 单测 10/10
-
-- 内网中台工具薄封装：检索×2 + 写作×2（httpx + Bearer + 重试）✅
-
-- 高考志愿场景模板（检索→人工确认→报告）✅
-
-- 真实 LLM E2E 全流程通过（豆包 turbo）：模型自主调工具、吸收人工约束生成报告 ✅
+**当前状态**：
 
 - AgentScope Studio tracing 接入验证 ✅（可选组件）
-- W2：控制台（MCP 注册/Agent 编排/工作空间/发布，形态A 自带单页 :8200）✅
-- W2：**官方 Web UI 形态 B 上线**（agent-service :30000，MCP/Skill Hub、Agent Team、多会话、人工干预、知识库、定时任务）✅ E2E PASS
+- 早期工单引擎（W1 演示形态，:8200）已于 2026-09-03 删除
+- **官方 Web UI 上线**（agent-service :30000，MCP/Skill Hub、Agent Team、多会话、人工干预、知识库、定时任务）✅ E2E PASS
 
 ***
 
@@ -51,8 +43,7 @@ AgentScope Agent     自动环节：ReAct + 内网中台工具；人工环节：
 
 ```
 agentforge/
-├── agent_service_app.py   部署形态B：AgentScope 官方 agent-service + Web UI（:30000，需 Redis）★ 推荐
-├── app/main.py            部署形态A：工单 FastAPI 服务（:8200）
+├── agent_service_app.py   AgentScope 官方 agent-service + Web UI（:30000，需 Redis）★ 唯一入口
 ├── app/agent_factory.py   构建 Agent（provider 分支 doubao|dashscope + TracingMiddleware）
 ├── app/agent_runner.py    自动环节执行器（上下文注入 + fake-llm 开关）
 ├── app/settings.py        配置（读 .env）
@@ -61,12 +52,9 @@ agentforge/
 │   ├── base.py            httpx 客户端/重试/认证（空 token 不发头）
 │   ├── search.py          search_admission_data / search_knowledge
 │   └── writing.py         writing_generate / writing_polish
-├── app/workflow/          models / loader(YAML) / store(JSON) / engine
 ├── scripts/
 │   ├── smoke_llm.py           LLM 直连冒烟（验证 provider/key/模型名）
-│   └── smoke_agent_service.py 形态B E2E 冒烟（凭据→Agent→会话→真模型→SSE）
-├── templates/gaokao_volunteer.yaml   流程模板
-├── tests/test_workflow.py  引擎测试（stub，不需要 LLM）
+│   └── smoke_agent_service.py E2E 冒烟（凭据→Agent→会话→真模型→SSE）
 ├── .env                   真实配置（含 key，已 gitignore，勿泄露/勿提交）
 ├── .env.example           配置模板
 └── requirements.txt
@@ -136,88 +124,20 @@ cd ~/zhaohongyu/agentforge
 pip install -r requirements.txt -i https://repo.huaweicloud.com/repository/pypi/simple
 ```
 
-### 步骤 3：验证（三层递进，每层过了再下一层）
+### 步骤 3：验证（两层递进，每层过了再下一层）
 
 ```bash
-# 3.1 引擎单测（不需要 LLM/网络）
-python -m pytest tests/ -q        # 期望：10 passed
+# 3.1 全量回归（不需要真实 LLM/网络）
+python -m pytest tests/ -q
 
 # 3.2 LLM 直连冒烟（验证 key/模型名/网络可达方舟）
 python -m scripts.smoke_llm       # 期望：provider=doubao ... 回复: 成功
-
-# 3.3 工具链路（起假中台再冒烟）
 ```
 
-### 步骤 4：启动工单服务并 E2E
+> 旧工单服务（app/main.py，:8200/:8100）及其 systemd unit `agentforge.service` 已于 2026-09-03
+> 彻底删除；主服务入口见步骤 5（agentforge-svc，:30000）。
 
-```bash
-# 起（前台先试跑；.env 已随代码同步，无需改）
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8100
-
-# 验证
-curl localhost:8100/templates          # 期望返回模板 JSON
-
-# E2E：创建任务 → 自动检索 → 挂起在人工环节（真模型，约 30-60s）
-curl -X POST localhost:8100/tasks -H 'Content-Type: application/json' -d '{
-  "template": "gaokao_volunteer",
-  "variables": {"province":"河南省","subject_type":"物理类","score":621,
-                "preference":"计算机相关，倾向北京上海"}}'
-
-# 查任务（替换 task_id）
-curl localhost:8100/tasks/<task_id>
-
-# 提交人工环节 → 自动续跑报告 → finished（报告环节约 3-4 分钟，耐心轮询）
-curl -X POST localhost:8100/tasks/<task_id>/submit -H 'Content-Type: application/json' -d '{
-  "step_id":"confirm_profile","output":"画像确认无误","actor":"counselor"}'
-```
-
-> 注意：submit 是同步执行，报告生成 3-4 分钟会导致 curl 超时——**正常现象**，服务端照常跑完，轮询 `GET /tasks/<id>` 看 finished。异步化在 W3。
-
-**API 一览**：
-
-| 端点                            | 用途                                          |
-| ----------------------------- | ------------------------------------------- |
-| GET /templates                | 模板列表                                        |
-| POST /tasks                   | 创建任务（template + variables）                  |
-| GET /tasks?status=\&assignee= | 任务列表 / 待办收件箱                                |
-| GET /tasks/{id}               | 任务详情（history/current/planned/interventions） |
-| POST /tasks/{id}/submit       | 人工环节提交                                      |
-| POST /tasks/{id}/skip         | 跳过环节                                        |
-| POST /tasks/{id}/redo         | 重做（失败当前环节直接重跑；已完成环节插副本）                     |
-| POST /tasks/{id}/reassign     | 人工环节改派                                      |
-
-### 步骤 5：systemd 常驻
-
-```bash
-# 先确认 conda 环境路径
-conda env list    # 记下 agentforge 环境的 python 绝对路径，如 /root/miniconda3/envs/agentforge/bin/python
-
-cat > /etc/systemd/system/agentforge.service <<'EOF'
-[Unit]
-Description=AgentForge Workorder Service
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/root/zhaohongyu/agentforge
-EnvironmentFile=/root/zhaohongyu/agentforge/.env
-ExecStart=/root/miniconda3/envs/agentforge/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8100 --workers 2
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable --now agentforge
-systemctl status agentforge          # 期望 active (running)
-journalctl -u agentforge -f          # 看日志
-```
-
-> `--workers 2`：8C15G 的机器可以开 2-4 个 worker；注意 JSON 存储是多进程共享文件，目前单文件无锁——**并发写入有覆盖风险，正式多 worker 前把 store 换 SQLite/PG（W3 项）**。稳妥起见初期 `--workers 1`。
-
-### 步骤 6（可选）：AgentScope Studio
+### 步骤 4（可选）：AgentScope Studio
 
 ```bash
 # EulerOS 源里没有 Node≥20，用官方二进制
@@ -232,10 +152,10 @@ npm install -g @agentscope/studio
 as_studio    # :3000，数据落 $HOME/.AgentScope-Studio（Linux 无 macOS 沙箱问题）
 ```
 
-`.env` 中 `AGENTFORGE_STUDIO_URL=http://localhost:3000`，重启 agentforge 后每个自动环节自动上报 trace。
+`.env` 中 `AGENTFORGE_STUDIO_URL=http://localhost:3000`，重启 agentforge-svc 后自动上报 trace。
 **省资源替代方案**：服务器不装 Studio，`.env` 该项留空（零开销），需要排查时在开发机本地起 Studio。
 
-### 步骤 7：官方 Web UI（agent-service，形态 B）★ 推荐的主入口
+### 步骤 5：官方 Web UI（agent-service）★ 主入口
 
 > AgentScope Studio（独立 npm 包）**已停止维护并归档**；AgentScope 2.0 官方 Web UI 内置于 agent-service，覆盖 MCP/Skill Hub 管理、Agent Team 编排、多会话聊天、人工干预、知识库、定时任务。
 
@@ -306,7 +226,7 @@ echo 'mypassword' > data/users/zhangsan.txt
 
 **E2E 冒烟**：`python scripts/smoke_agent_service.py`（登录→建凭据→Agent→会话→真模型对话→SSE 收流→清理，期望输出 PASS）
 
-### 步骤 8：智能写作 MCP Server（:30110）
+### 步骤 6：智能写作 MCP Server（:30110）
 
 注册包在 `mcp_registry/smart_writing.json`（9 工具 → 两个后端 13 个 method，
 原稿见 AgentScope/mcp_data/）。实现为 `app/smart_writing.py` 无状态
@@ -326,13 +246,13 @@ curl -X POST "http://localhost:30000/workspace/mcp?agent_id=<AID>&session_id=<SI
 ```
 
 **注意：必须 `is_stateful: true`**。官方 app 对 stateless MCPClient 有缓存
-bug（第二轮对话起 setup 失败），详见 TESTS.md 第 24 节。后端地址
+bug（第二轮对话起 setup 失败），详见 TESTS.md 第 21 节。后端地址
 （140.210.4.206:30010 搜索类 / 116.204.102.229:30020 其余）变更时改
 `mcp_registry/smart_writing.json` 重启服务即可。
 
-### 步骤 9（可选）：外网访问
+### 步骤 7（可选）：外网访问
 
-华为云控制台 → 安全组 → 放行 8100（如需公网访问）。**建议仅内网/VPN 访问**；该服务无鉴权，公网裸奔有风险，上公网前需加网关鉴权。
+华为云控制台 → 安全组 → 放行 30000（如需公网访问）。**建议仅内网/VPN 访问**；上公网前需加网关鉴权。
 
 ***
 
