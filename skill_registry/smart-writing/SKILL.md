@@ -1,3 +1,8 @@
+---
+name: smart-writing
+description: 术语本体识别（fpc/fop）、技术方案抽取与筛选、LLM 模板化生成、用户结果库管理。配合 MCP 工具（mcp__smart-writing__*）使用，覆盖专利交底书写作全流程。
+---
+
 # 智能写作技能
 
 ## 何时使用

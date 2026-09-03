@@ -1,3 +1,8 @@
+---
+name: patent-search
+description: 自然语言专利检索、TRIZ 原理拓展检索、期刊论文检索、专利详情查看。配合 MCP 工具（mcp__patent-search__*）使用，是专利分析与写作的第一步。
+---
+
 # 专利检索技能
 
 ## 何时使用
