@@ -1,6 +1,6 @@
 # 测试用例说明（TESTS.md）
 
-自动化测试体系：**203 个用例**，`pytest` 一条命令全量回归（约 2 秒，不依赖任何真实外部服务）。
+自动化测试体系：**334 个用例**，`pytest` 一条命令全量回归（约 17 秒，不依赖任何真实外部服务）。
 
 ## 快速使用
 
@@ -118,9 +118,65 @@ bash scripts/smoke_agent_service.py  # 真模型 E2E 冒烟（形态 B）
 
 startup complete 触发回调；**重复 complete 仅触发一次**；startup failed 不触发；shutdown 不触发；普通 HTTP scope 透传无注入。
 
-### 10. `test_workflow.py` — 工单引擎（原有，8 例）
+### 10. `test_prompt_templates.py` — 提示词模板（21 例）
+
+| 组 | 覆盖点 |
+|---|---|
+| TestListPromptTemplates | 按文件名排序；字段完整；description 默认空；**缺 name 回退文件名**；**坏文件只跳过不影响其余**（语法错误/缺 content）；目录不存在返回空；**环境变量覆盖目录**；仓库种子模板结构合法且名称唯一 |
+| TestPromptTemplatesApi | GET /prompt-templates 返回模板列表；空目录返回空列表 |
+| TestSchemaMiddleware | **注入 system_prompt.prompt_templates 且保留原属性**；**content-length 与改写后 body 一致**；分片响应重组；其他路径透传；**非 GET 透传不注入**；模板为空保持官方 schema；非 200 透传；非 JSON 透传；**坏 JSON body 原样返回不抛异常**；缺目标字段原样返回；lifespan 等非 http scope 透传 |
+
+### 11. `test_spa_static.py` — SPA 深链接回退（8 例）
+
+| 覆盖点 |
+|---|
+| 根路径 / 真实静态文件正常服务；**深链接（/chat/<agent>/<session>）浏览器刷新回退 index.html**；多级深链接回退；**API 客户端（json Accept）404 不被 HTML 掩盖**；无 Accept 头保持 404；目录无 index.html 时 fallback 自身 404 不抛异常；路径穿越不泄漏敏感文件 |
+
+### 12. `test_agent_type.py` — 大A/小A 类型（27 例）
+
+| 组 | 覆盖点 |
+|---|---|
+| TestStore | 默认 member；set/get；**非法值抛错**；删除；删除不存在 no-op；**同值跳过写盘**；损坏文件降级空；**文件中非法值过滤**；文件缺失空；环境变量路径 |
+| TestHelpers | **_match 集合路径（含尾斜杠）/条目路径/拒绝场景**（多级、前缀不同、集合 DELETE）；_extract 剥离/无键/非 JSON；schema 属性形状 |
+| TestMiddlewareWrite | **POST 剥离透传 + 响应拿 id 存映射**；POST 无 agent_type 不写文件；PATCH 按路径存；**PATCH 非法值忽略**；DELETE 清理；DELETE 不存在的 agent；**POST 无 agent_type 透传不挂起**（body 消费后必须重建 receive） |
+| TestMiddlewareRead | 列表注入 leader/member；空列表；非 agent 路径透传；lifespan 等非 http scope 透传 |
+
+### 13. `test_workflow.py` — 工单引擎（原有，8 例）
 
 创建停在人工门；提交完成；跳过当前/计划；失败重做；完成环节重做插副本；改派；缺变量；错误提交拒绝；持久化。
+
+### 14. `test_leader_team.py` — 主理人预置团队成员 + AI 推荐（29 例）
+
+| 组 | 覆盖点 |
+|---|---|
+| TestStore | 映射文件缺失空；set/get/delete；**同值去重 + 空列表不写盘**；损坏 JSON 降级空 |
+| TestSection | build_team_section 提示词格式（成员清单注入）；strip 剥离旧段落幂等 |
+| TestExtract | 对象数组（id/name/description）；纯 id 数组；无键/非 JSON/非列表返回 None |
+| TestMiddleware | **POST leader 剥离 team_members + 注入提示词 + 写 sidecar**；无 team_members 透传；**member 携带 team_members 被忽略**；**leader 不能当成员（422）**；GET 注入 team_members；PATCH 重写段落；PATCH 空列表清空；DELETE 清理 sidecar；非 agent 路径透传 |
+| TestRecommend | 未登录 401；空上下文 422；**无候选返回空**；LLM 成功返回推荐+理由；**LLM 失败降级空推荐不 5xx**；候选排除 leader 自身与其他 leader |
+| TestLLMUtils | extract_json：裸 JSON / ```json 围栏 / 文本内嵌 / 非法返回 None |
+
+### 15. `test_team_archive.py` — 任务归档（封档）（16 例）
+
+| 组 | 覆盖点 |
+|---|---|
+| TestStore | 封档文件缺失空；add/get（按时间倒序）；损坏 JSON 降级空 |
+| TestTranscript | 会话转写（文本 + tool_call 摘要）；空会话；**超长截断** |
+| TestSummarize | **LLM 成功生成总结+工作流步骤+新 agent 草案**；**LLM 失败降级基础草稿**（不 5xx）；会话不可读降级；空会话降级；未登录 401 |
+| TestArchive | 创建封档 + GET 列表；**封档时新 agent 自动注册入库**（agent_type=member）；空名 422；不存在 404；**注册失败不阻断封档**（非致命） |
+
+### 16. `test_webui_static.py` — webui 产物与前端定制补丁回归（8 例）
+
+> 来源事故：曾把前端 `getBaseUrl()` 改成返回空字符串，`new URL(path, '')` 运行时抛
+> "Invalid URL"，**前端全部 API 请求失败**（历史会话/凭据/表单 schema 全加载不出，
+> 页面却显示"正常"的空状态）。该 bug 在 TS 编译期与后端 pytest 均不可见，故从两个
+> 可静态断言的面锁住回归：
+
+| 组 | 覆盖点 |
+|---|---|
+| TestDeployedWebui | **index.html 存在**（否则静态挂载静默降级）；**引用的本地资源全部存在**（防 cp 中断的半截部署）；**无 /@vite/client 残留**（防误部署 dev 构建） |
+| TestPatchSameOrigin | **补丁含 `getBaseUrl = () => window.location.origin`**；**空字符串基址出现即失败**（事故根因回归锁）；**401 → /login 跳转存在** |
+| TestPatchNoSetupGate | **setupComplete 门禁移除**（防"连接到服务器"设置页回归）；**/setup 路由重定向 /chat** |
 
 ## 维护规则
 
@@ -129,6 +185,7 @@ startup complete 触发回调；**重复 complete 仅触发一次**；startup fa
 3. **新增功能先补用例**：新端点/新工具类遵循现有模式（TestClient + monkeypatch + tmp_path）
 4. **发现 bug 先写失败用例再修**：修复必须让新用例转绿且不破坏存量（如本次 `compare_digest` 非 ASCII bug）
 5. 真模型/真中台链路验证走 `smoke` 标记与 `scripts/smoke_*.py`，不混入单元回归
+6. **前端改动必须以"真实数据出现"为验证标准**（事故教训）：浏览器验证时"暂无会话"、"加载中"、空列表、欢迎语等**空状态一律判 FAIL**，必须看到历史会话消息渲染、表单字段加载、凭据列表非空等真实数据才算 PASS；无法进 pytest 的前端运行时行为（如 `new URL` 基址）至少要补进 `test_webui_static.py` 的补丁/产物断言
 
 ## 已知边界（不在单测覆盖内）
 

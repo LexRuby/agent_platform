@@ -43,7 +43,7 @@ AgentScope Agent     自动环节：ReAct + 内网中台工具；人工环节：
 
 - AgentScope Studio tracing 接入验证 ✅（可选组件）
 - W2：控制台（MCP 注册/Agent 编排/工作空间/发布，形态A 自带单页 :8200）✅
-- W2：**官方 Web UI 形态 B 上线**（agent-service :8300，MCP/Skill Hub、Agent Team、多会话、人工干预、知识库、定时任务）✅ E2E PASS
+- W2：**官方 Web UI 形态 B 上线**（agent-service :30000，MCP/Skill Hub、Agent Team、多会话、人工干预、知识库、定时任务）✅ E2E PASS
 
 ***
 
@@ -51,7 +51,7 @@ AgentScope Agent     自动环节：ReAct + 内网中台工具；人工环节：
 
 ```
 agentforge/
-├── agent_service_app.py   部署形态B：AgentScope 官方 agent-service + Web UI（:8300，需 Redis）★ 推荐
+├── agent_service_app.py   部署形态B：AgentScope 官方 agent-service + Web UI（:30000，需 Redis）★ 推荐
 ├── app/main.py            部署形态A：工单 FastAPI 服务（:8200）
 ├── app/agent_factory.py   构建 Agent（provider 分支 doubao|dashscope + TracingMiddleware）
 ├── app/agent_runner.py    自动环节执行器（上下文注入 + fake-llm 开关）
@@ -63,10 +63,7 @@ agentforge/
 │   └── writing.py         writing_generate / writing_polish
 ├── app/workflow/          models / loader(YAML) / store(JSON) / engine
 ├── scripts/
-│   ├── mock_midplatform.py    假中台（:9100，开发演示用，真实中台就绪后弃）
-│   ├── midplatform_mcp.py     中台 MCP Server（:9200，四大能力暴露为标准 MCP）
 │   ├── smoke_llm.py           LLM 直连冒烟（验证 provider/key/模型名）
-│   ├── smoke_tools.py         工具层直连冒烟（验证 httpx→中台链路）
 │   └── smoke_agent_service.py 形态B E2E 冒烟（凭据→Agent→会话→真模型→SSE）
 ├── templates/gaokao_volunteer.yaml   流程模板
 ├── tests/test_workflow.py  引擎测试（stub，不需要 LLM）
@@ -149,8 +146,6 @@ python -m pytest tests/ -q        # 期望：10 passed
 python -m scripts.smoke_llm       # 期望：provider=doubao ... 回复: 成功
 
 # 3.3 工具链路（起假中台再冒烟）
-python -m scripts.mock_midplatform &        # :9000
-python -m scripts.smoke_tools               # 期望：3 个工具返回 JSON
 ```
 
 ### 步骤 4：启动工单服务并 E2E
@@ -248,33 +243,18 @@ as_studio    # :3000，数据落 $HOME/.AgentScope-Studio（Linux 无 macOS 沙�
 # 7.1 Redis（agent-service 的存储后端）
 docker run -d --name agentforge-redis --restart unless-stopped -p 6379:6379 redis:7
 
-# 7.2 中台 MCP Server（把四大能力暴露为标准 MCP，:9200）
-systemctl enable --now agentforge-mcp     # 见下方 unit 文件
 
-# 7.3 agent-service + Web UI（:8300）
+# 7.2 agent-service + Web UI（:30000）
 systemctl enable --now agentforge-svc
 ```
 
-systemd unit（`/etc/systemd/system/agentforge-mcp.service`、`agentforge-svc.service`）：
+systemd unit（`/etc/systemd/system/agentforge-svc.service`）：
 
 ```ini
-# agentforge-mcp.service
-[Unit]
-Description=AgentForge midplatform MCP server (:9200)
-After=network.target agentforge-mock.service
-[Service]
-WorkingDirectory=/home/zhaohongyu/AgentScope/agentforge
-EnvironmentFile=/home/zhaohongyu/AgentScope/agentforge/.env
-ExecStart=/root/miniconda3/envs/agentforge/bin/python -m scripts.midplatform_mcp
-Restart=always
-[Install]
-WantedBy=multi-user.target
-
 # agentforge-svc.service
 [Unit]
-Description=AgentForge agent-service (Web UI :8300)
+Description=AgentForge agent-service (Web UI :30000)
 After=network.target
-Wants=agentforge-mcp.service
 [Service]
 WorkingDirectory=/home/zhaohongyu/AgentScope/agentforge
 EnvironmentFile=/home/zhaohongyu/AgentScope/agentforge/.env
@@ -288,17 +268,22 @@ Web UI 构建产物在 `webui/`（gitignore，不入库）。**重建方法**：
 
 ```bash
 git clone --depth 1 https://github.com/agentscope-ai/agentscope.git /tmp/agentscope-src
-cd /tmp/agentscope-src/examples/web_ui/frontend
+cd /tmp/agentscope-src
+# 应用本仓库的前端定制补丁（提示词模板下拉 + 大A/小A 类型徽章分组 + 主理人团队成员选择器/
+# AI 推荐 + 团队互动流程图 + 任务归档对话框；不应用则重建后丢失这些功能）
+git apply /home/zhaohongyu/AgentScope/agentforge/scripts/webui-customizations.patch
+cd examples/web_ui/frontend
 npm install && npm run build
-cp -r dist /home/zhaohongyu/AgentScope/agentforge/webui
+rm -rf /home/zhaohongyu/AgentScope/agentforge/webui && mkdir /home/zhaohongyu/AgentScope/agentforge/webui
+cp -r dist/* /home/zhaohongyu/AgentScope/agentforge/webui/
 ```
 
-**首次使用**（浏览器打开 `http://<服务器>:8300`）：
+**首次使用**（浏览器打开 `http://<服务器>:30000`）：
 
 1. **登录**：会自动跳到 `/login`。账号在服务器 `data/users/` 文件夹维护（见下方"用户管理"），初始账号 `admin / admin123`
 2. 登录后进入官方 UI，「凭据」页 → 新建 → **豆包 ARK**（自定义凭据类型 `app/ark_credential.py`）→ 填 ARK key 即可（base_url 已内置）
-3. 「聊天」页 → 新建 Agent/会话 → 模型下拉会显示 ARK 真实模型（doubao-seed / deepseek / kimi / glm 等）→ 选 `doubao-seed-2-1-turbo-260628` 开聊
-4. 工作区默认已挂中台 MCP（检索/写作 4 工具），模型可自主调用
+3. 「聊天」页 → 新建 Agent/会话 → 系统提示词上方可选**提示词模板**（`prompt_templates/*.yaml`，收集到新模板放入该目录即可）→ 模型下拉会显示 ARK 真实模型（doubao-seed / deepseek / kimi / glm 等）→ 选 `doubao-seed-2-1-turbo-260628` 开聊
+4. MCP 不再默认注入——需要时在「MCP」页显式添加（真实中台就绪后接入）
 5. 「MCP」「Skill」「知识库」「定时任务」等页对应各项管理能力
 
 > 注：不要用「OpenAI API」类型接 ARK——其模型下拉是 OpenAI 静态目录（GPT 系列），选了无法调用。「豆包 ARK」类型协议相同，但模型目录是 ARK 真实模型。

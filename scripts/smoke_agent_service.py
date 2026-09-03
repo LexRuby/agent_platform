@@ -1,7 +1,7 @@
 """agent-service（形态 B）E2E 冒烟：登录 → 建凭据/agent/会话（豆包）→ 对话 → 收流式回复。
 
 用法: python scripts/smoke_agent_service.py [base_url]
-默认 base_url = http://localhost:8300。
+默认 base_url = http://localhost:30000。
 登录用户由 data/users/ 文件夹维护（AGENTFORGE_SMOKE_USER/PASS 环境变量可覆盖，
 默认 admin/admin123——即 data/users/admin.txt）。
 """
@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8300"
+BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:30000"
 USER = os.environ.get("AGENTFORGE_SMOKE_USER", "admin")
 PASSWORD = os.environ.get("AGENTFORGE_SMOKE_PASS", "admin123")
 ARK_KEY = os.environ.get("ARK_API_KEY", "")

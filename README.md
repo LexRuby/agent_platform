@@ -28,7 +28,7 @@ app/agent_factory.py    构建 Agent（DashScope + Toolkit）
 app/agent_runner.py     自动环节执行器（上下文注入 + fake-llm 演示开关）
 app/tools/              内网中台工具薄封装（路径 A），含重试/超时/service token
 app/workflow/           models（工单模型）/ loader（YAML）/ store（JSON 落盘）/ engine（引擎）
-scripts/                mock_midplatform（假中台）/ smoke_tools（工具层冒烟）
+scripts/                smoke_llm / smoke_agent_service（冒烟脚本；演示用假中台已移除）
 templates/              流程模板（高考志愿）
 tests/                  工作流引擎测试（stub 智能体，不需要 LLM）
 ```
@@ -52,7 +52,6 @@ uvicorn app.main:app --port 8100
 
 ```bash
 # 终端 1：假中台（模拟内网四大能力服务，真实端点对齐后删除）
-.venv/bin/python -m scripts.mock_midplatform
 
 # 终端 2：工单服务（fake-llm 模式，跳过大模型调用）
 AGENTFORGE_FAKE_LLM=1 .venv/bin/python -m uvicorn app.main:app --port 8100
@@ -68,7 +67,6 @@ curl -X POST localhost:8100/tasks/{task_id}/submit -H 'Content-Type: application
   "actor": "counselor"}'
 
 # 工具层直连验证（httpx / 认证头 / 重试链路，走假中台）
-MIDPLATFORM_BASE_URL=http://127.0.0.1:9000 .venv/bin/python -m scripts.smoke_tools
 ```
 
 fake-llm 模式下自动环节输出带 `[demo]` 前缀，代表该环节本应调用大模型；

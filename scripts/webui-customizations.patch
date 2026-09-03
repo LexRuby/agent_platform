@@ -1,0 +1,2003 @@
+diff --git a/examples/web_ui/frontend/src/App.tsx b/examples/web_ui/frontend/src/App.tsx
+index 497bc4d..b83f8e4 100644
+--- a/examples/web_ui/frontend/src/App.tsx
++++ b/examples/web_ui/frontend/src/App.tsx
+@@ -1,6 +1,6 @@
+ import { Onborda, OnbordaProvider } from 'onborda';
+-import { useMemo, useState } from 'react';
+-import { createBrowserRouter, Navigate, RouterProvider, useNavigate } from 'react-router-dom';
++import { useMemo } from 'react';
++import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
+ import { Toaster } from 'sonner';
+ 
+ import { MCPHubPage } from './pages/mcp';
+@@ -16,19 +16,6 @@ import { ChatPage } from '@/pages/chat';
+ import { CredentialPage } from '@/pages/credential';
+ import { KnowledgePage } from '@/pages/knowledge';
+ import { SchedulePage } from '@/pages/schedule';
+-import { SetupPage } from '@/pages/setup';
+-
+-function SetupPageRoute() {
+-	const navigate = useNavigate();
+-	return (
+-		<>
+-			<div className="h-screen">
+-				<SetupPage onComplete={() => navigate('/')} />
+-			</div>
+-			<Toaster richColors position="top-right" />
+-		</>
+-	);
+-}
+ 
+ const router = createBrowserRouter([
+ 	{
+@@ -60,18 +47,15 @@ const router = createBrowserRouter([
+ 			},
+ 		],
+ 	},
+-	{ path: '/setup', element: <SetupPageRoute />, errorElement: <RouteError /> },
++	{ path: '/setup', element: <Navigate to="/chat" replace /> },
+ ]);
+ 
+ function App() {
+ 	const { t } = useTranslation();
+-	const [setupComplete, setSetupComplete] = useState(() => !!localStorage.getItem('server_url'));
+ 	const tours = useMemo(() => [buildChatTour(t)], [t]);
+ 
+-	if (!setupComplete) {
+-		return <SetupPage onComplete={() => setSetupComplete(true)} />;
+-	}
+-
++	// 同源部署：不设"连接服务器"引导页。API 固定走当前源（见 api/client.ts），
++	// 未登录/会话过期由后端 302 或前端 401 处理统一跳 /login（用户名密码登录）。
+ 	return (
+ 		<OnbordaProvider>
+ 			<Onborda
+diff --git a/examples/web_ui/frontend/src/api/client.ts b/examples/web_ui/frontend/src/api/client.ts
+index a7bc0c9..f860a17 100644
+--- a/examples/web_ui/frontend/src/api/client.ts
++++ b/examples/web_ui/frontend/src/api/client.ts
+@@ -1,7 +1,12 @@
+ import { toast } from 'sonner';
+ 
+-export const getBaseUrl = () => localStorage.getItem('server_url') ?? '';
+-export const getUserId = () => localStorage.getItem('username') ?? '';
++// 同源部署：前端由本服务自身托管，API 固定走当前源，无需配置服务器地址。
++// 必须返回 location.origin——`new URL(path, '')` 会抛 "Invalid base URL"，
++// 曾导致全部 API 请求失败（历史会话/凭据/表单 schema 加载不出）。
++// 用户身份由后端会话 cookie 决定（auth 中间件会重写 X-User-ID），
++// 这里的占位值仅为满足官方 API 的必填请求头。
++export const getBaseUrl = () => window.location.origin;
++export const getUserId = () => localStorage.getItem('username') ?? 'local';
+ 
+ /**
+  * Structured error thrown for non-2xx HTTP responses.
+@@ -108,6 +113,12 @@ async function streamRequest(path: string, options: RequestOptions = {}): Promis
+ 	if (!res.ok) {
+ 		const detail = await extractErrorDetail(res);
+ 		const error = new ApiError(res.status, detail);
++		// 会话过期/未登录：跳转服务端登录页（用户名密码登录）。
++		// 同源部署下不存在前端侧的"连接服务器"流程，401 一律回登录页。
++		if (res.status === 401) {
++			window.location.assign('/login');
++			throw error;
++		}
+ 		if (!silent) toast.error(detail);
+ 		throw error;
+ 	}
+diff --git a/examples/web_ui/frontend/src/api/leaderTeam.ts b/examples/web_ui/frontend/src/api/leaderTeam.ts
+new file mode 100644
+index 0000000..aa787e3
+--- /dev/null
++++ b/examples/web_ui/frontend/src/api/leaderTeam.ts
+@@ -0,0 +1,87 @@
++/**
++ * 大A/小A 叠加层 API：成员推荐 + 团队封档。
++ *
++ * 对应后端 app/leader_team.py 与 app/team_archive.py。
++ */
++import { client } from './client';
++
++export interface MemberCandidate {
++	id: string;
++	name: string;
++	description?: string;
++}
++
++export interface MemberRecommendation {
++	id: string;
++	name: string;
++	description: string;
++	reason: string;
++}
++
++export interface RecommendMembersResponse {
++	recommendations: MemberRecommendation[];
++	fallback: boolean;
++	reason: string | null;
++}
++
++export interface NewAgentDraft {
++	name: string;
++	description: string;
++	system_prompt: string;
++}
++
++export interface SummarizeResponse {
++	summary: string;
++	workflow_steps: string[];
++	new_agents: NewAgentDraft[];
++	fallback: boolean;
++	reason: string | null;
++}
++
++export interface TeamArchive {
++	id: string;
++	name: string;
++	summary: string;
++	workflow_steps: string[];
++	team_members: MemberCandidate[];
++	new_agents: { id: string; name: string; description: string }[];
++	created_at: string;
++	source_agent_id: string | null;
++	source_session_id: string | null;
++}
++
++export const leaderTeamApi = {
++	recommendMembers: (body: {
++		system_prompt?: string;
++		task_topic?: string;
++		members: MemberCandidate[];
++	}) =>
++		client.post<RecommendMembersResponse>(
++			'/agent/recommend-members',
++			body,
++			undefined,
++			{ silent: true },
++		),
++};
++
++export const teamArchiveApi = {
++	summarize: (agentId: string, sessionId: string) =>
++		client.post<SummarizeResponse>(
++			'/team-archive/summarize',
++			{ agent_id: agentId, session_id: sessionId },
++			undefined,
++			{ silent: true },
++		),
++	create: (body: {
++		name: string;
++		summary: string;
++		workflow_steps: string[];
++		team_members: MemberCandidate[];
++		new_agents: NewAgentDraft[];
++		source_agent_id?: string | null;
++		source_session_id?: string | null;
++	}) =>
++		client.post<TeamArchive>('/team-archive', body, undefined, { silent: true }),
++	list: () => client.get<TeamArchive[]>('/team-archive'),
++	get: (id: string) => client.get<TeamArchive>(`/team-archive/${id}`),
++};
+diff --git a/examples/web_ui/frontend/src/api/types.ts b/examples/web_ui/frontend/src/api/types.ts
+index b9ed157..6ef0ee7 100644
+--- a/examples/web_ui/frontend/src/api/types.ts
++++ b/examples/web_ui/frontend/src/api/types.ts
+@@ -57,11 +57,25 @@ export interface AgentView extends RecordBase {
+ 	 * for agents shared to the viewer with read-only permission.
+ 	 */
+ 	editable: boolean;
++	/** Agent classification injected by the backend middleware:
++	 * `leader` = 大A 主理人 (team orchestrator),
++	 * `member` = 小A 专家 (domain expert). Defaults to `member`. */
++	agent_type?: 'leader' | 'member';
++	/** Preset team member ids (leader only), injected by the backend. */
++	team_members?: string[];
++}
++
++export interface TeamMemberRef {
++	id: string;
++	name?: string;
++	description?: string;
+ }
+ 
+ export interface CreateAgentRequest {
+ 	name: string;
+ 	system_prompt?: string;
++	agent_type?: 'leader' | 'member';
++	team_members?: TeamMemberRef[];
+ 	context_config?: ContextConfig;
+ 	react_config?: ReActConfig;
+ 	invite_config?: InviteConfig;
+@@ -74,6 +88,8 @@ export interface CreateAgentResponse {
+ export interface UpdateAgentRequest {
+ 	name?: string;
+ 	system_prompt?: string;
++	agent_type?: 'leader' | 'member';
++	team_members?: TeamMemberRef[];
+ 	context_config?: ContextConfig;
+ 	react_config?: ReActConfig;
+ 	invite_config?: InviteConfig;
+@@ -378,6 +394,13 @@ export interface JSONSchemaProperty {
+ 	maximum?: number;
+ 	exclusiveMinimum?: number;
+ 	exclusiveMaximum?: number;
++	/** Prompt templates injected by the backend (e.g. for `system_prompt`).
++	 * Choosing one fills the textarea with the template content. */
++	prompt_templates?: Array<{
++		name: string;
++		description?: string;
++		content: string;
++	}>;
+ }
+ 
+ export interface JSONSchema {
+diff --git a/examples/web_ui/frontend/src/components/dialog/AgentDialog.tsx b/examples/web_ui/frontend/src/components/dialog/AgentDialog.tsx
+index df611bc..73c073c 100644
+--- a/examples/web_ui/frontend/src/components/dialog/AgentDialog.tsx
++++ b/examples/web_ui/frontend/src/components/dialog/AgentDialog.tsx
+@@ -1,14 +1,16 @@
+-import { CircleAlert, Loader2, PlusCircle } from 'lucide-react';
+-import { useEffect, useState, type ReactNode } from 'react';
++import { Archive, CircleAlert, Loader2, PlusCircle } from 'lucide-react';
++import { useEffect, useMemo, useState, type ReactNode } from 'react';
+ import { useTranslation } from 'react-i18next';
+ 
+ import type { ContextConfig, InviteConfig, ReActConfig } from '@/api';
++import { teamArchiveApi, type TeamArchive } from '@/api/leaderTeam';
+ import {
+ 	AgentFormFields,
+ 	defaultAgentFormValues,
+ 	type AgentFormValues,
+ 	type AgentSection,
+ } from '@/components/form/AgentFormFields';
++import { MemberPicker } from '@/components/form/MemberPicker';
+ import type { SchemaFormValue } from '@/components/form/SchemaForm';
+ import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
+ import { Button } from '@/components/ui/button';
+@@ -21,6 +23,13 @@ import {
+ 	DialogDescription,
+ 	DialogTrigger,
+ } from '@/components/ui/dialog';
++import {
++	Select,
++	SelectContent,
++	SelectItem,
++	SelectTrigger,
++	SelectValue,
++} from '@/components/ui/select';
+ import { useAgents } from '@/hooks/useAgents';
+ import { useAgentSchema } from '@/hooks/useAgentSchema';
+ import { formatApiErrorForAlert } from '@/lib/api-error';
+@@ -38,6 +47,10 @@ export function AgentDialog({ onCreated, children }: Props) {
+ 	const [submitting, setSubmitting] = useState(false);
+ 	const [values, setValues] = useState<AgentFormValues | null>(null);
+ 	const [errorMsg, setErrorMsg] = useState('');
++	// 预置团队成员（大A 专属）
++	const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
++	// 封档列表（从封档导入）
++	const [archives, setArchives] = useState<TeamArchive[]>([]);
+ 
+ 	useEffect(() => {
+ 		if (open && schema && !values) {
+@@ -46,9 +59,21 @@ export function AgentDialog({ onCreated, children }: Props) {
+ 		if (!open) {
+ 			setValues(null);
+ 			setErrorMsg('');
++			setSelectedMembers([]);
+ 		}
+ 	}, [open, schema, values]);
+ 
++	// 打开时拉取封档列表（供「从封档导入」）
++	useEffect(() => {
++		if (!open) return;
++		teamArchiveApi
++			.list()
++			.then(setArchives)
++			.catch(() => setArchives([]));
++	}, [open]);
++
++	const isLeader = values?.identity.agent_type === 'leader';
++
+ 	const handleChange = (section: AgentSection, key: string, value: SchemaFormValue) => {
+ 		setErrorMsg('');
+ 		setValues((prev) =>
+@@ -56,6 +81,47 @@ export function AgentDialog({ onCreated, children }: Props) {
+ 		);
+ 	};
+ 
++	/** 从封档导入：预填 system_prompt（工作流提示词）+ 团队成员 */
++	const handleImportArchive = (archiveId: string) => {
++		const archive = archives.find((a) => a.id === archiveId);
++		if (!archive || !values) return;
++		const workflowPrompt = [
++			`你是一个按已验证工作流运作的团队主理人（leader agent）。`,
++			`团队任务领域：${archive.name}`,
++			``,
++			`## 已验证的工作流程`,
++			...archive.workflow_steps.map((s, i) => `${i + 1}. ${s}`),
++			``,
++			`## 任务总结（参考）`,
++			archive.summary,
++		].join('\n');
++		setValues((prev) =>
++			prev
++				? {
++						...prev,
++						identity: {
++							...prev.identity,
++							system_prompt: workflowPrompt,
++							agent_type: 'leader',
++						},
++					}
++				: prev,
++		);
++		setSelectedMembers(archive.team_members.map((m) => m.id));
++	};
++
++	// 封档中的新 agent（已注册入库）+ 既有成员都作为候选——MemberPicker
++	// 从 useAgents 拉全量 member，这里只需预选 id
++	const memberDetails = useMemo(() => {
++		const map: Record<string, { id: string; name: string; description: string }> = {};
++		archives.forEach((a) =>
++			a.team_members.forEach((m) => {
++				map[m.id] = { ...m, description: m.description ?? '' };
++			}),
++		);
++		return map;
++	}, [archives]);
++
+ 	const handleSubmit = async () => {
+ 		if (!values) return;
+ 		const name = (values.identity.name as string | undefined)?.trim();
+@@ -67,6 +133,14 @@ export function AgentDialog({ onCreated, children }: Props) {
+ 				{
+ 					name,
+ 					system_prompt: values.identity.system_prompt as string | undefined,
++					agent_type: values.identity.agent_type as 'leader' | 'member' | undefined,
++					team_members: isLeader
++						? selectedMembers.map((id) => ({
++								id,
++								name: memberDetails[id]?.name ?? id.slice(0, 8),
++								description: memberDetails[id]?.description ?? '',
++							}))
++						: undefined,
+ 					context_config: values.context_config as unknown as ContextConfig,
+ 					react_config: values.react_config as unknown as ReActConfig,
+ 					invite_config: values.invite_config as unknown as InviteConfig,
+@@ -94,12 +168,38 @@ export function AgentDialog({ onCreated, children }: Props) {
+ 						{t('dialog-agent-create.description')}
+ 					</DialogDescription>
+ 				</DialogHeader>
+-				<div className="no-scrollbar -mx-4 max-h-[75vh] overflow-y-auto px-4">
++				<div className="no-scrollbar -mx-4 max-h-[75vh] space-y-3 overflow-y-auto px-4">
++					{archives.length > 0 && (
++						<div className="flex items-center gap-2">
++							<Archive className="size-3.5 shrink-0 text-muted-foreground" />
++							<Select onValueChange={handleImportArchive}>
++								<SelectTrigger className="h-8 flex-1 text-sm">
++									<SelectValue
++										placeholder={t('dialog-agent-create.importArchive')}
++									/>
++								</SelectTrigger>
++								<SelectContent>
++									{archives.map((a) => (
++										<SelectItem key={a.id} value={a.id}>
++											{a.name}
++										</SelectItem>
++									))}
++								</SelectContent>
++							</Select>
++						</div>
++					)}
+ 					{schema && values ? (
+ 						<AgentFormFields schema={schema} values={values} onChange={handleChange} />
+ 					) : (
+ 						<p className="text-muted-foreground text-sm">{t('common.loading')}</p>
+ 					)}
++					{isLeader && (
++						<MemberPicker
++							selected={selectedMembers}
++							onChange={setSelectedMembers}
++							systemPrompt={values?.identity.system_prompt as string | undefined}
++						/>
++					)}
+ 				</div>
+ 				{errorMsg && (
+ 					<Alert variant="destructive">
+diff --git a/examples/web_ui/frontend/src/components/dialog/ArchiveDialog.tsx b/examples/web_ui/frontend/src/components/dialog/ArchiveDialog.tsx
+new file mode 100644
+index 0000000..c0b2187
+--- /dev/null
++++ b/examples/web_ui/frontend/src/components/dialog/ArchiveDialog.tsx
+@@ -0,0 +1,315 @@
++/**
++ * 任务归档对话框：把主理人会话协作过程沉淀为可复用的封档团队。
++ *
++ * 流程：LLM 生成草稿（任务总结 + 工作流步骤 + 建议注册的新 agent）
++ * → 人工编辑确认 → 提交封档（新 agent 自动注册入库，
++ * 后续可在创建大A 时「从封档导入」预填工作流提示词）。
++ */
++import { Archive, CircleAlert, Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
++import { useState } from 'react';
++import { useTranslation } from 'react-i18next';
++
++import { teamArchiveApi, type NewAgentDraft } from '@/api/leaderTeam';
++import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
++import { Badge } from '@/components/ui/badge';
++import { Button } from '@/components/ui/button';
++import {
++	Dialog,
++	DialogContent,
++	DialogFooter,
++	DialogHeader,
++	DialogTitle,
++	DialogDescription,
++} from '@/components/ui/dialog';
++import { Input } from '@/components/ui/input';
++import { Textarea } from '@/components/ui/textarea';
++import { formatApiErrorForAlert } from '@/lib/api-error';
++
++interface Props {
++	open: boolean;
++	onOpenChange: (open: boolean) => void;
++	agentId: string;
++	sessionId: string;
++	leaderName: string;
++	/** 图上当前的团队成员（自动带入封档记录） */
++	members: { id: string; name: string }[];
++}
++
++type Stage = 'idle' | 'draft' | 'submitting';
++
++export function ArchiveDialog({
++	open,
++	onOpenChange,
++	agentId,
++	sessionId,
++	leaderName,
++	members,
++}: Props) {
++	const { t } = useTranslation();
++	const [stage, setStage] = useState<Stage>('idle');
++	const [name, setName] = useState('');
++	const [summary, setSummary] = useState('');
++	const [steps, setSteps] = useState<string[]>([]);
++	const [newAgents, setNewAgents] = useState<NewAgentDraft[]>([]);
++	const [errorMsg, setErrorMsg] = useState('');
++	const [fallbackNote, setFallbackNote] = useState(false);
++
++	const reset = () => {
++		setStage('idle');
++		setName('');
++		setSummary('');
++		setSteps([]);
++		setNewAgents([]);
++		setErrorMsg('');
++		setFallbackNote(false);
++	};
++
++	const handleClose = (v: boolean) => {
++		if (!v) reset();
++		onOpenChange(v);
++	};
++
++	/** 第一步：LLM 生成草稿 */
++	const generateDraft = async () => {
++		setErrorMsg('');
++		setStage('draft');
++		setFallbackNote(false);
++		try {
++			const res = await teamArchiveApi.summarize(agentId, sessionId);
++			setSummary(res.summary);
++			setSteps(res.workflow_steps);
++			setNewAgents(res.new_agents);
++			if (!name) setName(`${leaderName}·${t('dialog-archive.defaultName')}`);
++			if (res.fallback) setFallbackNote(true);
++		} catch (e) {
++			setErrorMsg(formatApiErrorForAlert(e));
++			// LLM 失败仍允许人工填写
++			if (!name) setName(`${leaderName}·${t('dialog-archive.defaultName')}`);
++		}
++	};
++
++	/** 第二步：确认提交封档 */
++	const submit = async () => {
++		if (!name.trim() || !summary.trim()) return;
++		setErrorMsg('');
++		setStage('submitting');
++		try {
++			await teamArchiveApi.create({
++				name: name.trim(),
++				summary,
++				workflow_steps: steps.filter((s) => s.trim()),
++				team_members: members,
++				new_agents: newAgents.filter((a) => a.name.trim()),
++				source_agent_id: agentId,
++				source_session_id: sessionId,
++			});
++			handleClose(false);
++		} catch (e) {
++			setErrorMsg(formatApiErrorForAlert(e));
++			setStage('draft');
++		}
++	};
++
++	return (
++		<Dialog open={open} onOpenChange={handleClose}>
++			<DialogContent className="!w-[560px] !max-w-[560px]">
++				<DialogHeader>
++					<DialogTitle>{t('dialog-archive.title')}</DialogTitle>
++					<DialogDescription className="sr-only">
++						{t('dialog-archive.description')}
++					</DialogDescription>
++				</DialogHeader>
++
++				{stage === 'idle' ? (
++					<div className="space-y-3 py-2">
++						<p className="text-sm text-muted-foreground">
++							{t('dialog-archive.intro')}
++						</p>
++						{members.length > 0 && (
++							<div className="flex flex-wrap gap-1.5">
++								{members.map((m) => (
++									<Badge key={m.id} variant="secondary">
++										{m.name}
++									</Badge>
++								))}
++							</div>
++						)}
++						<Button onClick={generateDraft}>
++							<Sparkles className="size-3.5" />
++							{t('dialog-archive.generate')}
++						</Button>
++					</div>
++				) : (
++					<div className="no-scrollbar -mx-4 max-h-[60vh] space-y-3 overflow-y-auto px-4">
++						{fallbackNote && (
++							<Alert>
++								<CircleAlert />
++								<AlertDescription>
++									{t('dialog-archive.fallbackNote')}
++								</AlertDescription>
++							</Alert>
++						)}
++						<div className="space-y-1">
++							<label className="text-sm font-medium">
++								{t('dialog-archive.name')}
++							</label>
++							<Input value={name} onChange={(e) => setName(e.target.value)} />
++						</div>
++						<div className="space-y-1">
++							<label className="text-sm font-medium">
++								{t('dialog-archive.summary')}
++							</label>
++							<Textarea
++								value={summary}
++								onChange={(e) => setSummary(e.target.value)}
++								rows={3}
++								placeholder={t('dialog-archive.summaryPlaceholder')}
++							/>
++						</div>
++						<div className="space-y-1">
++							<label className="text-sm font-medium">
++								{t('dialog-archive.workflow')}
++							</label>
++							{steps.length === 0 && (
++								<Button
++									variant="outline"
++									size="sm"
++									onClick={() => setSteps([''])}
++								>
++									<Plus className="size-3.5" />
++									{t('dialog-archive.addStep')}
++								</Button>
++							)}
++							{steps.map((s, i) => (
++								<div key={i} className="flex gap-1.5">
++									<span className="pt-1.5 text-xs text-muted-foreground">
++										{i + 1}.
++									</span>
++									<Input
++										value={s}
++										onChange={(e) =>
++											setSteps(steps.map((x, j) => (j === i ? e.target.value : x)))
++										}
++										className="h-8 text-sm"
++									/>
++									<Button
++										variant="ghost"
++										size="sm"
++										className="h-8 shrink-0 px-2"
++										onClick={() => setSteps(steps.filter((_, j) => j !== i))}
++									>
++										<Trash2 className="size-3.5" />
++									</Button>
++								</div>
++							))}
++							{steps.length > 0 && (
++								<Button
++									variant="ghost"
++									size="sm"
++									onClick={() => setSteps([...steps, ''])}
++								>
++									<Plus className="size-3.5" />
++									{t('dialog-archive.addStep')}
++								</Button>
++							)}
++						</div>
++						<div className="space-y-1">
++							<label className="text-sm font-medium">
++								{t('dialog-archive.newAgents')}
++							</label>
++							<p className="text-xs text-muted-foreground">
++								{t('dialog-archive.newAgentsHint')}
++							</p>
++							{newAgents.map((a, i) => (
++								<div
++									key={i}
++									className="space-y-1.5 rounded-md border p-2"
++								>
++									<div className="flex gap-1.5">
++										<Input
++											value={a.name}
++											placeholder={t('dialog-archive.agentName')}
++											onChange={(e) =>
++												setNewAgents(
++													newAgents.map((x, j) =>
++														j === i ? { ...x, name: e.target.value } : x,
++													),
++												)
++											}
++											className="h-8 text-sm"
++										/>
++										<Button
++											variant="ghost"
++											size="sm"
++											className="h-8 shrink-0 px-2"
++											onClick={() => setNewAgents(newAgents.filter((_, j) => j !== i))}
++										>
++											<Trash2 className="size-3.5" />
++										</Button>
++									</div>
++									<Textarea
++										value={a.system_prompt}
++										placeholder={t('dialog-archive.agentPrompt')}
++										onChange={(e) =>
++											setNewAgents(
++												newAgents.map((x, j) =>
++													j === i ? { ...x, system_prompt: e.target.value } : x,
++												),
++											)
++										}
++										rows={2}
++										className="text-sm"
++									/>
++								</div>
++							))}
++							<Button
++								variant="outline"
++								size="sm"
++								onClick={() =>
++									setNewAgents([...newAgents, { name: '', description: '', system_prompt: '' }])
++								}
++							>
++								<Plus className="size-3.5" />
++								{t('dialog-archive.addAgent')}
++							</Button>
++						</div>
++					</div>
++				)}
++
++				{errorMsg && (
++					<Alert variant="destructive">
++						<CircleAlert />
++						<AlertDescription className="whitespace-pre-wrap">
++							{errorMsg}
++						</AlertDescription>
++					</Alert>
++				)}
++
++				{stage !== 'idle' && (
++					<DialogFooter>
++						<Button
++							variant="ghost"
++							onClick={() => handleClose(false)}
++							disabled={stage === 'submitting'}
++						>
++							{t('common.cancel')}
++						</Button>
++						<Button
++							onClick={submit}
++							disabled={
++								stage === 'submitting' || !name.trim() || !summary.trim()
++							}
++						>
++							{stage === 'submitting' ? (
++								<Loader2 className="size-3.5 animate-spin" />
++							) : (
++								<Archive className="size-3.5" />
++							)}
++							{t('dialog-archive.confirm')}
++						</Button>
++					</DialogFooter>
++				)}
++			</DialogContent>
++		</Dialog>
++	);
++}
+diff --git a/examples/web_ui/frontend/src/components/dialog/EditAgentDialog.tsx b/examples/web_ui/frontend/src/components/dialog/EditAgentDialog.tsx
+index 859e9c1..b79c31d 100644
+--- a/examples/web_ui/frontend/src/components/dialog/EditAgentDialog.tsx
++++ b/examples/web_ui/frontend/src/components/dialog/EditAgentDialog.tsx
+@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
+ import { useTranslation } from 'react-i18next';
+ 
+ import type { AgentView, ContextConfig, InviteConfig, ReActConfig } from '@/api';
++import { MemberPicker } from '@/components/form/MemberPicker';
+ import {
+ 	AgentFormFields,
+ 	defaultAgentFormValues,
+@@ -38,12 +39,14 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
+ 	const [submitting, setSubmitting] = useState(false);
+ 	const [values, setValues] = useState<AgentFormValues | null>(null);
+ 	const [errorMsg, setErrorMsg] = useState('');
++	const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+ 
+ 	useEffect(() => {
+ 		if (!open || !schema) {
+ 			if (!open) {
+ 				setValues(null);
+ 				setErrorMsg('');
++				setSelectedMembers([]);
+ 			}
+ 			return;
+ 		}
+@@ -51,11 +54,13 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
+ 		// any unset fields fall back to defaults rather than empty.
+ 		const base = defaultAgentFormValues(schema);
+ 		const d = agent.data;
++		setSelectedMembers(agent.team_members ?? []);
+ 		setValues({
+ 			identity: {
+ 				...base.identity,
+ 				name: d.name,
+ 				system_prompt: d.system_prompt,
++				agent_type: agent.agent_type ?? 'member',
+ 			},
+ 			context_config: { ...base.context_config, ...(d.context_config ?? {}) },
+ 			react_config: { ...base.react_config, ...(d.react_config ?? {}) },
+@@ -78,11 +83,16 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
+ 		setErrorMsg('');
+ 		setSubmitting(true);
+ 		try {
++			const isLeader = values.identity.agent_type === 'leader';
+ 			await update(
+ 				agent.id,
+ 				{
+ 					name,
+ 					system_prompt: values.identity.system_prompt as string | undefined,
++					agent_type: values.identity.agent_type as 'leader' | 'member' | undefined,
++					team_members: isLeader
++						? selectedMembers.map((id) => ({ id, name: id.slice(0, 8), description: '' }))
++						: undefined,
+ 					context_config: values.context_config as unknown as ContextConfig,
+ 					react_config: values.react_config as unknown as ReActConfig,
+ 					invite_config: values.invite_config as unknown as InviteConfig,
+@@ -115,6 +125,16 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
+ 					) : (
+ 						<p className="text-muted-foreground text-sm">{t('common.loading')}</p>
+ 					)}
++					{values?.identity.agent_type === 'leader' && (
++						<div className="pt-2">
++							<MemberPicker
++								selected={selectedMembers}
++								onChange={setSelectedMembers}
++								systemPrompt={values.identity.system_prompt as string | undefined}
++								excludeIds={[agent.id]}
++							/>
++						</div>
++					)}
+ 				</div>
+ 				{errorMsg && (
+ 					<Alert variant="destructive">
+diff --git a/examples/web_ui/frontend/src/components/form/MemberPicker.tsx b/examples/web_ui/frontend/src/components/form/MemberPicker.tsx
+new file mode 100644
+index 0000000..d62bef6
+--- /dev/null
++++ b/examples/web_ui/frontend/src/components/form/MemberPicker.tsx
+@@ -0,0 +1,193 @@
++/**
++ * 预置团队成员选择器：创建/编辑主理人（大A）时勾选在册小A。
++ *
++ * - member 列表多选（名称 + 描述 + 复选框）
++ * - 「AI 推荐」：把 system_prompt / 任务议题 + 在册清单交给大模型，
++ *   返回推荐卡片（名称 + 推荐理由），一键勾选
++ * - 名单是"预置"而非限制——运行时主理人仍可邀请他人或临时创建新成员
++ */
++import { Bot, Check, Loader2, Sparkles, Users } from 'lucide-react';
++import { useMemo, useState } from 'react';
++import { useTranslation } from 'react-i18next';
++
++import { leaderTeamApi, type MemberRecommendation } from '@/api/leaderTeam';
++import { Badge } from '@/components/ui/badge';
++import { Button } from '@/components/ui/button';
++import { Input } from '@/components/ui/input';
++import { useAgents } from '@/hooks/useAgents';
++import { formatApiErrorForAlert } from '@/lib/api-error';
++
++interface Props {
++	/** 已选 member agent id 列表 */
++	selected: string[];
++	onChange: (ids: string[]) => void;
++	/** 主理人系统提示词（推荐上下文） */
++	systemPrompt?: string;
++	/** 排除的 agent id（编辑自己时） */
++	excludeIds?: string[];
++}
++
++export function MemberPicker({ selected, onChange, systemPrompt, excludeIds = [] }: Props) {
++	const { t } = useTranslation();
++	const { agents } = useAgents();
++	const [topic, setTopic] = useState('');
++	const [recommending, setRecommending] = useState(false);
++	const [recommendations, setRecommendations] = useState<MemberRecommendation[] | null>(null);
++	const [recError, setRecError] = useState('');
++
++	const memberAgents = useMemo(
++		() =>
++			(agents ?? []).filter(
++				(a) =>
++					a.agent_type !== 'leader' &&
++					!excludeIds.includes(a.id) &&
++					a.editable !== false,
++			),
++		[agents, excludeIds],
++	);
++
++	const toggle = (id: string) => {
++		onChange(
++			selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id],
++		);
++	};
++
++	const runRecommend = async () => {
++		setRecError('');
++		setRecommending(true);
++		setRecommendations(null);
++		try {
++			const res = await leaderTeamApi.recommendMembers({
++				system_prompt: systemPrompt || undefined,
++				task_topic: topic || undefined,
++				members: memberAgents.map((a) => ({
++					id: a.id,
++					name: a.data.name,
++					description: '',
++				})),
++			});
++			setRecommendations(res.recommendations);
++			if (res.fallback) {
++				setRecError(t('dialog-agent-create.member.recommendFallback'));
++			}
++		} catch (e) {
++			setRecError(formatApiErrorForAlert(e));
++		} finally {
++			setRecommending(false);
++		}
++	};
++
++	const canRecommend = !!(
++		(systemPrompt || '').trim() ||
++		topic.trim()
++	);
++
++	if (memberAgents.length === 0) {
++		return (
++			<div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
++				{t('dialog-agent-create.member.noCandidates')}
++			</div>
++		);
++	}
++
++	return (
++		<div className="space-y-2">
++			<div className="flex items-center gap-1.5 text-sm font-medium">
++				<Users className="size-3.5" />
++				{t('dialog-agent-create.member.title')}
++				<Badge variant="outline" className="text-[10px]">
++					{selected.length}
++				</Badge>
++			</div>
++			<p className="text-xs text-muted-foreground">
++				{t('dialog-agent-create.member.hint')}
++			</p>
++
++			{/* AI 推荐：任务议题输入 + 推荐按钮 */}
++			<div className="flex gap-2">
++				<Input
++					placeholder={t('dialog-agent-create.member.topicPlaceholder')}
++					value={topic}
++					onChange={(e) => setTopic(e.target.value)}
++					className="h-8 text-sm"
++				/>
++				<Button
++					type="button"
++					variant="outline"
++					size="sm"
++					className="h-8 shrink-0"
++					disabled={!canRecommend || recommending}
++					onClick={runRecommend}
++				>
++					{recommending ? (
++						<Loader2 className="size-3.5 animate-spin" />
++					) : (
++						<Sparkles className="size-3.5" />
++					)}
++					{t('dialog-agent-create.member.recommend')}
++				</Button>
++			</div>
++
++			{recError && <p className="text-xs text-destructive">{recError}</p>}
++
++			{recommendations && recommendations.length > 0 && (
++				<div className="space-y-1.5 rounded-md border bg-muted/40 p-2">
++					<p className="text-xs font-medium text-muted-foreground">
++						{t('dialog-agent-create.member.recommendTitle')}
++					</p>
++					{recommendations.map((r) => (
++						<button
++							key={r.id}
++							type="button"
++							className="flex w-full items-start gap-2 rounded-md border bg-background p-2 text-left text-sm hover:bg-accent"
++							onClick={() => toggle(r.id)}
++						>
++							<Check
++								className={`mt-0.5 size-3.5 shrink-0 ${
++									selected.includes(r.id) ? 'opacity-100' : 'opacity-0'
++								}`}
++							/>
++							<span className="min-w-0 flex-1">
++								<span className="font-medium">{r.name}</span>
++								{r.reason && (
++									<span className="block text-xs text-muted-foreground">
++										<Bot className="mr-1 inline size-3" />
++										{r.reason}
++									</span>
++								)}
++							</span>
++						</button>
++					))}
++				</div>
++			)}
++
++			{/* 全量 member 复选列表 */}
++			<div className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-1.5">
++				{memberAgents.map((a) => (
++					<button
++						key={a.id}
++						type="button"
++						className="flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left text-sm hover:bg-accent"
++						onClick={() => toggle(a.id)}
++					>
++						<span
++							className={`flex size-4 shrink-0 items-center justify-center rounded border ${
++								selected.includes(a.id)
++									? 'border-primary bg-primary text-primary-foreground'
++									: 'border-muted-foreground/30'
++							}`}
++						>
++							{selected.includes(a.id) && <Check className="size-3" />}
++						</span>
++						<span className="min-w-0 flex-1 truncate">
++							{a.data.name}
++							<span className="ml-1.5 text-xs text-muted-foreground">
++								{t('chat.agent.memberBadge')}
++							</span>
++						</span>
++					</button>
++				))}
++			</div>
++		</div>
++	);
++}
+diff --git a/examples/web_ui/frontend/src/components/form/SchemaForm.tsx b/examples/web_ui/frontend/src/components/form/SchemaForm.tsx
+index b64d1ff..a167bd6 100644
+--- a/examples/web_ui/frontend/src/components/form/SchemaForm.tsx
++++ b/examples/web_ui/frontend/src/components/form/SchemaForm.tsx
+@@ -1,5 +1,7 @@
+ import type { ReactNode } from 'react';
+ 
++import { useTranslation } from 'react-i18next';
++
+ import type { JSONSchema, JSONSchemaProperty } from '@/api';
+ import { Checkbox } from '@/components/ui/checkbox';
+ import {
+@@ -92,6 +94,7 @@ export function SchemaForm({
+ 	orientation = 'vertical',
+ 	className,
+ }: Props) {
++	const { t } = useTranslation();
+ 	const entries = Object.entries(schema.properties ?? {}).filter(
+ 		([key, prop]) => !skipFields.has(key) && prop.const === undefined,
+ 	);
+@@ -176,14 +179,50 @@ export function SchemaForm({
+ 				}
+ 
+ 				if (isTextarea) {
+-					return wrap(
++					const templates = prop.prompt_templates ?? [];
++					const textarea = (
+ 						<Textarea
+ 							id={fieldId}
+ 							rows={3}
+ 							value={(current as string | undefined) ?? ''}
+ 							onChange={(e) => onChange(key, e.target.value)}
+ 							placeholder={placeholder}
+-						/>,
++						/>
++					);
++					if (templates.length === 0) return wrap(textarea);
++					// 模板下拉：选中即用模板内容填充文本域（之后仍可自由编辑）
++					return wrap(
++						<div className="flex w-full flex-col gap-2">
++							<Select
++								value=""
++								onValueChange={(v) => {
++									const tpl = templates.find((x) => x.name === v);
++									if (tpl) onChange(key, tpl.content);
++								}}
++							>
++								<SelectTrigger
++									id={`${fieldId}-template`}
++									className="w-full"
++									aria-label={t('common.template-select')}
++								>
++									<SelectValue
++										placeholder={t('common.template-select')}
++									/>
++								</SelectTrigger>
++								<SelectContent>
++									{templates.map((tpl) => (
++										<SelectItem
++											key={tpl.name}
++											value={tpl.name}
++											title={tpl.description || tpl.name}
++										>
++											{tpl.name}
++										</SelectItem>
++									))}
++								</SelectContent>
++							</Select>
++							{textarea}
++						</div>,
+ 					);
+ 				}
+ 
+diff --git a/examples/web_ui/frontend/src/components/panel/TeamFlowPanel.tsx b/examples/web_ui/frontend/src/components/panel/TeamFlowPanel.tsx
+new file mode 100644
+index 0000000..07d787e
+--- /dev/null
++++ b/examples/web_ui/frontend/src/components/panel/TeamFlowPanel.tsx
+@@ -0,0 +1,501 @@
++/**
++ * 团队互动流程图：主理人（大A）对话页顶部面板。
++ *
++ * 从会话消息流解析团队互动时间线（谁对谁说了什么、达成什么结果）：
++ * - tool_call TeamCreate/TeamDelete → 建队/解散事件
++ * - tool_call AgentInvite（input.target = "名字@id8"）/ AgentCreate（name+description）
++ *   → 成员加入（带名字与职责）
++ * - tool_call TeamSay（input.to + input.content）→ 主理人 → 成员消息
++ * - hint 块（source.label === 'team'）→ 成员 → 主理人汇报
++ *
++ * 渲染：
++ * - SVG 节点连线图（主理人居上、成员卡片在下：名字 + 职责，点击成员卡片
++ *   可跳转到该小A 的会话进行单独迭代优化）
++ * - 边上挂消息计数，最新互动边高亮流动
++ * - 下方可滚动互动时间线（中文文案 + 成员彩色标识）
++ */
++import { ChevronDown, ChevronUp, MessageSquare, Users } from 'lucide-react';
++import { useMemo, useState } from 'react';
++import { useTranslation } from 'react-i18next';
++import { AnimatePresence, motion } from 'framer-motion';
++
++import type { Msg } from '@agentscope-ai/agentscope/message';
++
++import { Badge } from '@/components/ui/badge';
++
++export interface FlowEvent {
++	kind: 'team_created' | 'member_joined' | 'message' | 'team_deleted';
++	/** 原始标识：名字或 "名字@id8"（AgentInvite target / TeamSay to）。 */
++	from: string;
++	to: string;
++	summary: string;
++}
++
++/** 成员档案：来自团队在册名单，供名字映射与点击跳转。 */
++export interface FlowMember {
++	id: string;
++	name: string;
++	/** 职责说明（AgentCreate 的 description / 邀请理由）。 */
++	description?: string;
++	/** 成员会话 id（可跳转迭代）。 */
++	sessionId?: string | null;
++}
++
++interface Props {
++	msgs: Msg[];
++	leaderName: string;
++	/** 团队在册成员（view.team.members），可为空数组。 */
++	members?: FlowMember[];
++	/** 点击成员节点跳转（进入该小A 的会话）。 */
++	onOpenMember?: (member: FlowMember) => void;
++}
++
++/** "名字@id8" → "名字"；broadcast → 全体成员。 */
++export function displayName(raw: string, t?: (k: string) => string): string {
++	if (!raw) return '';
++	if (raw === 'broadcast') return t ? t('panel.teamFlow.broadcast') : '全体成员';
++	return raw.split('@')[0];
++}
++
++/** 从消息流构建互动时间线 + 参与成员原始标识集合。 */
++export function buildTimeline(
++	msgs: Msg[],
++): { events: FlowEvent[]; memberKeys: string[] } {
++	const events: FlowEvent[] = [];
++	const memberKeys = new Set<string>();
++	const leader = msgs.find((m) => m.role === 'assistant')?.name || 'leader';
++
++	const summarize = (s: unknown, max = 48): string => {
++		const text = typeof s === 'string' ? s : JSON.stringify(s ?? '');
++		return text.length > max ? text.slice(0, max) + '…' : text;
++	};
++
++	for (const m of msgs) {
++		for (const b of m.content ?? []) {
++			if (b.type !== 'tool_call') continue;
++			const input = (b.input ?? {}) as unknown as Record<string, unknown>;
++			switch (b.name) {
++				case 'TeamCreate':
++					events.push({
++						kind: 'team_created',
++						from: m.name || leader,
++						to: '',
++						summary: summarize(input.name ?? input.team_name ?? '', 20),
++					});
++					break;
++				case 'AgentInvite': {
++					// target 形如 "名字@id8"；reason 是邀请理由
++					const target = String(input.target ?? input.name ?? '');
++					const name = target.split('@')[0] || '成员';
++					if (target) memberKeys.add(target);
++					events.push({
++						kind: 'member_joined',
++						from: m.name || leader,
++						to: target || name,
++						summary: summarize(
++							input.reason ?? input.description ?? input.invite_description ?? '',
++						),
++					});
++					break;
++				}
++				case 'AgentCreate': {
++					const name = String(input.name ?? '') || '成员';
++					memberKeys.add(name);
++					events.push({
++						kind: 'member_joined',
++						from: m.name || leader,
++						to: name,
++						summary: summarize(input.description ?? input.role ?? ''),
++					});
++					break;
++				}
++				case 'TeamSay': {
++					const to = String(input.to ?? input.target ?? '') || 'broadcast';
++					if (to !== 'broadcast') memberKeys.add(to);
++					events.push({
++						kind: 'message',
++						from: m.name || leader,
++						to,
++						summary: summarize(input.content ?? input.message ?? ''),
++					});
++					break;
++				}
++				case 'TeamDelete':
++					events.push({
++						kind: 'team_deleted',
++						from: m.name || leader,
++						to: '',
++						summary: '',
++					});
++					break;
++			}
++		}
++		// hint 块：成员 → 主理人的汇报（TeamSay 投递）
++		for (const b of m.content ?? []) {
++			if (b.type !== 'hint') continue;
++			let sender = '';
++			try {
++				const src = JSON.parse(b.source ?? 'null');
++				if (src && src.label === 'team') sender = String(src.sublabel ?? '');
++			} catch {
++				sender = '';
++			}
++			if (!sender) continue;
++			const hintText =
++				typeof b.hint === 'string'
++					? b.hint
++					: (b.hint ?? [])
++							.map((x) => ('text' in x ? x.text : ''))
++							.join(' ');
++			// 剥掉 <team-message> 包装
++			const text = hintText.replace(/<\/?team-message[^>]*>/g, '').trim();
++			if (text) {
++				events.push({
++					kind: 'message',
++					from: sender,
++					to: leader,
++					summary: summarize(text),
++				});
++			}
++		}
++	}
++	return { events, memberKeys: [...memberKeys] };
++}
++
++/** 成员配色（按索引循环，浅色系保证文字可读）。 */
++const PALETTE = ['#4f7cff', '#0ea5e9', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
++
++const KIND_ICON: Record<FlowEvent['kind'], string> = {
++	team_created: '🏛️',
++	member_joined: '👋',
++	message: '💬',
++	team_deleted: '🗑️',
++};
++
++export function TeamFlowPanel({ msgs, leaderName, members = [], onOpenMember }: Props) {
++	const { t } = useTranslation();
++	const [expanded, setExpanded] = useState(true);
++	const [selected, setSelected] = useState<string | null>(null);
++
++	const { events } = useMemo(() => buildTimeline(msgs), [msgs]);
++
++	// 图上成员：在册成员优先，再补充事件中出现但已不在册的
++	const chartMembers = useMemo(() => {
++		const list: FlowMember[] = [...members];
++		for (const e of events) {
++			if (e.kind !== 'member_joined') continue;
++			const name = e.to.split('@')[0];
++			if (name && !list.some((m) => m.name === name)) {
++				list.push({
++					id: '',
++					name,
++					description: e.summary,
++					sessionId: null,
++				});
++			}
++		}
++		return list;
++	}, [members, events]);
++
++	const hasTeam =
++		events.some((e) => e.kind === 'team_created' || e.kind === 'member_joined') ||
++		chartMembers.length > 0;
++
++	// 每条边的消息计数（leader↔member，按显示名聚合）
++	const edgeCounts = useMemo(() => {
++		const counts = new Map<string, number>();
++		for (const e of events) {
++			if (e.kind !== 'message') continue;
++			const from = displayName(e.from, t);
++			const to = displayName(e.to, t);
++			const key = from === leaderName ? `${leaderName}→${to}` : `${from}→${leaderName}`;
++			counts.set(key, (counts.get(key) ?? 0) + 1);
++		}
++		return counts;
++	}, [events, leaderName, t]);
++
++	// 最新一次互动的边（高亮流动动画）
++	const latestEdge = useMemo(() => {
++		for (let i = events.length - 1; i >= 0; i--) {
++			const e = events[i];
++			if (e.kind !== 'message') continue;
++			const from = displayName(e.from, t);
++			const to = displayName(e.to, t);
++			return from === leaderName
++				? `${leaderName}→${to}`
++				: `${from}→${leaderName}`;
++		}
++		return null;
++	}, [events, leaderName, t]);
++
++	// 无任何团队互动时不渲染（放在全部 hooks 之后，避免条件调用 hooks）。
++	if (!hasTeam) return null;
++
++	// SVG 布局：leader 居上中，成员卡片均分下排（两行：名字 + 职责）
++	const CARD_W = 148;
++	const W = Math.max(360, chartMembers.length * (CARD_W + 16) + 16);
++	const H = 216;
++	const leaderX = W / 2;
++	const leaderY = 40;
++	const memberY = 152;
++	const memberX = (i: number) =>
++		chartMembers.length === 1
++			? W / 2
++			: CARD_W / 2 + 12 + (i * (W - CARD_W - 24)) / (chartMembers.length - 1);
++
++	const colorOf = (i: number) => PALETTE[i % PALETTE.length];
++
++	const handleOpen = (m: FlowMember) => {
++		if (m.id && onOpenMember) onOpenMember(m);
++	};
++
++	const messageCount = events.filter((e) => e.kind === 'message').length;
++
++	return (
++		<div className="mx-auto w-full max-w-[var(--chat-content-w)] rounded-xl border bg-card shadow-sm">
++			<button
++				type="button"
++				className="flex w-full items-center gap-2 px-3 py-2 text-sm"
++				onClick={() => setExpanded((v) => !v)}
++			>
++				<Users className="size-3.5 text-muted-foreground" />
++				<span className="font-medium">{t('panel.teamFlow.title')}</span>
++				<Badge variant="outline" className="text-[10px]">
++					{t('panel.teamFlow.memberCount', { count: chartMembers.length })}
++				</Badge>
++				<Badge variant="secondary" className="text-[10px]">
++					<MessageSquare className="size-2.5" />
++					{t('panel.teamFlow.messageCount', { count: messageCount })}
++				</Badge>
++				<span className="flex-1" />
++				{expanded ? (
++					<ChevronUp className="size-3.5 text-muted-foreground" />
++				) : (
++					<ChevronDown className="size-3.5 text-muted-foreground" />
++				)}
++			</button>
++
++			<AnimatePresence initial={false}>
++				{expanded && (
++					<motion.div
++						initial={{ height: 0, opacity: 0 }}
++						animate={{ height: 'auto', opacity: 1 }}
++						exit={{ height: 0, opacity: 0 }}
++						transition={{ duration: 0.2 }}
++						className="overflow-hidden"
++					>
++						{/* SVG 节点连线图（浅色系，成员卡片可点击进入会话） */}
++						<div className="px-2 pb-1">
++							<svg
++								viewBox={`0 0 ${W} ${H}`}
++								className="h-[216px] w-full"
++								preserveAspectRatio="xMidYMid meet"
++							>
++								{chartMembers.map((m, i) => {
++									const x = memberX(i);
++									const dn = m.name;
++									const key = `${leaderName}→${dn}`;
++									const count =
++										(edgeCounts.get(key) ?? 0) +
++										(edgeCounts.get(`${dn}→${leaderName}`) ?? 0);
++									const isLatest =
++										latestEdge === key || latestEdge === `${dn}→${leaderName}`;
++									const midX = (leaderX + x) / 2;
++									const midY = (leaderY + memberY) / 2 + 10;
++									const clickable = !!m.id && !!onOpenMember;
++									return (
++										<g key={`${m.id || m.name}`}>
++											{/* 连线 */}
++											<line
++												x1={leaderX}
++												y1={leaderY + 22}
++												x2={x}
++												y2={memberY - 26}
++												stroke={isLatest ? colorOf(i) : 'hsl(var(--border))'}
++												strokeWidth={isLatest ? 2 : 1.5}
++											/>
++											{isLatest && (
++												<circle r="4" fill={colorOf(i)}>
++													<animateMotion
++														dur="1.6s"
++														repeatCount="indefinite"
++														path={`M ${leaderX} ${leaderY + 22} L ${x} ${memberY - 26}`}
++													/>
++												</circle>
++											)}
++											{/* 消息计数徽章 */}
++											{count > 0 && (
++												<g
++													className="cursor-pointer"
++													onClick={() => setSelected(selected === dn ? null : dn)}
++												>
++													<rect
++														x={midX - 12}
++														y={midY - 10}
++														width="24"
++														height="20"
++														rx="10"
++														fill="hsl(var(--background))"
++														stroke={colorOf(i)}
++													/>
++													<text
++														x={midX}
++														y={midY + 4}
++														textAnchor="middle"
++														fontSize="11"
++														fill={colorOf(i)}
++														fontWeight="600"
++													>
++														{count}
++													</text>
++												</g>
++											)}
++											{/* 成员卡片（名字 + 职责，可点击进入会话） */}
++											<g
++												className={clickable ? 'cursor-pointer' : ''}
++												onClick={() => handleOpen(m)}
++											>
++												<title>
++													{clickable
++														? t('panel.teamFlow.openMember', { name: m.name })
++														: m.name}
++												</title>
++												<rect
++													x={x - CARD_W / 2}
++													y={memberY - 26}
++													width={CARD_W}
++													height="52"
++													rx="10"
++													fill="hsl(var(--background))"
++													stroke={
++														selected === dn
++															? colorOf(i)
++															: `hsl(var(--border))`
++													}
++													strokeWidth={selected === dn ? 2 : 1}
++												/>
++												{clickable && (
++													<rect
++														x={x - CARD_W / 2}
++														y={memberY - 26}
++														width={CARD_W}
++														height="52"
++														rx="10"
++														fill="transparent"
++														className="hover:opacity-100"
++														style={{ opacity: 0 }}
++													/>
++												)}
++												<circle cx={x - CARD_W / 2 + 14} cy={memberY - 8} r="4" fill={colorOf(i)} />
++												<text
++													x={x - CARD_W / 2 + 24}
++													y={memberY - 4}
++													fontSize="12"
++													fontWeight="600"
++													fill="hsl(var(--foreground))"
++												>
++													{m.name.slice(0, 9)}
++												</text>
++												<text
++													x={x - CARD_W / 2 + 24}
++													y={memberY + 12}
++													fontSize="9.5"
++													fill="hsl(var(--muted-foreground))"
++												>
++													{(m.description || t('panel.teamFlow.noDescription')).slice(0, 15)}
++												</text>
++											</g>
++										</g>
++									);
++								})}
++
++								{/* 主理人节点 */}
++								<motion.g
++									initial={{ scale: 0.8, opacity: 0 }}
++									animate={{ scale: 1, opacity: 1 }}
++								>
++									<rect
++										x={leaderX - 64}
++										y={leaderY - 20}
++										width="128"
++										height="40"
++										rx="12"
++										fill="hsl(var(--primary))"
++									/>
++									<text
++										x={leaderX}
++										y={leaderY + 5}
++										textAnchor="middle"
++										fontSize="13"
++										fontWeight="700"
++										fill="hsl(var(--primary-foreground))"
++									>
++										{leaderName.slice(0, 9)}
++									</text>
++									<text
++										x={leaderX}
++										y={leaderY - 26}
++										textAnchor="middle"
++										fontSize="10"
++										fill="hsl(var(--muted-foreground))"
++									>
++										{t('panel.teamFlow.leaderLabel')}
++									</text>
++								</motion.g>
++							</svg>
++						</div>
++
++						{/* 互动时间线（点击成员过滤；中文文案 + 彩色标识） */}
++						<div className="no-scrollbar max-h-36 overflow-y-auto border-t px-3 py-2">
++							{[...events]
++								.reverse()
++								.filter(
++									(e) =>
++										!selected ||
++										displayName(e.from, t) === selected ||
++										displayName(e.to, t) === selected,
++								)
++								.slice(0, 30)
++								.map((e, i) => {
++									const from = displayName(e.from, t);
++									const to = displayName(e.to, t);
++									return (
++										<div
++											key={i}
++											className="flex items-baseline gap-1.5 py-0.5 text-xs"
++										>
++											<span>{KIND_ICON[e.kind]}</span>
++											{e.kind === 'message' ? (
++												<span className="min-w-0">
++													<b>{from}</b>
++													<span className="text-muted-foreground">
++														{' '}
++														{t('panel.teamFlow.saidTo')}{' '}
++													</span>
++													<b>{to}</b>
++													<span className="text-muted-foreground">：{e.summary}</span>
++												</span>
++											) : e.kind === 'team_created' ? (
++												<span className="text-muted-foreground">
++													{t('panel.teamFlow.teamCreated', { name: e.summary })}
++												</span>
++											) : e.kind === 'member_joined' ? (
++												<span className="text-muted-foreground">
++													{t('panel.teamFlow.memberJoined', { name: to })}
++													{e.summary ? ` — ${e.summary}` : ''}
++												</span>
++											) : (
++												<span className="text-muted-foreground">
++													{t('panel.teamFlow.teamDeleted')}
++												</span>
++											)}
++										</div>
++									);
++								})}
++						</div>
++					</motion.div>
++				)}
++			</AnimatePresence>
++		</div>
++	);
++}
+diff --git a/examples/web_ui/frontend/src/components/select/AgentSelect.tsx b/examples/web_ui/frontend/src/components/select/AgentSelect.tsx
+index bb4037a..f5c2379 100644
+--- a/examples/web_ui/frontend/src/components/select/AgentSelect.tsx
++++ b/examples/web_ui/frontend/src/components/select/AgentSelect.tsx
+@@ -46,6 +46,28 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
+ 	const hasShared = agents.some((a) => !a.editable);
+ 	const yours = agents.filter((a) => a.editable);
+ 	const shared = agents.filter((a) => !a.editable);
++	// 大A（leader）与小A（member）分组：无共享 agent 时按类型分组展示
++	const leaders = agents.filter((a) => a.agent_type === 'leader');
++	const members = agents.filter((a) => a.agent_type !== 'leader');
++
++	const typeBadge = (agent: AgentView) =>
++		agent.agent_type === 'leader' ? (
++			<Badge
++				variant="default"
++				className="text-[10px] px-1 py-0 shrink-0"
++				title={t('chat.agent.leaderTooltip')}
++			>
++				{t('chat.agent.leaderBadge')}
++			</Badge>
++		) : (
++			<Badge
++				variant="outline"
++				className="text-[10px] px-1 py-0 shrink-0 text-muted-foreground"
++				title={t('chat.agent.memberTooltip')}
++			>
++				{t('chat.agent.memberBadge')}
++			</Badge>
++		);
+ 
+ 	const renderItem = (agent: AgentView) => {
+ 		const isSelected = agent.id === value;
+@@ -55,6 +77,7 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
+ 					className={`size-3.5 shrink-0 ${isSelected ? 'opacity-100' : 'opacity-0'}`}
+ 				/>
+ 				<span className="min-w-0 flex-1 truncate">{agent.data.name}</span>
++				{typeBadge(agent)}
+ 				{!agent.editable && (
+ 					<Badge
+ 						variant="secondary"
+@@ -87,6 +110,18 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
+ 						<p className="font-medium">{t('chat.agent.emptyTitle')}</p>
+ 						<p className="text-xs mt-1">{t('chat.agent.emptyDescription')}</p>
+ 					</div>
++				) : leaders.length > 0 && members.length > 0 ? (
++					<>
++						<DropdownMenuGroup>
++							<DropdownMenuLabel>{t('chat.agent.groupLeader')}</DropdownMenuLabel>
++							{leaders.map(renderItem)}
++						</DropdownMenuGroup>
++						<DropdownMenuSeparator />
++						<DropdownMenuGroup>
++							<DropdownMenuLabel>{t('chat.agent.groupMember')}</DropdownMenuLabel>
++							{members.map(renderItem)}
++						</DropdownMenuGroup>
++					</>
+ 				) : hasShared ? (
+ 					<>
+ 						{yours.length > 0 && (
+diff --git a/examples/web_ui/frontend/src/i18n/locales/en.json b/examples/web_ui/frontend/src/i18n/locales/en.json
+index 7d574dc..bc688e1 100644
+--- a/examples/web_ui/frontend/src/i18n/locales/en.json
++++ b/examples/web_ui/frontend/src/i18n/locales/en.json
+@@ -51,7 +51,8 @@
+ 		"message": "Message",
+ 		"llm": "LLM",
+ 		"tts": "TTS",
+-		"embedding": "Embedding"
++		"embedding": "Embedding",
++		"template-select": "Select from templates…"
+ 	},
+ 	"error": {
+ 		"description": "The page hit an unexpected error. You can retry or go back home.",
+@@ -150,7 +151,13 @@
+ 			"emptyTitle": "No agents",
+ 			"emptyDescription": "Create an agent to get started.",
+ 			"groupYours": "Yours",
+-			"groupShared": "Shared with you"
++			"groupShared": "Shared with you",
++			"chat.agent.groupLeader": "Leader (大A)",
++			"chat.agent.groupMember": "Members (小A)",
++			"chat.agent.leaderBadge": "大A",
++			"chat.agent.memberBadge": "小A",
++			"chat.agent.leaderTooltip": "Team leader: plans tasks, builds the team, delegates work",
++			"chat.agent.memberTooltip": "Domain expert: invited by the leader to collaborate"
+ 		},
+ 		"session": {
+ 			"label": "Session",
+@@ -163,7 +170,36 @@
+ 	},
+ 	"dialog-agent-create": {
+ 		"title": "Create agent",
+-		"description": "Define a new agent's identity and behaviour."
++		"description": "Define a new agent's identity and behaviour.",
++		"importArchive": "Import from team archive…",
++		"member": {
++			"title": "Team members",
++			"hint": "Preset registered members for this leader; or let AI recommend relevant members based on the task.",
++			"topicPlaceholder": "Describe the task topic and AI will recommend members…",
++			"recommend": "AI recommend",
++			"recommendTitle": "Recommendations",
++			"recommendFallback": "Recommendation failed; retry later or pick manually.",
++			"noCandidates": "No member agents available"
++		}
++	},
++	"dialog-archive": {
++		"title": "Archive task",
++		"description": "Distill this collaboration into a reusable team archive.",
++		"intro": "Generate a summary and workflow draft from the session; once confirmed, new agents in the archive are registered automatically.",
++		"generate": "Generate draft",
++		"fallbackNote": "LLM unavailable; a basic draft was generated, please refine it manually.",
++		"defaultName": "Archived team",
++		"name": "Archive name",
++		"summary": "Task summary",
++		"summaryPlaceholder": "Summarize the outcome and consensus of this task…",
++		"workflow": "Workflow steps",
++		"addStep": "Add step",
++		"newAgents": "New agent drafts",
++		"newAgentsHint": "Registered into the agent library on archive (all as members)",
++		"agentName": "Agent name",
++		"agentPrompt": "System prompt",
++		"addAgent": "Add agent",
++		"confirm": "Confirm archive"
+ 	},
+ 	"agent-form": {
+ 		"identity": {
+@@ -657,6 +693,19 @@
+ 			"emptyDescription": "Nothing matches “{{query}}”."
+ 		},
+ 		"loading": "Loading…",
++		"teamFlow": {
++			"title": "Team activity",
++			"leaderLabel": "Leader",
++			"broadcast": "all members",
++			"memberCount": "{{count}} members",
++			"messageCount": "{{count}} exchanges",
++			"saidTo": "→",
++			"openMember": "Open {{name}}'s session to chat and refine it",
++			"noDescription": "No role description",
++			"teamCreated": "created team \"{{name}}\"",
++			"memberJoined": "invited {{name}} to the team",
++			"teamDeleted": "dissolved the team"
++		},
+ 		"team": {
+ 			"membersHeading": "Members",
+ 			"noMembers": "No members yet — ask the leader to spawn one with AgentCreate.",
+diff --git a/examples/web_ui/frontend/src/i18n/locales/zh.json b/examples/web_ui/frontend/src/i18n/locales/zh.json
+index 8d4e4f3..bf63ec0 100644
+--- a/examples/web_ui/frontend/src/i18n/locales/zh.json
++++ b/examples/web_ui/frontend/src/i18n/locales/zh.json
+@@ -51,7 +51,8 @@
+ 		"message": "消息",
+ 		"llm": "LLM",
+ 		"tts": "TTS",
+-		"embedding": "向量"
++		"embedding": "向量",
++		"template-select": "从模板选择…"
+ 	},
+ 	"error": {
+ 		"description": "页面遇到意外错误。你可以重试或返回首页。",
+@@ -150,7 +151,13 @@
+ 			"emptyTitle": "暂无智能体",
+ 			"emptyDescription": "创建一个智能体开始使用。",
+ 			"groupYours": "我的",
+-			"groupShared": "共享给我"
++			"groupShared": "共享给我",
++			"chat.agent.groupLeader": "大A · 主理人",
++			"chat.agent.groupMember": "小A · 专家",
++			"chat.agent.leaderBadge": "大A",
++			"chat.agent.memberBadge": "小A",
++			"chat.agent.leaderTooltip": "大A 主理人：规划任务、组建团队、分派工作",
++			"chat.agent.memberTooltip": "小A 专家：垂直领域专家，可被大A 邀请协作"
+ 		},
+ 		"session": {
+ 			"label": "会话",
+@@ -163,7 +170,36 @@
+ 	},
+ 	"dialog-agent-create": {
+ 		"title": "创建智能体",
+-		"description": "定义新智能体的身份与行为。"
++		"description": "定义新智能体的身份与行为。",
++		"importArchive": "从团队封档导入…",
++		"member": {
++			"title": "团队成员（小A）",
++			"hint": "为这位主理人预置在册成员；也可以基于任务描述让 AI 推荐相关成员。",
++			"topicPlaceholder": "输入任务议题或描述，AI 将推荐相关成员…",
++			"recommend": "AI 推荐成员",
++			"recommendTitle": "推荐结果",
++			"recommendFallback": "推荐失败，请稍后重试或手动选择。",
++			"noCandidates": "暂无可选的成员 agent"
++		}
++	},
++	"dialog-archive": {
++		"title": "任务归档",
++		"description": "将本次协作沉淀为可复用的团队封档。",
++		"intro": "基于会话内容生成任务总结与工作流草稿；确认封档后，其中的新 agent 将自动注册入库。",
++		"generate": "生成草稿",
++		"fallbackNote": "LLM 暂不可用，已生成基础草稿，请手动补充。",
++		"defaultName": "封档团队",
++		"name": "封档名称",
++		"summary": "任务总结",
++		"summaryPlaceholder": "总结本次任务的成果与达成的共识…",
++		"workflow": "工作流步骤",
++		"addStep": "添加步骤",
++		"newAgents": "新 agent 草案",
++		"newAgentsHint": "封档时将自动注册到 agent 库（均为小A 成员）",
++		"agentName": "agent 名称",
++		"agentPrompt": "系统提示词",
++		"addAgent": "添加 agent",
++		"confirm": "确认封档"
+ 	},
+ 	"agent-form": {
+ 		"identity": {
+@@ -657,6 +693,19 @@
+ 			"emptyDescription": "没有匹配 “{{query}}” 的结果。"
+ 		},
+ 		"loading": "加载中…",
++		"teamFlow": {
++			"title": "团队互动",
++			"leaderLabel": "主理人（大A）",
++			"broadcast": "全体成员",
++			"memberCount": "{{count}} 位成员",
++			"messageCount": "{{count}} 条互动",
++			"saidTo": "对",
++			"openMember": "打开 {{name}} 的会话，单独对话优化它",
++			"noDescription": "暂无职责说明",
++			"teamCreated": "创建了团队「{{name}}」",
++			"memberJoined": "邀请 {{name}} 加入团队",
++			"teamDeleted": "解散了团队"
++		},
+ 		"team": {
+ 			"membersHeading": "成员",
+ 			"noMembers": "还没有成员——让队长用 AgentCreate 添加一个。",
+diff --git a/examples/web_ui/frontend/src/pages/chat/ChatViewport.tsx b/examples/web_ui/frontend/src/pages/chat/ChatViewport.tsx
+index 8130714..e6ee3fd 100644
+--- a/examples/web_ui/frontend/src/pages/chat/ChatViewport.tsx
++++ b/examples/web_ui/frontend/src/pages/chat/ChatViewport.tsx
+@@ -1,6 +1,7 @@
+ import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
+ import type { TaskContext } from '@agentscope-ai/agentscope/state';
+ import {
++	Archive,
+ 	BookText,
+ 	ChevronDown,
+ 	Database,
+@@ -10,6 +11,7 @@ import {
+ 	UsersRound,
+ } from 'lucide-react';
+ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
++import { useNavigate } from 'react-router-dom';
+ 
+ import type {
+ 	ChatModelConfig,
+@@ -22,6 +24,7 @@ import { sessionApi } from '@/api';
+ import MCPSvg from '@/assets/images/mcp.svg?react';
+ import { ChatContent } from '@/components/chat/ChatContent.tsx';
+ import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
++import { ArchiveDialog } from '@/components/dialog/ArchiveDialog';
+ import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
+ import { KnowledgeBasePanel } from '@/components/panel/KnowledgeBasePanel';
+ import { McpPanel } from '@/components/panel/McpPanel';
+@@ -29,6 +32,7 @@ import { PanelDock, type PanelDescriptor, type PanelKey } from '@/components/pan
+ import { PermissionPanel } from '@/components/panel/PermissionPanel';
+ import { SkillPanel } from '@/components/panel/SkillPanel';
+ import { TaskPanel } from '@/components/panel/TaskPanel';
++import { TeamFlowPanel } from '@/components/panel/TeamFlowPanel';
+ import { TeamPanel } from '@/components/panel/TeamPanel';
+ import { KnowledgeBaseParametersPopover } from '@/components/popover/KnowledgeBaseParametersPopover';
+ import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
+@@ -48,6 +52,7 @@ import {
+ 	ResizablePanelGroup,
+ } from '@/components/ui/resizable.tsx';
+ import { SidebarTrigger } from '@/components/ui/sidebar';
++import { useAgents } from '@/hooks/useAgents';
+ import { useAvailableModels } from '@/hooks/useAvailableModels';
+ import { useKnowledgeBaseMiddlewareSchema } from '@/hooks/useKnowledgeBaseMiddlewareSchema';
+ import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
+@@ -170,6 +175,7 @@ function closePanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
+  */
+ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewportProps) {
+ 	const { t } = useTranslation();
++	const navigate = useNavigate();
+ 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
+ 	const { groups } = useAvailableModels();
+ 
+@@ -186,6 +192,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
+ 	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
+ 	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
+ 	const [configPending, setConfigPending] = useState(false);
++	// 任务归档对话框（仅主理人会话显示入口）
++	const [archiveOpen, setArchiveOpen] = useState(false);
+ 	// Dock layout: columns laid out left→right, each holding up to 2
+ 	// panels stacked top→bottom. Open order determines placement.
+ 	// Persisted so leaving and returning to /chat keeps the same panels.
+@@ -331,6 +339,58 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
+ 	// the temporal dead zone.
+ 	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
+ 
++	// 当前 agent 的记录：判定主理人（大A）/成员（小A）并取显示名。
++	// `useAgents` 在此独立拉取全量列表，与外层页面的实例互不影响。
++	const { agents } = useAgents();
++	const agentRecord = useMemo(
++		() => agents.find((a) => a.id === agentId) ?? null,
++		[agents, agentId],
++	);
++	const isLeader = agentRecord?.agent_type === 'leader';
++	const leaderName = agentRecord?.data.name ?? '主理人';
++
++	// 归档对话框的成员列表：优先取当前团队的在册成员，回退到主理人
++	// 创建时预置的 team_members（用 agents 列表补齐名称）。
++	const archiveMembers = useMemo(() => {
++		if (view?.team?.members?.length) {
++			return view.team.members.map((m) => ({
++				id: m.agent.id,
++				name: m.agent.data.name,
++			}));
++		}
++		return (agentRecord?.team_members ?? []).map((id) => ({
++			id,
++			name: agents.find((a) => a.id === id)?.data.name ?? id.slice(0, 8),
++		}));
++	}, [view, agentRecord, agents]);
++
++	// 流程图的成员档案：在册成员带职责（邀请说明）与会话 id，
++	// 点击成员卡片可跳到该小A 的会话单独迭代优化。
++	const flowMembers = useMemo(() => {
++		if (view?.team?.members?.length) {
++			return view.team.members.map((m) => ({
++				id: m.agent.id,
++				name: m.agent.data.name,
++				description: m.agent.data.invite_config?.invite_description ?? '',
++				sessionId: m.session_id,
++			}));
++		}
++		return [];
++	}, [view]);
++
++	// 成员跳转：走 /chat/<leaderSessionId>/<memberAgentId>（memberId 槽），
++	// 与 TeamPanel 的导航约定一致；成员无会话时退回 /chat/<agentId>。
++	const handleOpenFlowMember = useCallback(
++		(m: { id: string; sessionId?: string | null }) => {
++			if (m.sessionId && sessionId) {
++				navigate(`/chat/${agentId}/${sessionId}/${m.id}`);
++			} else {
++				navigate(`/chat/${m.id}`);
++			}
++		},
++		[navigate, agentId, sessionId],
++	);
++
+ 	const { status: workspaceStatus, refetch: refetchWorkspaceStatus } = useWorkspaceStatus(
+ 		agentId,
+ 		sessionId,
+@@ -727,6 +787,17 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
+ 										disabled={!sessionId || configPending}
+ 										onChange={handlePermissionModeChange}
+ 									/>
++									{isLeader && sessionId && (
++										<Button
++											variant="ghost"
++											size="sm"
++											className="gap-1 px-2"
++											title={t('dialog-archive.title')}
++											onClick={() => setArchiveOpen(true)}
++										>
++											<Archive className="size-4" />
++										</Button>
++									)}
+ 									<DropdownMenu>
+ 										<DropdownMenuTrigger asChild>
+ 											<Button
+@@ -791,8 +862,20 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
+ 									</DropdownMenu>
+ 								</div>
+ 							</div>
+-							<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:48rem]">
+-								<ChatContent
++							<div className="flex flex-1 flex-col min-h-0 overflow-hidden">
++								{/* 主理人（大A）会话顶部的团队互动流程图：
++								无团队互动时组件自身返回 null；成员卡片可点击
++								进入该小A 的会话单独迭代。 */}
++							{isLeader && sessionId ? (
++								<TeamFlowPanel
++									msgs={msgs}
++									leaderName={leaderName}
++									members={flowMembers}
++									onOpenMember={handleOpenFlowMember}
++								/>
++							) : null}
++								<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:48rem]">
++									<ChatContent
+ 									className={'max-w-[var(--chat-content-w)] w-full'}
+ 									msgs={msgs}
+ 									loading={messagesLoading}
+@@ -884,7 +967,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
+ 											created_at: new Date().toISOString(),
+ 										};
+ 									}}
+-								/>
++									/>
++								</div>
+ 							</div>
+ 						</div>
+ 					</ResizablePanel>
+@@ -899,6 +983,16 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
+ 				onOpenChange={setCredentialOpen}
+ 				onCreated={() => setCredentialRefetchTrigger((n) => n + 1)}
+ 			/>
++			{isLeader && sessionId && agentId ? (
++				<ArchiveDialog
++					open={archiveOpen}
++					onOpenChange={setArchiveOpen}
++					agentId={agentId}
++					sessionId={sessionId}
++					leaderName={leaderName}
++					members={archiveMembers}
++				/>
++			) : null}
+ 		</>
+ 	);
+ }
