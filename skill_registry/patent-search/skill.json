@@ -1,0 +1,8 @@
+{
+    "name": "patent-search",
+    "display_name": "专利检索",
+    "description": "自然语言专利检索、TRIZ 原理拓展检索、期刊论文检索、专利详情查看。配合 MCP 服务 patent-search（mcp__patent-search__*）使用，是专利分析与写作的第一步。",
+    "tags": ["检索", "专利", "TRIZ", "期刊"],
+    "version": "1.0.0",
+    "author": "agentforge"
+}

@@ -711,6 +711,22 @@ export interface MCPView {
 	version: string | null;
 }
 
+/** One tool inside an installed MCP, as reported by its server. */
+export interface MCPToolView {
+	name: string;
+	description: string;
+	/** JSON Schema of the tool's parameters (`inputSchema` from MCP). */
+	input_schema: Record<string, unknown> | null;
+}
+
+/** What opening an installed MCP shows: its tools, fetched live. */
+export interface MCPToolsResponse {
+	server: string;
+	display_name: string | null;
+	description: string;
+	tools: MCPToolView[];
+}
+
 /**
  * One skill in the user's own library. Unlike an MCP, the skill's files are
  * not stored — the record says where they came from, and the archive is

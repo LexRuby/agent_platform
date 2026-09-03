@@ -1,5 +1,5 @@
 import { client } from './client';
-import type { MCPView, UpdateMCPRequest } from './types';
+import type { MCPToolsResponse, MCPView, UpdateMCPRequest } from './types';
 
 /**
  * The user's own library of installed MCPs, which is where a hub install
@@ -8,6 +8,14 @@ import type { MCPView, UpdateMCPRequest } from './types';
  */
 export const mcpApi = {
 	list: () => client.get<MCPView[]>('/mcp'),
+
+	/**
+	 * Fetches the tools inside an installed MCP by connecting to its server
+	 * (name / description / parameter schema), so the library card can be
+	 * opened to see what the MCP can actually do.
+	 */
+	tools: (mcpId: string) =>
+		client.get<MCPToolsResponse>(`/mcp-tools/${encodeURIComponent(mcpId)}`),
 
 	/**
 	 * Renames, enables/disables, or re-keys it. Changing `values` is a

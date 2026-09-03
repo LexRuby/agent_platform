@@ -172,3 +172,36 @@ class TestSrcLeaderTeam:
         """团队互动流程图与团队面板组件必须存在。"""
         assert _src_exists("components/panel/TeamFlowPanel.tsx"), "丢失团队互动流程图组件"
         assert _src_exists("components/panel/TeamPanel.tsx"), "丢失团队面板组件"
+
+
+class TestSrcMCPToolsDrawer:
+    """「我的 MCP」点开看工具清单（2026-09-03 用户反馈：注册的 MCP 无法点击）。"""
+
+    def test_drawer_component_present(self):
+        """工具清单抽屉组件必须存在。"""
+        assert _src_exists("components/drawer/MCPToolsDrawer.tsx"), \
+            "丢失 MCP 工具清单抽屉组件"
+
+    def test_mcp_api_has_tools_endpoint(self):
+        """前端 API 层必须调用 /mcp-tools/{id}。"""
+        api = _src("api/mcp.ts")
+        assert "/mcp-tools/" in api, "丢失 MCP 工具清单 API"
+
+    def test_mine_panel_rows_clickable(self):
+        """「我的 MCP」列表项必须可点击打开抽屉（含悬停样式与提示）。"""
+        page = _src("pages/mcp/index.tsx")
+        assert "setInspecting" in page, "丢失 MCP 行点击打开抽屉逻辑"
+        assert "cursor-pointer" in page, "丢失 MCP 行可点击样式"
+        # 编辑/删除按钮必须阻止冒泡，避免点击它们同时打开抽屉
+        assert "stopPropagation" in page, "丢失按钮事件冒泡隔离"
+
+    def test_drawer_i18n_keys_present(self):
+        """抽屉文案（中文）必须存在于 zh.json。"""
+        zh = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "zh.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        assert "mcp-tools" in zh, "丢失 mcp-tools 文案节点"
+        for key in ("itemTooltip", "toolCount", "parametersLabel"):
+            assert key in zh["mcp-tools"], f"丢失 mcp-tools.{key} 文案"

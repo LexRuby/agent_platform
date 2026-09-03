@@ -873,6 +873,15 @@
         "loadFailedDescription": "请检查服务地址，以及服务是否已启动。",
         "retry": "重试"
     },
+    "mcp-tools": {
+        "itemTooltip": "点击查看该 MCP 的工具清单与参数说明",
+        "toolCount": "{{count}} 个工具",
+        "requiredCount": "{{count}} 个必填参数",
+        "parametersLabel": "参数",
+        "serverLabel": "服务标识：",
+        "descriptionFallback": "点开查看该 MCP 提供的工具。",
+        "emptyTools": "该 MCP 服务没有暴露任何工具。"
+    },
     "skill": {
         "subtitle": "浏览并安装技能",
         "hubsLabel": "来源",

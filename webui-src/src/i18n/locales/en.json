@@ -873,6 +873,15 @@
         "loadFailedDescription": "Check the server URL and that the service is running.",
         "retry": "Retry"
     },
+    "mcp-tools": {
+        "itemTooltip": "Click to see this MCP's tools and parameters",
+        "toolCount": "{{count}} tools",
+        "requiredCount": "{{count}} required params",
+        "parametersLabel": "Parameters",
+        "serverLabel": "Server:",
+        "descriptionFallback": "Open to see the tools this MCP provides.",
+        "emptyTools": "This MCP server exposes no tools."
+    },
     "skill": {
         "subtitle": "Browse and install skills",
         "hubsLabel": "Hubs",

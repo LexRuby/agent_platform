@@ -5,6 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { hubApi } from '@/api';
 import type { HubInfo, MCPCard, MCPView } from '@/api';
 import { InstallMCPDialog } from '@/components/dialog/InstallMCPDialog.tsx';
+import { MCPToolsDrawer } from '@/components/drawer/MCPToolsDrawer.tsx';
 import { ResourceDetailDrawer } from '@/components/drawer/ResourceDetailDrawer.tsx';
 import { LoadMore } from '@/components/hub/LoadMore.tsx';
 import { ResourcePanel } from '@/components/hub/ResourcePanel.tsx';
@@ -336,6 +337,9 @@ interface MinePanelProps {
 function MinePanel({ mcps, loading, onEdit, onRemove }: MinePanelProps) {
 	const { t } = useTranslation();
 	const [query, setQuery] = useState('');
+	// Opening a card shows the tools its server actually exposes, so
+	// "what does this MCP do and how do I use it" is a click away.
+	const [inspecting, setInspecting] = useState<MCPView | null>(null);
 
 	// Filtered client-side: the library is the user's own and small, so a
 	// round trip per keystroke would buy nothing.
@@ -389,9 +393,14 @@ function MinePanel({ mcps, loading, onEdit, onRemove }: MinePanelProps) {
 					</EmptyHeader>
 				</Empty>
 			) : (
-				<ItemGroup className="gap-0">
-					{shown.map((mcp) => (
-						<Item key={mcp.id}>
+					<ItemGroup className="gap-0">
+						{shown.map((mcp) => (
+							<Item
+								key={mcp.id}
+								className="cursor-pointer hover:bg-row-hover"
+								title={t('mcp-tools.itemTooltip')}
+								onClick={() => setInspecting(mcp)}
+							>
 							<ItemMedia>
 								<Avatar className="rounded-md">
 									<AvatarImage
@@ -451,7 +460,12 @@ function MinePanel({ mcps, loading, onEdit, onRemove }: MinePanelProps) {
 										size="icon-sm"
 										variant="ghost"
 										className="text-muted-foreground"
-										onClick={() => onEdit(mcp)}
+										onClick={(e) => {
+											// Row click opens the tools drawer;
+											// editing must not open it too.
+											e.stopPropagation();
+											onEdit(mcp);
+										}}
 										title={t('common.edit')}
 									>
 										<Pencil />
@@ -461,7 +475,10 @@ function MinePanel({ mcps, loading, onEdit, onRemove }: MinePanelProps) {
 									size="icon-sm"
 									variant="ghost"
 									className="text-muted-foreground"
-									onClick={() => onRemove(mcp.id)}
+									onClick={(e) => {
+										e.stopPropagation();
+										onRemove(mcp.id);
+									}}
 									title={t('common.delete')}
 								>
 									<Trash2 />
@@ -470,7 +487,14 @@ function MinePanel({ mcps, loading, onEdit, onRemove }: MinePanelProps) {
 						</Item>
 					))}
 				</ItemGroup>
-			)}
+				)}
+
+			<MCPToolsDrawer
+				mcp={inspecting}
+				onOpenChange={(open) => {
+					if (!open) setInspecting(null);
+				}}
+			/>
 		</ResourcePanel>
 	);
 }

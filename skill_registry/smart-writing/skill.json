@@ -1,0 +1,8 @@
+{
+    "name": "smart-writing",
+    "display_name": "智能写作",
+    "description": "术语本体识别（fpc/fop）、技术方案抽取与筛选、LLM 模板化生成、用户结果库管理。配合 MCP 服务 smart-writing（mcp__smart-writing__*）使用，覆盖专利交底书写作全流程。",
+    "tags": ["写作", "本体", "方案抽取", "交底书"],
+    "version": "1.0.0",
+    "author": "agentforge"
+}

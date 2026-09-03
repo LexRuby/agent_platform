@@ -33,6 +33,7 @@ from app.agent_version import AgentVersionMiddleware, agent_version_router
 from app.auth import AuthMiddleware, _LOGIN_HTML, auth_router
 from app.ark_credential import ArkCredential
 from app.leader_team import LeaderTeamMiddleware, leader_team_router
+from app.local_skill_hub import LocalSkillHub
 from app.prompt_templates import (
     PromptTemplateSchemaMiddleware,
     prompt_templates_router,
@@ -61,6 +62,9 @@ app = create_app(
     ),
     knowledge_chunkers=[ApproxTokenChunker],
     mcp_hubs=[GitHubMCPHub()],
+    # 本地技能中心：skill_registry/ 目录（专利检索、智能写作），
+    # 技能中心页安装 → 会话工作区装配 SKILL.md 全自动可用
+    skill_hubs=[LocalSkillHub(BASE_DIR / "skill_registry")],
     extra_middlewares=[
         Middleware(
             CORSMiddleware,
@@ -90,6 +94,12 @@ app.include_router(agent_version_router)
 
 # 提示词模板：列表 API + 注入 /agent/schema/v2（前端据此渲染模板下拉）
 app.include_router(prompt_templates_router)
+
+# MCP 工具清单查看：点开「我的 MCP」看内部工具/参数（GET /mcp-tools/{id}）
+from app.mcp_tools import init_mcp_tools, mcp_tools_router  # noqa: E402
+
+init_mcp_tools(storage)
+app.include_router(mcp_tools_router)
 
 
 def _start_ark_heartbeat() -> None:
