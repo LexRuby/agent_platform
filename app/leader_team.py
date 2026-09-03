@@ -234,7 +234,13 @@ class LeaderTeamMiddleware:
                 if status in (200, 201) and ids:
                     try:
                         resp = json.loads(b"".join(state["chunks"]))
-                        new_id = resp.get("id") or resp.get("agent", {}).get("id")
+                        # 官方 POST /agent/ 响应顶层是 agent_id（见
+                        # tests/official_contract.py）；兼容 {id} 包装
+                        new_id = (
+                            resp.get("agent_id")
+                            or resp.get("id")
+                            or resp.get("agent", {}).get("id")
+                        )
                         if new_id:
                             self.store.set(new_id, ids)
                     except Exception as e:  # noqa: BLE001

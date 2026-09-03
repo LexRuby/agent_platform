@@ -31,7 +31,17 @@ def env(tmp_path, monkeypatch):
 
 
 def _make_stack(env):
-    """AgentTypeMiddleware 内层 + LeaderTeamMiddleware 外层（与生产同构）。"""
+    """AgentTypeMiddleware 内层 + LeaderTeamMiddleware 外层（与生产同构）。
+
+    内层 mock 的响应结构一律取自 tests/official_contract.py（真实契约），
+    禁止手写 {"id": ...} 之类内联结构——曾因 mock 失真导致线上 bug 测试全绿。
+    """
+    from tests.official_contract import (
+        agent_item,
+        list_agent_response,
+        post_agent_response,
+    )
+
     inner = FastAPI()
     db = {"next": 1, "agents": {}}
 
@@ -40,17 +50,13 @@ def _make_stack(env):
         aid = f"a{db['next']}"
         db["next"] += 1
         db["agents"][aid] = body
-        return {"id": aid, "user_id": "u1", "data": body}
+        return post_agent_response(aid)
 
     @inner.get("/agent/")
     async def list_():
-        return {
-            "agents": [
-                {"id": k, "user_id": "u1", "data": v, "editable": True}
-                for k, v in db["agents"].items()
-            ],
-            "total": len(db["agents"]),
-        }
+        return list_agent_response(
+            [agent_item(k, v) for k, v in db["agents"].items()],
+        )
 
     @inner.patch("/agent/{aid}")
     async def update(aid: str, body: dict):
@@ -83,7 +89,7 @@ def _mk_members(client, n=2):
         r = client.post(
             "/agent/", json={"name": f"成员{i}", "agent_type": "member"},
         )
-        ids.append(r.json()["id"])
+        ids.append(r.json()["agent_id"])
     return ids
 
 
@@ -152,6 +158,11 @@ class TestExtract:
 
 
 class TestMiddleware:
+    def _get_agent(self, client, aid):
+        """模拟前端使用逻辑：创建后从 GET 列表回读（POST 响应只有 agent_id）。"""
+        agents = {a["id"]: a for a in client.get("/agent/").json()["agents"]}
+        return agents[aid]
+
     def test_post_injects_prompt_and_sidecar(self, stack):
         client, ts, ls, db = stack
         m1, m2 = _mk_members(client)
@@ -163,9 +174,12 @@ class TestMiddleware:
                 {"id": m2, "name": "志愿兵", "description": ""},
             ],
         })
-        lid = r.json()["id"]
-        sp = r.json()["data"]["system_prompt"]
-        assert "team_members" not in r.json()["data"]
+        assert r.status_code == 200
+        lid = r.json()["agent_id"]
+        # 回读验证（真实契约：POST 响应只有 agent_id，不返回 data）
+        stored = self._get_agent(client, lid)
+        sp = stored["data"]["system_prompt"]
+        assert "team_members" not in stored["data"]
         assert "你是主理人。" in sp and "## 预置团队成员" in sp
         assert "- 研究员：政策" in sp
         assert ls.get(lid) == [m1, m2]
@@ -183,19 +197,21 @@ class TestMiddleware:
             "name": "普通", "agent_type": "member",
             "team_members": [{"id": m1, "name": "x", "description": ""}],
         })
-        assert "## 预置团队成员" not in (r.json()["data"].get("system_prompt") or "")
+        stored = self._get_agent(client, r.json()["agent_id"])
+        assert "## 预置团队成员" not in (stored["data"].get("system_prompt") or "")
         assert ls.load() == {}
 
     def test_post_rejects_leader_as_member(self, stack):
         client, _, ls, _ = stack
         lid = client.post(
             "/agent/", json={"name": "L", "agent_type": "leader"},
-        ).json()["id"]
+        ).json()["agent_id"]
         r = client.post("/agent/", json={
             "name": "L2", "agent_type": "leader",
             "team_members": [{"id": lid, "name": "L", "description": ""}],
         })
-        assert "## 预置团队成员" not in (r.json()["data"].get("system_prompt") or "")
+        stored = self._get_agent(client, r.json()["agent_id"])
+        assert "## 预置团队成员" not in (stored["data"].get("system_prompt") or "")
         assert ls.load() == {}
 
     def test_get_injects_team_members(self, stack):
@@ -204,7 +220,7 @@ class TestMiddleware:
         lid = client.post("/agent/", json={
             "name": "L", "agent_type": "leader",
             "team_members": [{"id": m1, "name": "x", "description": ""}],
-        }).json()["id"]
+        }).json()["agent_id"]
         agents = {a["id"]: a for a in client.get("/agent/").json()["agents"]}
         assert agents[lid]["team_members"] == [m1]
         assert "team_members" not in agents[m1]
@@ -218,7 +234,7 @@ class TestMiddleware:
                 {"id": m1, "name": "a", "description": ""},
                 {"id": m2, "name": "b", "description": ""},
             ],
-        }).json()["id"]
+        }).json()["agent_id"]
         r = client.patch(f"/agent/{lid}", json={
             "system_prompt": "新基础\n\n## 预置团队成员\n- 旧的",
             "team_members": [{"id": m2, "name": "b2", "description": "d"}],
@@ -236,7 +252,7 @@ class TestMiddleware:
         lid = client.post("/agent/", json={
             "name": "L", "agent_type": "leader", "system_prompt": "基础",
             "team_members": [{"id": m1, "name": "x", "description": ""}],
-        }).json()["id"]
+        }).json()["agent_id"]
         r = client.patch(f"/agent/{lid}", json={
             "team_members": [], "system_prompt": "基础\n\n## 预置团队成员\n- x",
         })
@@ -251,7 +267,7 @@ class TestMiddleware:
         lid = client.post("/agent/", json={
             "name": "L", "agent_type": "leader",
             "team_members": [{"id": m1, "name": "x", "description": ""}],
-        }).json()["id"]
+        }).json()["agent_id"]
         client.delete(f"/agent/{lid}")
         assert ls.get(lid) == []
 
@@ -330,7 +346,7 @@ class TestRecommend:
         # 加一个 leader 候选——服务端应过滤
         lid = client.post(
             "/agent/", json={"name": "大A", "agent_type": "leader"},
-        ).json()["id"]
+        ).json()["agent_id"]
         agents_with_leader = agents + [{
             "id": lid, "data": {"name": "大A"}, "agent_type": "leader",
         }]
@@ -361,3 +377,65 @@ class TestLLMUtils:
         from app.llm_utils import _extract_json
         with pytest.raises(ValueError):
             _extract_json("完全不是 JSON")
+
+
+class TestCreateLeaderEndToEnd:
+    """用户完整使用逻辑：建成员 → 建主理人（带成员）→ 回读验证。
+
+    模拟前端真实调用序列，任何一层（agent_type / leader_team 中间件、
+    官方契约解析）断裂都会在此暴露——针对"各层单测全绿、组合链路断裂"
+    的事故形态（如 POST 响应 agent_id 解析失败导致类型与成员名单同时丢失）。
+    """
+
+    def test_full_flow(self, stack):
+        client, ts, ls, db = stack
+        # 1. 建两个小A 成员
+        m_ids = []
+        for i, (name, desc) in enumerate([
+            ("高考志愿兵", "志愿填报专家"), ("政策研究员", "政策解读"),
+        ]):
+            r = client.post("/agent/", json={
+                "name": name, "agent_type": "member",
+                "invite_config": {"invitable": True, "invite_description": desc},
+            })
+            assert r.status_code == 200
+            m_ids.append(r.json()["agent_id"])
+
+        # 2. 建大A 主理人，预置上述成员
+        r = client.post("/agent/", json={
+            "name": "高考主理人", "agent_type": "leader",
+            "system_prompt": "你是高考团队主理人。",
+            "team_members": [
+                {"id": m_ids[0], "name": "高考志愿兵", "description": "志愿填报专家"},
+                {"id": m_ids[1], "name": "政策研究员", "description": "政策解读"},
+            ],
+        })
+        assert r.status_code == 200
+        lid = r.json()["agent_id"]
+
+        # 3. 回读：类型、成员名单、提示词注入三件事同时成立
+        agents = {a["id"]: a for a in client.get("/agent/").json()["agents"]}
+        leader = agents[lid]
+        assert leader["agent_type"] == "leader"
+        assert leader["team_members"] == m_ids
+        sp = leader["data"]["system_prompt"]
+        assert "你是高考团队主理人。" in sp
+        assert "## 预置团队成员" in sp
+        assert "- 高考志愿兵：志愿填报专家" in sp
+        assert "- 政策研究员：政策解读" in sp
+        # 成员未被污染
+        for mid in m_ids:
+            assert agents[mid]["agent_type"] == "member"
+            assert "team_members" not in agents[mid]
+            assert "## 预置团队成员" not in (agents[mid]["data"].get("system_prompt") or "")
+
+        # 4. 编辑主理人换成员名单：段落重写 + sidecar 更新
+        r = client.patch(f"/agent/{lid}", json={
+            "name": "高考主理人", "agent_type": "leader",
+            "system_prompt": "你是高考团队主理人。",
+            "team_members": [{"id": m_ids[0], "name": "高考志愿兵", "description": "志愿填报专家"}],
+        })
+        assert r.status_code == 200
+        agents = {a["id"]: a for a in client.get("/agent/").json()["agents"]}
+        assert agents[lid]["team_members"] == [m_ids[0]]
+        assert agents[lid]["data"]["system_prompt"].count("## 预置团队成员") == 1

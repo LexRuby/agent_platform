@@ -93,20 +93,22 @@ def _extract_json(text: str):
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # 首个平衡 {}/[] 片段
-    for start_ch, end_ch in (("{", "}"), ("[", "]")):
-        start = text.find(start_ch)
-        if start == -1:
-            continue
-        depth = 0
-        for i in range(start, len(text)):
-            if text[i] == start_ch:
-                depth += 1
-            elif text[i] == end_ch:
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(text[start : i + 1])
-                    except json.JSONDecodeError:
-                        break
+    # 首个平衡 {}/[] 片段：取文本中更早出现的起始括号，
+    # 否则 [{"x":1}] 会错误返回内层 {"x":1}（丢失数组语义与后续元素）
+    start_candidates = [ch for ch in ("{", "[") if text.find(ch) != -1]
+    if not start_candidates:
+        raise ValueError(f"无法从 LLM 回复中解析 JSON: {text[:200]!r}")
+    start_ch = min(start_candidates, key=lambda ch: text.find(ch))
+    end_ch = "}" if start_ch == "{" else "]"
+    depth = 0
+    for i in range(text.find(start_ch), len(text)):
+        if text[i] == start_ch:
+            depth += 1
+        elif text[i] == end_ch:
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[text.find(start_ch) : i + 1])
+                except json.JSONDecodeError:
+                    break
     raise ValueError(f"无法从 LLM 回复中解析 JSON: {text[:200]!r}")

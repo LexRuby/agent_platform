@@ -190,6 +190,10 @@ class TestArchive:
         assert detail["workflow_steps"] == ["步骤1", "步骤2"]
 
     def test_create_registers_new_agents(self, client, env, monkeypatch):
+        """封档注册链路（真实契约）：新成员经 POST /agent/ 入库，
+        响应顶层是 agent_id——封档记录必须捕获到该 id（曾因此丢失注册信息）。"""
+        from tests.official_contract import post_agent_response
+
         registered_calls = []
 
         async def fake_call(method, path, user_id, json_body=None, params=None):
@@ -197,7 +201,7 @@ class TestArchive:
             class FakeResp:
                 status_code = 200
                 def json(self):
-                    return {"id": "new-agent-1"}
+                    return post_agent_response("new-agent-1")
                 def raise_for_status(self):
                     pass
             return FakeResp()

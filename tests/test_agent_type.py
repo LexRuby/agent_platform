@@ -29,7 +29,18 @@ def store(tmp_path):
 
 @pytest.fixture
 def client(store):
-    """模拟官方 agent API（路由与真实服务一致）。"""
+    """模拟官方 agent API（路由与真实服务一致）。
+
+    内层 mock 的响应结构一律取自 tests/official_contract.py（真实契约），
+    禁止手写内联结构——曾因 mock 返回 {"id": ...} 与真实 agent_id 不符，
+    POST 建立的类型映射在线上从未生效而测试全绿。
+    """
+    from tests.official_contract import (
+        agent_item,
+        list_agent_response,
+        post_agent_response,
+    )
+
     inner = FastAPI()
     db = {"next": 1, "agents": {}}  # 内存伪存储
 
@@ -38,20 +49,13 @@ def client(store):
         aid = f"a{db['next']}"
         db["next"] += 1
         db["agents"][aid] = body
-        # 与官方 agent-service 真实响应结构一致：顶层 agent_id（非 id）。
-        # 曾因 mock 返回 {"id": ...} 与真实结构不符，POST 建立的类型映射
-        # 在线上从未生效（新建 leader 全部落回 member）而测试全绿。
-        return {"agent_id": aid}
+        return post_agent_response(aid)
 
     @inner.get("/agent/")
     async def list_():
-        return {
-            "agents": [
-                {"id": k, "user_id": "u1", "data": v, "editable": True}
-                for k, v in db["agents"].items()
-            ],
-            "total": len(db["agents"]),
-        }
+        return list_agent_response(
+            [agent_item(k, v) for k, v in db["agents"].items()],
+        )
 
     @inner.patch("/agent/{aid}")
     async def update(aid: str, body: dict):

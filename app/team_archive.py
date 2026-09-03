@@ -259,7 +259,12 @@ async def create_archive(body: ArchiveCreateRequest, request: Request) -> Archiv
                     },
                 )
                 r.raise_for_status()
-                new_id = r.json().get("id")
+                # 官方 POST /agent/ 响应顶层是 agent_id（见
+                # tests/official_contract.py）；兼容 {id} 包装
+                new_id = (
+                    r.json().get("agent_id")
+                    or r.json().get("id")
+                )
                 if new_id:
                     registered.append({
                         "id": new_id,

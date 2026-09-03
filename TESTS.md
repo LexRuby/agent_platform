@@ -1,6 +1,6 @@
 # 测试用例说明（TESTS.md）
 
-自动化测试体系：**334 个用例**，`pytest` 一条命令全量回归（约 17 秒，不依赖任何真实外部服务）。
+自动化测试体系：**355 个用例**，`pytest` 一条命令全量回归（约 17 秒，不依赖任何真实外部服务）。
 
 ## 快速使用
 
@@ -31,6 +31,7 @@ bash scripts/smoke_agent_service.py  # 真模型 E2E 冒烟（形态 B）
 | 中台 HTTP / MCP Server | `httpx.MockTransport` |
 | LLM 调用 | fake runner / `fake_llm` 模式 |
 | 文件持久化 | `tmp_path`，每用例独立 |
+| 官方 agent-service | **`tests/official_contract.py` 工厂函数**（真实契约快照，禁止内联手写响应结构） |
 
 ## 用例清单
 
@@ -177,6 +178,29 @@ startup complete 触发回调；**重复 complete 仅触发一次**；startup fa
 | TestDeployedWebui | **index.html 存在**（否则静态挂载静默降级）；**引用的本地资源全部存在**（防 cp 中断的半截部署）；**无 /@vite/client 残留**（防误部署 dev 构建） |
 | TestPatchSameOrigin | **补丁含 `getBaseUrl = () => window.location.origin`**；**空字符串基址出现即失败**（事故根因回归锁）；**401 → /login 跳转存在** |
 | TestPatchNoSetupGate | **setupComplete 门禁移除**（防"连接到服务器"设置页回归）；**/setup 路由重定向 /chat** |
+
+### 17. `test_official_contract.py` — 官方 API 契约快照（9 例）
+
+> 背景：三处中间件/router 解析官方 `POST /agent/` 响应取 id 时只找 `id`/`agent.id`，
+> 而真实响应顶层是 `agent_id`，导致创建 leader 类型落回 member、预置成员名单
+> 未存储、封档新成员 id 丢失——三个 bug 同根因，且当时 mock 结构失真测试全绿。
+
+`tests/official_contract.py` 把真实响应结构固化为**单一事实源**，全部模拟官方
+API 的 mock 必须经其工厂函数构造（禁止测试内联手写结构）。本文件用快照断言
+锁死契约键列表，官方版本升级时最先转红，强制重新录制契约并同步修实现。
+
+### 18. `test_llm_utils.py` — LLM 直连工具（8 例）
+
+| 组 | 覆盖点 |
+|---|---|
+| TestExtractJson | 纯对象/数组；```json 围栏（带/不带语言标记）；前后杂文包裹（对象/数组）；字符串内花括号不破坏平衡；非法输入报错；**数组包对象取最外层**（曾因先扫 `{` 返回内层对象，丢数组语义——推荐成员场景会只剩 1 个，已修） |
+| TestLlmChat | MockTransport 模拟 ARK：请求契约（URL/Authorization/messages 顺序）；缺 key 报错；`llm_chat_json` 全链路（ARK 响应 → 围栏文本 → dict） |
+
+### 19. `test_leader_team.py` 新增 `TestCreateLeaderEndToEnd`（1 例）
+
+用户完整使用逻辑：建成员 → 建主理人（带成员）→ GET 回读同时验证
+类型 + 成员名单 + 提示词注入 → 编辑换名单（段落重写）。任何一层断裂
+（各层单测全绿、组合链路断裂的事故形态）都会在此暴露。
 
 ## 维护规则
 
