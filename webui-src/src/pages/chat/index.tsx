@@ -4,7 +4,9 @@ import {
 	Cable,
 	CalendarClock,
 	Ellipsis,
+	History,
 	type LucideIcon,
+	Lock,
 	MessageSquareDashed,
 	Pencil,
 	Plus,
@@ -17,6 +19,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ChatViewport } from './ChatViewport';
 import type { SessionRecord, SessionSource } from '@/api';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
+import { AgentVersionDialog } from '@/components/dialog/AgentVersionDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
 import { RenameSessionDialog } from '@/components/dialog/RenameSessionDialog';
@@ -106,6 +109,7 @@ const ChatPageInner = () => {
 
 	const { isMobile, setOpen, setOpenMobile } = useSidebar();
 	const [editOpen, setEditOpen] = useState(false);
+    const [versionOpen, setVersionOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [renameOpen, setRenameOpen] = useState(false);
 	const [renameSession, setRenameSession] = useState<SessionRecord | null>(null);
@@ -241,6 +245,27 @@ const ChatPageInner = () => {
 								variant="ghost"
 								size="default"
 							/>
+							{/* 版本徽章：当前 agent 已有版本时显示（冻结中带锁），
+							    点击打开发版中心——切版本/发版/冻结都在这里 */}
+							{selectedAgent?.version?.current_version != null && (
+								<Button
+									className="h-7 shrink-0 gap-1 px-2"
+									variant={selectedAgent.version.frozen ? 'secondary' : 'outline'}
+									size="sm"
+									disabled={!selectedAgent?.editable}
+									title={t('dialog-agent-version.badgeTooltip', {
+										version: selectedAgent.version.current_version,
+									})}
+									onClick={() => setVersionOpen(true)}
+								>
+									{selectedAgent.version.frozen && (
+										<Lock className="size-3 shrink-0" />
+									)}
+									<span className="font-mono text-xs">
+										v{selectedAgent.version.current_version}
+									</span>
+								</Button>
+							)}
 							<DropdownMenu>
 								<DropdownMenuTrigger asChild>
 									<Button
@@ -258,6 +283,10 @@ const ChatPageInner = () => {
 									<DropdownMenuItem onClick={() => setEditOpen(true)}>
 										<Settings2 />
 										{t('agent-menu.settings')}
+									</DropdownMenuItem>
+									<DropdownMenuItem onClick={() => setVersionOpen(true)}>
+										<History />
+										{t('agent-menu.versions')}
 									</DropdownMenuItem>
 									<DropdownMenuItem
 										onClick={() => setDeleteOpen(true)}
@@ -501,6 +530,12 @@ const ChatPageInner = () => {
 					<EditAgentDialog
 						open={editOpen}
 						onOpenChange={setEditOpen}
+						agent={selectedAgent}
+						onUpdated={refetchAgents}
+					/>
+					<AgentVersionDialog
+						open={versionOpen}
+						onOpenChange={setVersionOpen}
 						agent={selectedAgent}
 						onUpdated={refetchAgents}
 					/>

@@ -903,7 +903,27 @@
     },
     "agent-menu": {
         "settings": "设置",
+        "versions": "版本管理 / 发版",
         "delete": "删除智能体"
+    },
+    "dialog-agent-version": {
+        "title": "版本管理 · {{name}}",
+        "description": "发布新版本、冻结封板、切换历史版本。",
+        "badgeTooltip": "当前版本 v{{version}}——点击管理版本（发版/切版本/冻结）",
+        "currentState": "当前状态",
+        "frozenBadge": "已冻结 v{{version}}",
+        "openBadge": "开放模式",
+        "freeze": "冻结封板",
+        "unfreeze": "解冻（开放模式）",
+        "frozenHint": "该智能体已冻结（版本 v{{version}}），自我迭代已停止。解冻进入开放模式后才能修改配置或发布新版本。",
+        "release": "发布新版本",
+        "releaseLabelPlaceholder": "版本备注（可选），如：对外服务版",
+        "releaseTooltip": "把当前配置固化为一个新版本号",
+        "historyHeading": "版本历史（切换后对话即使用该版本配置）",
+        "current": "当前",
+        "switch": "切换到此版本",
+        "switchTooltip": "恢复该版本配置并设为当前版本",
+        "empty": "尚无版本。研发迭代到满意后，点「发布新版本」生成 v1。"
     },
     "workdir": {
         "title": "工作目录",

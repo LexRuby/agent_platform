@@ -903,6 +903,7 @@
     },
     "agent-menu": {
         "settings": "Settings",
+        "versions": "Versions / Release",
         "delete": "Delete agent"
     },
     "workdir": {
@@ -915,5 +916,24 @@
         "empty": "This folder is empty",
         "pressEnter": "Press Enter to check this path first",
         "gitTooltip": "{{staged}} staged · {{unstaged}} modified · {{untracked}} untracked\nLine counts exclude untracked files"
+    },
+    "dialog-agent-version": {
+        "title": "Versions · {{name}}",
+        "description": "Release new versions, freeze, or switch between history versions.",
+        "badgeTooltip": "Current version v{{version}} — click to manage (release/switch/freeze)",
+        "currentState": "Current state",
+        "frozenBadge": "Frozen v{{version}}",
+        "openBadge": "Open mode",
+        "freeze": "Freeze",
+        "unfreeze": "Unfreeze (open mode)",
+        "frozenHint": "This agent is frozen (version v{{version}}); self-iteration is stopped. Unfreeze to edit or release new versions.",
+        "release": "Release new version",
+        "releaseLabelPlaceholder": "Version note (optional), e.g. production",
+        "releaseTooltip": "Snapshot the current config as a new version number",
+        "historyHeading": "Version history (switching makes the chat use that version's config)",
+        "current": "Current",
+        "switch": "Switch to this version",
+        "switchTooltip": "Restore this version's config and make it current",
+        "empty": "No versions yet. After iterating to your satisfaction, click \"Release new version\" to create v1."
     }
 }
