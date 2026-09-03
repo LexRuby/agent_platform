@@ -944,5 +944,11 @@
         "empty": "此文件夹为空",
         "pressEnter": "先按回车校验该路径",
         "gitTooltip": "{{staged}} 已暂存 · {{unstaged}} 已修改 · {{untracked}} 未跟踪\n行数不含未跟踪文件"
+    },
+    "user-menu": {
+        "account": "账号",
+        "current": "当前登录",
+        "unknown": "未登录",
+        "logout": "退出登录"
     }
 }

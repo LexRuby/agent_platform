@@ -944,5 +944,11 @@
         "switch": "Switch to this version",
         "switchTooltip": "Restore this version's config and make it current",
         "empty": "No versions yet. After iterating to your satisfaction, click \"Release new version\" to create v1."
+    },
+    "user-menu": {
+        "account": "Account",
+        "current": "Signed in as",
+        "unknown": "Not signed in",
+        "logout": "Sign out"
     }
 }

@@ -7,7 +7,6 @@ import {
 	KeyRound,
 	Languages,
 	LibraryBig,
-	UserRound,
 } from 'lucide-react';
 import { useOnborda } from 'onborda';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -28,6 +27,7 @@ import {
 } from '@/components/ui/sidebar';
 import i18n from '@/i18n';
 import { useTranslation } from '@/i18n/useI18n';
+import { UserMenu } from '@/components/layout/UserMenu';
 
 export function AppSidebar() {
 	const navigate = useNavigate();
@@ -175,14 +175,7 @@ export function AppSidebar() {
 						</SidebarMenuButton>
 					</SidebarMenuItem>
 					<SidebarMenuItem>
-						<SidebarMenuButton
-							tooltip={{ children: t('common.settings'), hidden: false }}
-							isActive={location.pathname === '/setup'}
-							onClick={() => navigate('/setup')}
-							className="justify-center"
-						>
-							<UserRound />
-						</SidebarMenuButton>
+						<UserMenu />
 					</SidebarMenuItem>
 				</SidebarMenu>
 			</SidebarFooter>
