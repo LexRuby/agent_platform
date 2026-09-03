@@ -203,7 +203,13 @@ class AgentTypeMiddleware:
                 if status in (200, 201):
                     try:
                         data = json.loads(b"".join(state["chunks"]))
-                        new_id = data.get("id") or data.get("agent", {}).get("id")
+                        # 官方 POST /agent/ 响应顶层是 agent_id；
+                        # 兼容 {id} / {agent:{id}} 两种包装以防上游调整
+                        new_id = (
+                            data.get("agent_id")
+                            or data.get("id")
+                            or data.get("agent", {}).get("id")
+                        )
                         if new_id:
                             self.store.set(new_id, agent_type)
                     except Exception as e:  # noqa: BLE001 - 存储失败不影响主流程

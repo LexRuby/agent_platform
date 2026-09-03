@@ -38,7 +38,10 @@ def client(store):
         aid = f"a{db['next']}"
         db["next"] += 1
         db["agents"][aid] = body
-        return {"id": aid, "user_id": "u1", "data": body}
+        # 与官方 agent-service 真实响应结构一致：顶层 agent_id（非 id）。
+        # 曾因 mock 返回 {"id": ...} 与真实结构不符，POST 建立的类型映射
+        # 在线上从未生效（新建 leader 全部落回 member）而测试全绿。
+        return {"agent_id": aid}
 
     @inner.get("/agent/")
     async def list_():
@@ -169,25 +172,29 @@ class TestMiddlewareWrite:
             "name": "主理人", "agent_type": "leader",
         })
         assert r.status_code == 200
-        # 剥离：内层（官方）收到的 body 无 agent_type
-        assert "agent_type" not in r.json()["data"]
-        # 存储：响应中的 id 建立映射
-        assert store.get(r.json()["id"]) == LEADER
+        aid = r.json()["agent_id"]
+        # 剥离：内层（官方）收到的 body 无 agent_type（经 GET 列表回读验证）
+        listed = client.get("/agent/").json()["agents"]
+        assert "agent_type" not in listed[0]["data"]
+        # 存储：响应中的 agent_id 建立映射（真实结构：顶层 agent_id）
+        assert store.get(aid) == LEADER
+        # 列表注入的 agent_type 同步生效
+        assert listed[0]["agent_type"] == LEADER
 
     def test_post_without_agent_type_no_mapping(self, client, store):
         r = client.post("/agent/", json={"name": "普通"})
-        assert store.get(r.json()["id"]) == MEMBER
+        assert store.get(r.json()["agent_id"]) == MEMBER
         assert store.load() == {}  # 未写文件
 
     def test_patch_stores_from_path(self, client, store):
-        aid = client.post("/agent/", json={"name": "x"}).json()["id"]
+        aid = client.post("/agent/", json={"name": "x"}).json()["agent_id"]
         r = client.patch(f"/agent/{aid}", json={"agent_type": "leader"})
         assert r.status_code == 200
         assert "agent_type" not in r.json()["data"]
         assert store.get(aid) == LEADER
 
     def test_patch_invalid_value_ignored(self, client, store):
-        aid = client.post("/agent/", json={"name": "x"}).json()["id"]
+        aid = client.post("/agent/", json={"name": "x"}).json()["agent_id"]
         r = client.patch(f"/agent/{aid}", json={"agent_type": "bogus"})
         assert r.status_code == 200
         assert store.get(aid) == MEMBER
@@ -195,7 +202,7 @@ class TestMiddlewareWrite:
     def test_delete_cleans_mapping(self, client, store):
         aid = client.post(
             "/agent/", json={"name": "x", "agent_type": "leader"},
-        ).json()["id"]
+        ).json()["agent_id"]
         assert store.get(aid) == LEADER
         r = client.delete(f"/agent/{aid}")
         assert r.status_code == 200
