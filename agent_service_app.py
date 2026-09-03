@@ -29,6 +29,7 @@ from agentscope.rag import ApproxTokenChunker, QdrantStore
 from fastapi.responses import HTMLResponse
 
 from app.agent_type import AgentTypeMiddleware
+from app.agent_version import AgentVersionMiddleware, agent_version_router
 from app.auth import AuthMiddleware, _LOGIN_HTML, auth_router
 from app.ark_credential import ArkCredential
 from app.leader_team import LeaderTeamMiddleware, leader_team_router
@@ -84,6 +85,9 @@ app.include_router(leader_team_router)
 # 团队封档：归档草稿/确认/列表 API
 app.include_router(team_archive_router)
 
+# agent 版本封板：freeze/unfreeze/save-version/restore API
+app.include_router(agent_version_router)
+
 # 提示词模板：列表 API + 注入 /agent/schema/v2（前端据此渲染模板下拉）
 app.include_router(prompt_templates_router)
 
@@ -117,13 +121,17 @@ if (_web_dir / "index.html").exists():
 
 # 最外层：鉴权中间件（cookie 会话 → 身份注入；未登录 401 / 页面 302 /login）
 #         + 提示词模板/agent_type 注入 /agent/schema/v2
+#         + agent 版本封板（冻结中 PATCH 403 拦截、GET 注入 version 状态；
+#           放最外层保证冻结拦截先于 agent_type/leader_team 处理，零副作用）
 #         + agent_type 叠加（POST/PATCH 捕获、GET 注入、DELETE 清理）
 #         + leader 预置团队叠加（team_members 捕获/提示词注入/GET 注入）
 #         + startup 钩子（lifespan 完成后启动 ARK 模型心跳）
 app = _StartupHook(
     AuthMiddleware(
         PromptTemplateSchemaMiddleware(
-            LeaderTeamMiddleware(AgentTypeMiddleware(app)),
+            AgentVersionMiddleware(
+                LeaderTeamMiddleware(AgentTypeMiddleware(app)),
+            ),
         ),
     ),
 )

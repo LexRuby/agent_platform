@@ -96,3 +96,52 @@ class TestPatchNoSetupGate:
         assert "path: '/setup', element: <Navigate to=\"/chat\" replace />" in patch, (
             "补丁未将 /setup 重定向——访问旧链接会看到设置页"
         )
+
+
+class TestPatchAgentVersion:
+    """补丁必须包含 agent 版本封板的前端实现（功能回归锁）。
+
+    版本封板（freeze/unfreeze/save-version/restore）的后端拦截在
+    pytest（test_agent_version.py）已覆盖；但前端若丢失版本区
+    （如重建 webui 用了旧补丁），用户将无法冻结/恢复——tsc 与后端
+    测试均不可见，只能靠补丁内容断言 + 浏览器 E2E。
+    """
+
+    def test_version_api_module_present(self):
+        """agentVersion API 模块必须在补丁里（四个端点齐全）。"""
+        patch = _read_patch()
+        for endpoint in (
+            "/agent/${agentId}/freeze",
+            "/agent/${agentId}/unfreeze",
+            "/agent/${agentId}/save-version",
+            "/agent/${agentId}/versions/${version}/restore",
+        ):
+            assert endpoint in patch, f"补丁丢失版本封板端点 {endpoint}"
+
+    def test_edit_dialog_has_version_section(self):
+        """编辑对话框必须有版本封板区：冻结/解冻按钮 + 冻结时禁用保存。"""
+        patch = _read_patch()
+        assert "dialog-agent-edit.version.freeze" in patch, "补丁丢失冻结封板按钮"
+        assert "dialog-agent-edit.version.unfreeze" in patch, "补丁丢失解冻按钮"
+        # 冻结中主保存按钮必须禁用（自我迭代停止的前端表现）
+        assert "submitting || !schema || !values || frozen" in patch, (
+            "补丁丢失冻结时禁用保存逻辑——冻结的 agent 仍可提交修改"
+        )
+
+    def test_version_i18n_keys_present(self):
+        """zh.json 必须有版本封板文案（用户界面全中文要求）。"""
+        patch = _read_patch()
+        for key in (
+            '"section": "版本封板"',
+            '"frozenBadge": "已冻结 v{{version}}"',
+            '"openBadge": "开放模式"',
+            '"frozenTooltip": "已冻结封板 v{{version}}：配置固定，自我迭代停止"',
+        ):
+            assert key in patch, f"补丁丢失版本封板中文文案: {key}"
+
+    def test_agent_select_frozen_badge(self):
+        """agent 选择器必须有冻结徽章（锁图标 + 版本号）。"""
+        patch = _read_patch()
+        assert "agent.version?.frozen && (" in patch, (
+            "补丁丢失选择器冻结徽章——用户无法分辨正在对话的 agent 是否已封板"
+        )

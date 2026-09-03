@@ -53,6 +53,75 @@ index 497bc4d..b83f8e4 100644
  	return (
  		<OnbordaProvider>
  			<Onborda
+diff --git a/examples/web_ui/frontend/src/api/agentVersion.ts b/examples/web_ui/frontend/src/api/agentVersion.ts
+new file mode 100644
+index 0000000..a2682a4
+--- /dev/null
++++ b/examples/web_ui/frontend/src/api/agentVersion.ts
+@@ -0,0 +1,63 @@
++/**
++ * Agent 版本封板 API：freeze / unfreeze / save-version / restore。
++ *
++ * 对应后端 app/agent_version.py。冻结中的 agent PATCH 会被后端
++ * 403 拦截（自我迭代停止）；restore 是显式授权操作，冻结中也可执行。
++ */
++import { client } from './client';
++
++export interface VersionBrief {
++    version: number;
++    created_at: string;
++    label: string;
++}
++
++export interface AgentVersionStatus {
++    agent_id: string;
++    frozen: boolean;
++    current_version: number | null;
++    latest_version: number | null;
++    versions: VersionBrief[];
++}
++
++export interface VersionDetail extends VersionBrief {
++    data: Record<string, unknown>;
++}
++
++export const agentVersionApi = {
++    /** 冻结封板：当前配置固化为版本号，拦截后续修改。 */
++    freeze: (agentId: string, label?: string) =>
++        client.post<AgentVersionStatus>(
++            `/agent/${agentId}/freeze`,
++            { label: label ?? '' },
++            undefined,
++            { silent: true },
++        ),
++    /** 解冻：开放模式，恢复可编辑。 */
++    unfreeze: (agentId: string) =>
++        client.post<AgentVersionStatus>(
++            `/agent/${agentId}/unfreeze`,
++            undefined,
++            undefined,
++            { silent: true },
++        ),
++    /** 保存当前配置为新版本（开放模式下迭代满意后手动存版）。 */
++    saveVersion: (agentId: string, label?: string) =>
++        client.post<AgentVersionStatus>(
++            `/agent/${agentId}/save-version`,
++            { label: label ?? '' },
++            undefined,
++            { silent: true },
++        ),
++    /** 版本列表（不含快照正文）。 */
++    list: (agentId: string) =>
++        client.get<AgentVersionStatus>(`/agent/${agentId}/versions`),
++    /** 恢复到历史版本（显式授权，冻结中也可执行）。 */
++    restore: (agentId: string, version: number) =>
++        client.post<AgentVersionStatus>(
++            `/agent/${agentId}/versions/${version}/restore`,
++            undefined,
++            undefined,
++            { silent: true },
++        ),
++};
 diff --git a/examples/web_ui/frontend/src/api/client.ts b/examples/web_ui/frontend/src/api/client.ts
 index a7bc0c9..f860a17 100644
 --- a/examples/web_ui/frontend/src/api/client.ts
@@ -179,19 +248,26 @@ index 0000000..aa787e3
 +	get: (id: string) => client.get<TeamArchive>(`/team-archive/${id}`),
 +};
 diff --git a/examples/web_ui/frontend/src/api/types.ts b/examples/web_ui/frontend/src/api/types.ts
-index b9ed157..6ef0ee7 100644
+index b9ed157..6443ea6 100644
 --- a/examples/web_ui/frontend/src/api/types.ts
 +++ b/examples/web_ui/frontend/src/api/types.ts
-@@ -57,11 +57,25 @@ export interface AgentView extends RecordBase {
+@@ -57,11 +57,32 @@ export interface AgentView extends RecordBase {
  	 * for agents shared to the viewer with read-only permission.
  	 */
  	editable: boolean;
 +	/** Agent classification injected by the backend middleware:
-+	 * `leader` = 大A 主理人 (team orchestrator),
-+	 * `member` = 小A 专家 (domain expert). Defaults to `member`. */
-+	agent_type?: 'leader' | 'member';
-+	/** Preset team member ids (leader only), injected by the backend. */
-+	team_members?: string[];
++     * `leader` = 大A 主理人 (team orchestrator),
++     * `member` = 小A 专家 (domain expert). Defaults to `member`. */
++    agent_type?: 'leader' | 'member';
++    /** Preset team member ids (leader only), injected by the backend. */
++    team_members?: string[];
++    /** 版本封板状态（后端中间件注入）：frozen=已冻结，
++     * current_version=当前生效版本号，latest_version=最新版本号。 */
++    version?: {
++        frozen: boolean;
++        current_version: number | null;
++        latest_version: number | null;
++    };
 +}
 +
 +export interface TeamMemberRef {
@@ -208,7 +284,7 @@ index b9ed157..6ef0ee7 100644
  	context_config?: ContextConfig;
  	react_config?: ReActConfig;
  	invite_config?: InviteConfig;
-@@ -74,6 +88,8 @@ export interface CreateAgentResponse {
+@@ -74,6 +95,8 @@ export interface CreateAgentResponse {
  export interface UpdateAgentRequest {
  	name?: string;
  	system_prompt?: string;
@@ -217,7 +293,7 @@ index b9ed157..6ef0ee7 100644
  	context_config?: ContextConfig;
  	react_config?: ReActConfig;
  	invite_config?: InviteConfig;
-@@ -378,6 +394,13 @@ export interface JSONSchemaProperty {
+@@ -378,6 +401,13 @@ export interface JSONSchemaProperty {
  	maximum?: number;
  	exclusiveMinimum?: number;
  	exclusiveMaximum?: number;
@@ -741,29 +817,56 @@ index 0000000..c0b2187
 +	);
 +}
 diff --git a/examples/web_ui/frontend/src/components/dialog/EditAgentDialog.tsx b/examples/web_ui/frontend/src/components/dialog/EditAgentDialog.tsx
-index 859e9c1..f37e83f 100644
+index 859e9c1..2dd4d64 100644
 --- a/examples/web_ui/frontend/src/components/dialog/EditAgentDialog.tsx
 +++ b/examples/web_ui/frontend/src/components/dialog/EditAgentDialog.tsx
-@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
+@@ -1,8 +1,10 @@
+-import { CircleAlert, Loader2, Save } from 'lucide-react';
+-import { useEffect, useState } from 'react';
++import { CircleAlert, History, Loader2, Lock, LockOpen, RotateCcw, Save } from 'lucide-react';
++import { useEffect, useRef, useState } from 'react';
  import { useTranslation } from 'react-i18next';
  
  import type { AgentView, ContextConfig, InviteConfig, ReActConfig } from '@/api';
++import { agentVersionApi, type AgentVersionStatus } from '@/api/agentVersion';
 +import { MemberPicker } from '@/components/form/MemberPicker';
  import {
  	AgentFormFields,
  	defaultAgentFormValues,
-@@ -32,18 +33,20 @@ interface Props {
+@@ -11,6 +13,7 @@ import {
+ } from '@/components/form/AgentFormFields';
+ import type { SchemaFormValue } from '@/components/form/SchemaForm';
+ import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
++import { Badge } from '@/components/ui/badge';
+ import { Button } from '@/components/ui/button';
+ import {
+ 	Dialog,
+@@ -20,6 +23,7 @@ import {
+ 	DialogTitle,
+ 	DialogDescription,
+ } from '@/components/ui/dialog';
++import { Separator } from '@/components/ui/separator';
+ import { useAgents } from '@/hooks/useAgents';
+ import { useAgentSchema } from '@/hooks/useAgentSchema';
+ import { formatApiErrorForAlert } from '@/lib/api-error';
+@@ -32,37 +36,77 @@ interface Props {
  }
  
  export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props) {
 -	const { update } = useAgents();
-+	const { update, agents } = useAgents();
++	const { update, agents, refetch } = useAgents();
  	const { t } = useTranslation();
  	const { schema } = useAgentSchema();
  	const [submitting, setSubmitting] = useState(false);
  	const [values, setValues] = useState<AgentFormValues | null>(null);
  	const [errorMsg, setErrorMsg] = useState('');
 +	const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
++	// 版本封板状态（打开对话框时从后端拉取）
++	const [versionStatus, setVersionStatus] = useState<AgentVersionStatus | null>(null);
++	const [versionBusy, setVersionBusy] = useState(false);
++	// 表单已为哪个 agent 初始化过：版本操作后 refetch 会换 agent 对象引用，
++	// 不加守卫会把用户未保存的编辑冲掉
++	const initedFor = useRef<string | null>(null);
  
  	useEffect(() => {
  		if (!open || !schema) {
@@ -771,10 +874,14 @@ index 859e9c1..f37e83f 100644
  				setValues(null);
  				setErrorMsg('');
 +				setSelectedMembers([]);
++				setVersionStatus(null);
++				initedFor.current = null;
  			}
  			return;
  		}
-@@ -51,11 +54,13 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
++		if (initedFor.current === agent.id && values) return;
++		initedFor.current = agent.id;
+ 		// Start from schema defaults, then overlay the existing agent's data so
  		// any unset fields fall back to defaults rather than empty.
  		const base = defaultAgentFormValues(schema);
  		const d = agent.data;
@@ -788,7 +895,41 @@ index 859e9c1..f37e83f 100644
  			},
  			context_config: { ...base.context_config, ...(d.context_config ?? {}) },
  			react_config: { ...base.react_config, ...(d.react_config ?? {}) },
-@@ -78,11 +83,29 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
+ 			invite_config: { ...base.invite_config, ...(d.invite_config ?? {}) },
+ 		});
+ 		setErrorMsg('');
+-	}, [open, schema, agent]);
++	}, [open, schema, agent, values]);
++
++	// 打开对话框时拉取版本列表（列表接口含 frozen/versions，权威）
++	useEffect(() => {
++		if (!open) return;
++		let cancelled = false;
++		agentVersionApi
++			.list(agent.id)
++			.then((s) => {
++				if (!cancelled) setVersionStatus(s);
++			})
++			.catch(() => {
++				// 拉取失败降级为列表注入的粗粒度状态（无版本明细）
++				if (!cancelled && agent.version) {
++					setVersionStatus({
++						agent_id: agent.id,
++						frozen: agent.version.frozen,
++						current_version: agent.version.current_version,
++						latest_version: agent.version.latest_version,
++						versions: [],
++					});
++				}
++			});
++		return () => {
++			cancelled = true;
++		};
++	}, [open, agent.id]);
+ 
+ 	const handleChange = (section: AgentSection, key: string, value: SchemaFormValue) => {
+ 		setErrorMsg('');
+@@ -78,11 +122,29 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
  		setErrorMsg('');
  		setSubmitting(true);
  		try {
@@ -799,11 +940,11 @@ index 859e9c1..f37e83f 100644
 +				const a = agents.find((x) => x.id === id);
 +				return a
 +					? {
-+							id,
-+							name: a.data.name,
-+							description:
-+								a.data.invite_config?.invite_description ?? '',
-+						}
++						id,
++						name: a.data.name,
++						description:
++							a.data.invite_config?.invite_description ?? '',
++					}
 +					: { id, name: id.slice(0, 8), description: '' };
 +			};
  			await update(
@@ -818,7 +959,50 @@ index 859e9c1..f37e83f 100644
  					context_config: values.context_config as unknown as ContextConfig,
  					react_config: values.react_config as unknown as ReActConfig,
  					invite_config: values.invite_config as unknown as InviteConfig,
-@@ -115,6 +138,16 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
+@@ -98,8 +160,42 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
+ 		}
+ 	};
+ 
++	// ── 版本封板操作 ────────────────────────────────────────────────────
++	const runVersionOp = async (op: () => Promise<AgentVersionStatus>) => {
++		setVersionBusy(true);
++		setErrorMsg('');
++		try {
++			const status = await op();
++			setVersionStatus(status);
++			// 刷新列表让选择器/侧栏的冻结徽章同步（表单有守卫不会被冲掉）
++			await refetch();
++		} catch (e) {
++			setErrorMsg(formatApiErrorForAlert(e));
++		} finally {
++			setVersionBusy(false);
++		}
++	};
++
++	const handleRestore = async (version: number) => {
++		await runVersionOp(() => agentVersionApi.restore(agent.id, version));
++		// 恢复改写了配置：关闭对话框，让父级以新数据重新打开
++		onOpenChange(false);
++		onUpdated?.();
++	};
++
++	const frozen = versionStatus?.frozen ?? agent.version?.frozen ?? false;
++	const currentVersion = versionStatus?.current_version ?? agent.version?.current_version ?? null;
++
+ 	const nameValid = !!(values?.identity.name as string | undefined)?.trim();
+ 
++	const formatVersionDate = (iso: string) => {
++		try {
++			return new Date(iso).toLocaleString();
++		} catch {
++			return iso;
++		}
++	};
++
+ 	return (
+ 		<Dialog open={open} onOpenChange={onOpenChange}>
+ 			<DialogContent className="!w-[500px] !max-w-[500px]">
+@@ -115,6 +211,154 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
  					) : (
  						<p className="text-muted-foreground text-sm">{t('common.loading')}</p>
  					)}
@@ -832,9 +1016,163 @@ index 859e9c1..f37e83f 100644
 +							/>
 +						</div>
 +					)}
++
++					{/* ── 版本封板区：冻结/解冻/存版/恢复 ── */}
++					<div className="pt-4">
++						<Separator className="mb-3" />
++						<div className="flex items-center justify-between gap-2">
++							<div className="flex min-w-0 items-center gap-2">
++								<History className="size-4 shrink-0 text-muted-foreground" />
++								<span className="text-sm font-medium">
++									{t('dialog-agent-edit.version.section')}
++								</span>
++								{frozen ? (
++									<Badge variant="default" className="shrink-0 gap-1">
++										<Lock className="size-3" />
++										{t('dialog-agent-edit.version.frozenBadge', {
++											version: currentVersion ?? '-',
++										})}
++									</Badge>
++								) : (
++									<Badge
++										variant="outline"
++										className="shrink-0 gap-1 text-muted-foreground"
++									>
++										<LockOpen className="size-3" />
++										{t('dialog-agent-edit.version.openBadge')}
++									</Badge>
++								)}
++							</div>
++							<div className="flex shrink-0 gap-1.5">
++								{frozen ? (
++									<Button
++										variant="outline"
++										size="sm"
++										disabled={versionBusy}
++										onClick={() =>
++											runVersionOp(() => agentVersionApi.unfreeze(agent.id))
++										}
++									>
++										{versionBusy ? (
++											<Loader2 className="size-3.5 animate-spin" />
++										) : (
++											<LockOpen className="size-3.5" />
++										)}
++										{t('dialog-agent-edit.version.unfreeze')}
++									</Button>
++								) : (
++									<>
++										<Button
++											variant="outline"
++											size="sm"
++											disabled={versionBusy}
++											onClick={() =>
++												runVersionOp(() => agentVersionApi.saveVersion(agent.id))
++											}
++										>
++											{versionBusy ? (
++												<Loader2 className="size-3.5 animate-spin" />
++											) : (
++												<Save className="size-3.5" />
++											)}
++											{t('dialog-agent-edit.version.saveVersion')}
++										</Button>
++										<Button
++											variant="outline"
++											size="sm"
++											disabled={versionBusy}
++											onClick={() =>
++												runVersionOp(() => agentVersionApi.freeze(agent.id))
++											}
++										>
++											{versionBusy ? (
++												<Loader2 className="size-3.5 animate-spin" />
++											) : (
++												<Lock className="size-3.5" />
++											)}
++											{t('dialog-agent-edit.version.freeze')}
++										</Button>
++									</>
++								)}
++							</div>
++						</div>
++
++						{frozen && (
++							<p className="mt-2 text-xs text-muted-foreground">
++								{t('dialog-agent-edit.version.frozenHint', {
++									version: currentVersion ?? '-',
++								})}
++							</p>
++						)}
++
++						{versionStatus && versionStatus.versions.length > 0 ? (
++							<ul className="mt-2 flex flex-col gap-1">
++								{[...versionStatus.versions].reverse().map((v) => {
++									const isCurrent = v.version === currentVersion;
++									return (
++										<li
++											key={v.version}
++											className="flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-sm"
++										>
++											<div className="flex min-w-0 items-center gap-2">
++												<span className="shrink-0 font-mono text-xs">
++													v{v.version}
++												</span>
++												{isCurrent && (
++													<Badge
++														variant="secondary"
++														className="shrink-0 px-1 py-0 text-[10px]"
++													>
++														{t('dialog-agent-edit.version.current')}
++													</Badge>
++												)}
++												<span className="min-w-0 truncate text-xs text-muted-foreground">
++													{v.label ||
++														formatVersionDate(v.created_at)}
++												</span>
++											</div>
++											<Button
++												variant="ghost"
++												size="sm"
++												className="h-6 shrink-0 px-2 text-xs"
++												disabled={versionBusy || isCurrent}
++												title={t('dialog-agent-edit.version.restoreTooltip')}
++												onClick={() => handleRestore(v.version)}
++											>
++												<RotateCcw className="size-3" />
++												{t('dialog-agent-edit.version.restore')}
++											</Button>
++										</li>
++									);
++								})}
++							</ul>
++						) : (
++							!frozen && (
++								<p className="mt-2 text-xs text-muted-foreground">
++									{t('dialog-agent-edit.version.empty')}
++								</p>
++							)
++						)}
++					</div>
  				</div>
  				{errorMsg && (
  					<Alert variant="destructive">
+@@ -135,7 +379,14 @@ export function EditAgentDialog({ open, onOpenChange, agent, onUpdated }: Props)
+ 					</Button>
+ 					<Button
+ 						onClick={handleSubmit}
+-						disabled={!nameValid || submitting || !schema || !values}
++						disabled={!nameValid || submitting || !schema || !values || frozen}
++						title={
++							frozen
++								? t('dialog-agent-edit.version.frozenHint', {
++									version: currentVersion ?? '-',
++								})
++								: undefined
++						}
+ 					>
+ 						{submitting ? (
+ 							<Loader2 className="size-3.5 animate-spin" />
 diff --git a/examples/web_ui/frontend/src/components/form/MemberPicker.tsx b/examples/web_ui/frontend/src/components/form/MemberPicker.tsx
 new file mode 100644
 index 0000000..d62bef6
@@ -1716,9 +2054,15 @@ index 68e1fa3..4317574 100644
  			<PanelEmpty
  				icon={UsersRound}
 diff --git a/examples/web_ui/frontend/src/components/select/AgentSelect.tsx b/examples/web_ui/frontend/src/components/select/AgentSelect.tsx
-index bb4037a..f5c2379 100644
+index bb4037a..c16d9a5 100644
 --- a/examples/web_ui/frontend/src/components/select/AgentSelect.tsx
 +++ b/examples/web_ui/frontend/src/components/select/AgentSelect.tsx
+@@ -1,4 +1,4 @@
+-import { Check, ChevronDown } from 'lucide-react';
++import { Check, ChevronDown, Lock } from 'lucide-react';
+ 
+ import type { AgentView } from '@/api';
+ import { Badge } from '@/components/ui/badge';
 @@ -46,6 +46,28 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
  	const hasShared = agents.some((a) => !a.editable);
  	const yours = agents.filter((a) => a.editable);
@@ -1748,15 +2092,27 @@ index bb4037a..f5c2379 100644
  
  	const renderItem = (agent: AgentView) => {
  		const isSelected = agent.id === value;
-@@ -55,6 +77,7 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
+@@ -55,6 +77,19 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
  					className={`size-3.5 shrink-0 ${isSelected ? 'opacity-100' : 'opacity-0'}`}
  				/>
  				<span className="min-w-0 flex-1 truncate">{agent.data.name}</span>
 +				{typeBadge(agent)}
++				{agent.version?.frozen && (
++					<Badge
++						variant="secondary"
++						className="shrink-0 gap-0.5 px-1 py-0 text-[10px]"
++						title={t('chat.agent.frozenTooltip', {
++							version: agent.version.current_version ?? '-',
++						})}
++					>
++						<Lock className="size-2.5" />
++						v{agent.version.current_version ?? '-'}
++					</Badge>
++				)}
  				{!agent.editable && (
  					<Badge
  						variant="secondary"
-@@ -87,6 +110,18 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
+@@ -87,6 +122,18 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
  						<p className="font-medium">{t('chat.agent.emptyTitle')}</p>
  						<p className="text-xs mt-1">{t('chat.agent.emptyDescription')}</p>
  					</div>
@@ -1776,10 +2132,10 @@ index bb4037a..f5c2379 100644
  					<>
  						{yours.length > 0 && (
 diff --git a/examples/web_ui/frontend/src/i18n/locales/en.json b/examples/web_ui/frontend/src/i18n/locales/en.json
-index 7d574dc..c1d4646 100644
+index 7d574dc..a1d385c 100644
 --- a/examples/web_ui/frontend/src/i18n/locales/en.json
 +++ b/examples/web_ui/frontend/src/i18n/locales/en.json
-@@ -1,854 +1,905 @@
+@@ -1,854 +1,919 @@
  {
 -	"common": {
 -		"add": "Add",
@@ -2792,7 +3148,8 @@ index 7d574dc..c1d4646 100644
 +            "leaderBadge": "大A",
 +            "memberBadge": "小A",
 +            "leaderTooltip": "Team leader: plans tasks, builds the team, delegates work",
-+            "memberTooltip": "Domain expert: invited by the leader to collaborate"
++            "memberTooltip": "Domain expert: invited by the leader to collaborate",
++            "frozenTooltip": "Frozen at v{{version}}: config locked, self-iteration stopped"
 +        },
 +        "session": {
 +            "label": "Session",
@@ -2891,7 +3248,20 @@ index 7d574dc..c1d4646 100644
 +    },
 +    "dialog-agent-edit": {
 +        "title": "Edit agent",
-+        "description": "Update this agent's configuration."
++        "description": "Update this agent's configuration.",
++        "version": {
++            "section": "Version freeze",
++            "frozenBadge": "Frozen v{{version}}",
++            "openBadge": "Open mode",
++            "frozenHint": "This agent is frozen (version v{{version}}); self-iteration is stopped. Unfreeze to open mode before editing.",
++            "freeze": "Freeze",
++            "unfreeze": "Unfreeze (open mode)",
++            "saveVersion": "Save new version",
++            "restore": "Restore",
++            "restoreTooltip": "Restore this version's config (explicitly authorized, works while frozen)",
++            "current": "Current",
++            "empty": "No versions yet. Freeze or save a version to create versioned history here."
++        }
 +    },
 +    "dialog-agent-delete": {
 +        "entity": "agent",
@@ -3540,10 +3910,10 @@ index 7d574dc..c1d4646 100644
 +}
 \ No newline at end of file
 diff --git a/examples/web_ui/frontend/src/i18n/locales/zh.json b/examples/web_ui/frontend/src/i18n/locales/zh.json
-index 8d4e4f3..708c966 100644
+index 8d4e4f3..e700778 100644
 --- a/examples/web_ui/frontend/src/i18n/locales/zh.json
 +++ b/examples/web_ui/frontend/src/i18n/locales/zh.json
-@@ -1,854 +1,905 @@
+@@ -1,854 +1,919 @@
  {
 -	"common": {
 -		"add": "添加",
@@ -4556,7 +4926,8 @@ index 8d4e4f3..708c966 100644
 +            "leaderBadge": "大A",
 +            "memberBadge": "小A",
 +            "leaderTooltip": "大A 主理人：规划任务、组建团队、分派工作",
-+            "memberTooltip": "小A 专家：垂直领域专家，可被大A 邀请协作"
++            "memberTooltip": "小A 专家：垂直领域专家，可被大A 邀请协作",
++            "frozenTooltip": "已冻结封板 v{{version}}：配置固定，自我迭代停止"
 +        },
 +        "session": {
 +            "label": "会话",
@@ -4655,7 +5026,20 @@ index 8d4e4f3..708c966 100644
 +    },
 +    "dialog-agent-edit": {
 +        "title": "编辑智能体",
-+        "description": "更新此智能体的配置。"
++        "description": "更新此智能体的配置。",
++        "version": {
++            "section": "版本封板",
++            "frozenBadge": "已冻结 v{{version}}",
++            "openBadge": "开放模式",
++            "frozenHint": "该智能体已冻结（版本 v{{version}}），自我迭代已停止。解冻进入开放模式后才能修改配置。",
++            "freeze": "冻结封板",
++            "unfreeze": "解冻（开放模式）",
++            "saveVersion": "保存新版本",
++            "restore": "恢复",
++            "restoreTooltip": "恢复到该版本的配置（显式授权操作，冻结中也可执行）",
++            "current": "当前",
++            "empty": "尚无版本。冻结封板或保存新版本后，这里会出现带版本号的历史记录。"
++        }
 +    },
 +    "dialog-agent-delete": {
 +        "entity": "智能体",

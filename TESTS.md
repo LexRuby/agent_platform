@@ -236,6 +236,31 @@ schema/v2 双注入不冲突、封档 API 鉴权。
 **教训**：前端 EditAgentDialog 曾回退 `id.slice(0,8)` 作为成员名，注入后
 提示词只剩裸 id——名字/职责类展示数据禁止用 id 截断兜底，必须查真实档案。
 
+### 23. `test_agent_version.py`（25 例）——agent 版本封板
+
+> 背景（2026-09-03 用户需求"培育 → 封板 → 对外服务"）：agent 可 freeze
+> 出版本号，冻结期间自我迭代停止（PATCH 403）；解冻进开放模式可继续迭代，
+> 手动保存产生新版本号；恢复历史版本属显式授权操作，冻结中也可执行。
+
+- **存储层**：版本号自增、同内容复用最新版本（冻结→解冻→再冻结不膨胀）、
+  快照只保留 AgentData 配置字段（name/system_prompt/context/react/invite，
+  运行时元数据不入档）、损坏文件降级、空记录不落盘
+- **冻结拦截**：freeze 后 PATCH 403 且配置不被改；**冻结拦截在外层**——
+  PATCH 携带 agent_type 也不落库（零副作用）；解冻后 PATCH 恢复 200
+- **版本管理**：save-version 不冻结（开放模式存版）；restore 把配置写回
+  历史版本且 current_version 跟随；**冻结中 restore 必须可执行**（经
+  `_official_app` 直写绕过自家拦截链——显式人工操作即授权）
+- **注入与清理**：GET /agent/ 注入 `version` 字段（frozen/current/latest，
+  前端据此渲染冻结徽章）；DELETE agent 清理 sidecar；多段子路径
+  （/freeze 等）透传不受中间件影响
+- **边界**：freeze 不存在的 agent 404、restore 不存在的版本 404、
+  未登录 401、不带 body 的 freeze 不 422、恢复写入失败 502
+
+**契约要点**：`_call_official` 用 httpx ASGI transport 指向**未包装**的
+官方 app——若误指向包装链，冻结中 restore 会被自家 403 拦死（测试用
+同构 fake 复刻此语义）。真实服务冒烟：freeze→403→unfreeze→save v2→
+restore v1 全链路已在 :30000 验证通过。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量
