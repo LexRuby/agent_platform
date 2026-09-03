@@ -94,15 +94,24 @@ class TestTranscript:
 
 class TestSummarize:
     def _patch_official(self, monkeypatch, messages, status=200):
+        from tests.official_contract import session_messages_response
+
         class FakeResp:
             def __init__(self):
                 self.status_code = status
-                self._json = {"messages": messages}
+                self._json = session_messages_response(messages)
+                self.request = None  # HTTPStatusError 构造用（非 200 路径）
 
             def json(self):
                 return self._json
 
         async def fake_call(method, path, user_id, json_body=None, params=None):
+            # 参数契约校验（对齐官方端点约束）：limit 上限 200——
+            # 曾因传 500 触发官方 422，"会话不可读"，归档总结线上完全不可用
+            if params and "limit" in params:
+                assert params["limit"] <= 200, (
+                    f"官方 messages 端点 limit 上限 200，传 {params['limit']} 会 422"
+                )
             return FakeResp()
 
         monkeypatch.setattr(ta, "_call_official", fake_call)
@@ -244,3 +253,61 @@ class TestArchive:
         })
         assert r.status_code == 200  # 注册失败不影响封档本身
         assert r.json()["new_agents"] == []
+
+
+class TestFetchAllMessages:
+    """_fetch_all_messages：官方 limit 上限 200 的翻页聚合。"""
+
+    def _mk(self, i):
+        return {
+            "id": f"m{i}", "role": "user", "name": "u",
+            "content": [{"type": "text", "text": f"消息{i}"}],
+        }
+
+    async def test_pagination_aggregates_pages(self, monkeypatch):
+        """450 条消息（3 页）：页大小 200、before 游标翻页、顺序完整。"""
+        calls = []
+
+        async def fake_call(method, path, user_id, json_body=None, params=None):
+            calls.append(params)
+            from tests.official_contract import session_messages_response
+            before = params.get("before")
+            # 官方 before 语义：返回该 id 之前（排他）的消息
+            offset = int(before[1:]) + 1 if before else 0
+            end = min(offset + 200, 450)
+            page = [self._mk(i) for i in range(offset, end)]
+            has_more = end < 450
+            return type("R", (), {
+                "status_code": 200,
+                "json": lambda s: {
+                    "messages": page, "is_running": False, "has_more": has_more,
+                },
+            })()
+
+        monkeypatch.setattr(ta, "_call_official", fake_call)
+        msgs = await ta._fetch_all_messages("aid", "sid", "u")
+        assert len(msgs) == 450
+        assert msgs[0]["id"] == "m0" and msgs[-1]["id"] == "m449"
+        # 三页，页大小均 ≤200，before 游标 = 上一页最后一条消息 id
+        assert [c["limit"] for c in calls] == [200, 200, 200]
+        assert calls[1]["before"] == "m199"
+        assert calls[2]["before"] == "m399"
+
+    async def test_single_page_short_session(self, monkeypatch):
+        """消息不足一页：只调一次，无 before。"""
+        calls = []
+
+        async def fake_call(method, path, user_id, json_body=None, params=None):
+            calls.append(params)
+            return type("R", (), {
+                "status_code": 200,
+                "json": lambda s: {
+                    "messages": [self._mk(0)], "is_running": False,
+                    "has_more": False,
+                },
+            })()
+
+        monkeypatch.setattr(ta, "_call_official", fake_call)
+        msgs = await ta._fetch_all_messages("aid", "sid", "u")
+        assert len(msgs) == 1
+        assert len(calls) == 1 and "before" not in calls[0]

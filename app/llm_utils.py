@@ -19,7 +19,9 @@ ARK_BASE_URL = os.environ.get(
     "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3",
 )
 DEFAULT_MODEL = os.environ.get("AGENTFORGE_LLM_MODEL", "doubao-seed-2-1-turbo-260628")
-TIMEOUT = 60.0
+# 思考型模型对"长文本分析+结构化输出"任务（如归档总结）实测 30~120 秒，
+# 60 秒会 ReadTimeout（曾致归档总结线上必失败且错误信息为空）
+TIMEOUT = float(os.environ.get("AGENTFORGE_LLM_TIMEOUT", "180"))
 
 
 async def llm_chat(

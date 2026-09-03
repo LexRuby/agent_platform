@@ -32,6 +32,10 @@ LIST_AGENT_ITEM_KEYS = [
 # GET /sessions/{sid}/messages 200 → {"messages": [...], "is_running", "has_more"}
 SESSION_MESSAGES_RESPONSE_KEYS = ["messages", "is_running", "has_more"]
 
+# GET /agent/schema/v2 200 → {"schema": {...}}（properties 在内层；
+# agent_type / system_prompt.prompt_templates 由叠加中间件注入）
+SCHEMA_V2_RESPONSE_KEYS = ["schema"]
+
 
 def post_agent_response(agent_id: str) -> dict:
     """POST /agent/ 的真实响应结构（顶层 agent_id）。"""
@@ -59,6 +63,11 @@ def list_agent_response(agents: list[dict]) -> dict:
 def session_messages_response(messages: list[dict]) -> dict:
     """GET /sessions/{sid}/messages 的真实响应结构。"""
     return {"messages": messages, "is_running": False, "has_more": False}
+
+
+def schema_v2_response(properties: dict) -> dict:
+    """GET /agent/schema/v2 的真实响应结构（schema 包在顶层 "schema" 键下）。"""
+    return {"schema": {"title": "AgentData", "type": "object", "properties": properties}}
 
 
 def message_item(

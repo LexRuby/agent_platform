@@ -32,6 +32,9 @@ class TestContractSnapshot:
             "messages", "is_running", "has_more",
         ]
 
+    def test_schema_v2_response_keys(self):
+        assert oc.SCHEMA_V2_RESPONSE_KEYS == ["schema"]
+
 
 class TestContractFactories:
     """工厂函数输出必须符合快照键。"""
@@ -63,3 +66,8 @@ class TestContractFactories:
         ])
         assert m["id"] == "m1"
         assert m["content"][0]["text"] == "hi"
+
+    def test_schema_v2_response(self):
+        r = oc.schema_v2_response({"name": {"type": "string"}})
+        assert list(r.keys()) == oc.SCHEMA_V2_RESPONSE_KEYS
+        assert "name" in r["schema"]["properties"]

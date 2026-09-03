@@ -109,3 +109,25 @@ class TestLlmChat:
         finally:
             lu.httpx.AsyncClient = orig_client
         assert result == {"recommendations": [{"id": "m1"}]}
+
+
+class TestTimeoutBudget:
+    """超时预算回归锁：思考型模型对长分析任务实测 30~120 秒。"""
+
+    def test_default_timeout_ge_180(self):
+        # 曾为 60 秒，归档总结线上必 ReadTimeout 且错误信息为空
+        assert lu.TIMEOUT >= 180.0, (
+            f"TIMEOUT={lu.TIMEOUT}s 不足以覆盖思考型模型的实际耗时"
+        )
+
+    def test_timeout_env_override(self, monkeypatch):
+        monkeypatch.setenv("AGENTFORGE_LLM_TIMEOUT", "300")
+        import importlib
+        old = lu.TIMEOUT
+        try:
+            importlib.reload(lu)
+            assert lu.TIMEOUT == 300.0
+        finally:
+            monkeypatch.delenv("AGENTFORGE_LLM_TIMEOUT")
+            importlib.reload(lu)
+            assert lu.TIMEOUT == old

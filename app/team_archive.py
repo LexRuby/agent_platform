@@ -114,6 +114,41 @@ class ArchiveResponse(BaseModel):
 team_archive_router = APIRouter(tags=["team-archive"])
 
 
+async def _fetch_all_messages(
+    agent_id: str, session_id: str, user_id: str,
+    max_messages: int = 500,
+) -> list[dict]:
+    """拉取会话全部消息（官方 limit 上限 200，翻页聚合）。
+
+    官方端点 ``GET /sessions/{sid}/messages`` 的 ``limit`` 硬上限 200
+    （传 500 直接 422，曾致归档总结线上不可用），这里按页循环拉取，
+    以 ``before`` 游标（最后一条消息 id）向后翻，直到取满或没有更多。
+    """
+    messages: list[dict] = []
+    before: str | None = None
+    while len(messages) < max_messages:
+        params: dict = {"agent_id": agent_id, "limit": 200}
+        if before:
+            params["before"] = before
+        r = await _call_official(
+            "GET", f"/sessions/{session_id}/messages", user_id, params=params,
+        )
+        if r.status_code != 200:
+            raise httpx.HTTPStatusError(
+                f"会话消息拉取失败: HTTP {r.status_code}",
+                request=r.request, response=r,
+            )
+        data = r.json()
+        page = data.get("messages", [])
+        if not page:
+            break
+        messages.extend(page)
+        if not data.get("has_more") or len(page) < 200:
+            break
+        before = page[-1].get("id")
+    return messages[:max_messages]
+
+
 async def _call_official(
     method: str, path: str, user_id: str, json_body: dict | None = None,
     params: dict | None = None,
@@ -208,30 +243,27 @@ async def summarize_session(body: SummarizeRequest, request: Request) -> Summari
     if not user_id:
         raise HTTPException(status_code=401, detail="未登录")
 
-    r = await _call_official(
-        "GET",
-        f"/sessions/{body.session_id}/messages",
-        user_id,
-        params={"agent_id": body.agent_id, "limit": 500},
-    )
-    if r.status_code != 200:
+    try:
+        messages = await _fetch_all_messages(body.agent_id, body.session_id, user_id)
+    except httpx.HTTPStatusError as e:
         raise HTTPException(
-            status_code=404, detail=f"会话不可读: HTTP {r.status_code}",
+            status_code=404, detail=f"会话不可读: {e}",
         )
-    transcript = _messages_to_transcript(r.json().get("messages", []))
+    transcript = _messages_to_transcript(messages)
     if not transcript.strip():
         raise HTTPException(status_code=400, detail="会话无消息可归档")
 
     try:
         return _to_draft(await _summarize_llm(transcript))
     except Exception as e:  # noqa: BLE001
-        _logger.warning("归档总结 LLM 调用失败: %s", e)
+        # repr 而非 str：httpx 超时类异常 str 为空，日志会丢失关键信息
+        _logger.warning("归档总结 LLM 调用失败: %r", e)
         return SummarizeResponse(
             summary="（LLM 总结失败，请人工填写）",
             workflow_steps=[],
             new_agents=[],
             fallback=True,
-            reason=f"llm-error: {e}",
+            reason=f"llm-error: {e.__class__.__name__}: {e}",
         )
 
 
