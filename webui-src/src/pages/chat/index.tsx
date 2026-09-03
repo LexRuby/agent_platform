@@ -98,7 +98,7 @@ const ChatPageInner = () => {
 		memberId?: string;
 	}>();
 	const { t } = useTranslation();
-	const { agents, refetch: refetchAgents, remove: removeAgent } = useAgents();
+	const { agents, loading, refetch: refetchAgents, remove: removeAgent } = useAgents();
 	const {
 		sessions,
 		refetch: refetchSessions,
@@ -110,6 +110,14 @@ const ChatPageInner = () => {
 	const { isMobile, setOpen, setOpenMobile } = useSidebar();
 	const [editOpen, setEditOpen] = useState(false);
     const [versionOpen, setVersionOpen] = useState(false);
+	// Tour gate: the agent list must finish its first load before the tour
+	// may decide "this is a first-time visitor" — otherwise every returning
+	// user reads as new (counts still 0) and the spotlight overlay locks
+	// the page (2026-09-03 send-button incident).
+	const [listsLoaded, setListsLoaded] = useState(false);
+	useEffect(() => {
+		if (!loading) setListsLoaded(true);
+	}, [loading]);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [renameOpen, setRenameOpen] = useState(false);
 	const [renameSession, setRenameSession] = useState<SessionRecord | null>(null);
@@ -579,14 +587,14 @@ const ChatPageInner = () => {
 					}
 				}}
 			/>
-			<ChatTourController
-				agentsCount={agents.length}
-				sessionsCount={sessions.length}
-				onEnsureSidebarOpen={() => {
-					setOpen(true);
-					setOpenMobile(true);
-				}}
-			/>
+							<ChatTourController
+					agentsCount={agents.length}
+					sessionsCount={sessions.length}
+					ready={listsLoaded}
+					onEnsureSidebarOpen={() => {
+						setOpen(true);
+					}}
+				/>
 		</div>
 	);
 };
