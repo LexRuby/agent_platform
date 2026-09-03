@@ -139,7 +139,18 @@ class AuthMiddleware:
 
         username = await self._session_user(scope)
         if username is None:
-            if method == "GET" and path in ("/", "/index.html"):
+            # 浏览器导航（GET + Accept: text/html）一律 307 → /login：
+            # 只跳 / 的话，未登录直接打开/刷新 /chat、/mcp 等深链接会看到
+            # 裸 401 JSON（2026-09-04 E2E 发现）。API 客户端仍收 401 JSON。
+            accept = next(
+                (
+                    v.decode("latin-1")
+                    for k, v in scope.get("headers", [])
+                    if k == b"accept"
+                ),
+                "",
+            )
+            if method == "GET" and "text/html" in accept:
                 await _send_redirect(send, "/login")
             else:
                 await _send_unauthorized(send)

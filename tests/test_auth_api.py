@@ -64,13 +64,32 @@ class TestMiddlewareAccess:
         assert client.post("/echo").status_code == 401
 
     def test_page_without_login_redirects(self, client):
-        resp = client.get("/", follow_redirects=False)
+        resp = client.get("/", follow_redirects=False, headers={"Accept": "text/html"})
         assert resp.status_code == 307
         assert resp.headers["location"] == "/login"
 
     def test_index_html_redirects(self, client):
-        resp = client.get("/index.html", follow_redirects=False)
+        resp = client.get(
+            "/index.html", follow_redirects=False, headers={"Accept": "text/html"}
+        )
         assert resp.status_code == 307
+
+    def test_deep_link_pages_redirect_for_browsers(self, client):
+        """未登录浏览器直接打开/刷新深链接（/chat、/mcp、/skill 等）
+        也必须 307 → /login，而不是裸 401 JSON（2026-09-04 E2E 修复）。"""
+        for path in ("/chat", "/mcp", "/skill", "/credential", "/knowledge"):
+            resp = client.get(
+                path, follow_redirects=False, headers={"Accept": "text/html"}
+            )
+            assert resp.status_code == 307, f"{path} 应 307 跳登录页"
+            assert resp.headers["location"] == "/login"
+
+    def test_deep_link_401_for_api_clients(self, client):
+        """API 客户端（Accept: */* 或 application/json）保持 401 JSON。"""
+        for path in ("/chat", "/mcp"):
+            resp = client.get(path, follow_redirects=False)
+            assert resp.status_code == 401
+            assert "未登录" in resp.json()["detail"]
 
     def test_login_page_public(self, client):
         assert client.get("/login").status_code == 200
