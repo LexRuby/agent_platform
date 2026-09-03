@@ -261,6 +261,43 @@ schema/v2 双注入不冲突、封档 API 鉴权。
 同构 fake 复刻此语义）。真实服务冒烟：freeze→403→unfreeze→save v2→
 restore v1 全链路已在 :30000 验证通过。
 
+### 24. `test_smart_writing.py`（31 例）——智能写作 MCP Server
+
+> 背景（2026-09-03 用户需求）：把 mcp_data 的智能写作注册包
+> （9 工具 → 2 个后端 13 个 method）注册为平台可用 MCP。
+> 实现：`app/smart_writing.py` 无状态 streamable-http MCP server（:30110），
+> 注册包入库 `mcp_registry/smart_writing.json`。
+
+- **注册包自检**：9 工具齐全、13 条路由、地址规则（搜索类 :30010 /
+  其余 :30020）、description/inputSchema 与注册包逐字一致（文档注意事项 1：
+  "何时用/何时不用"负例直接决定 Agent 选工具准确率，禁止压缩改写）
+- **路由**：when 条件（mode=natural/boolean、action=filter/cluster/save/
+  list/fetch、always）、无匹配抛错
+- **信封**：query_fields 过滤（未列入的入参丢弃）、统一
+  `{"utterance":{"query":...},"method":...,"source":"vr"}`
+- **条件必填**（注意事项 2）：filter_solutions filter 时 query 必填、
+  user_results 按 action 要求 name/time/info——JSON Schema 表达不了的
+  运行时校验，校验失败**不发任何 HTTP 请求**
+- **错误透传**（注意事项 3）：error_msg 原文抛给 Agent（便于自行修正
+  参数重试）；HTTP ≥400 透传
+- **超时**（注意事项 4）：extract_solutions/filter_solutions ≥300s，
+  其余 60s
+- **MCP 协议端点**：initialize（协议版本 2025-03-26）、notification 202、
+  tools/list 原样透传、tools/call 成功/isError 语义、未知工具/方法报错、
+  GET 405（无状态 server 标准行为）
+
+**真实链路验证**（:30000 平台，2026-09-03）：官方 MCPClient 连 :30110
+列出 9 工具；`POST /workspace/mcp` 挂载后 agent 对话中真实调用
+`mcp__smart-writing__detect_word_ontology`，后端返回本体数据（"提高"→
+运动 0.9999），agent 基于结果完成解读。
+
+**坑（重要）**：挂载 MCP 必须用 `is_stateful: true`。官方 app 的
+workspace 对 **stateless** MCPClient 有缓存 bug——第一轮对话正常，
+第二轮起 setup 失败（"The session could not be prepared"，MCP server
+甚至收不到请求）。stateful 挂载 + 无状态 server（不签发 session id）
+组合验证稳定。另：HITL confirm 事件重放 POST /chat/ 会触发新 run
+setup 失败（疑似官方 bug，UI 内确认未复现，观察中）。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量

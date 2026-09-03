@@ -1,0 +1,238 @@
+{
+  "package": "smart-writing-mcp",
+  "server_name": "smart-writing",
+  "display_name": "智能写作能力",
+  "version": "1.0.0",
+  "updated": "2026-09-03",
+  "request_envelope": {
+    "protocol": "POST <endpoint>",
+    "content_type": "application/json",
+    "body_template": {
+      "utterance": { "query": "<按各工具 x_backend[].query_fields 从工具入参组装>" },
+      "method": "<后端方法名，见各工具 x_backend[].method>",
+      "source": "vr"
+    },
+    "note": "全部后端接口共用同一请求信封。响应统一从 response.data 取业务数据；搜索类（patent_search）另有 response.cnt_dict 统计字段。"
+  },
+  "tools": [
+    {
+      "name": "search_patents",
+      "description": "专利文献检索，返回专利列表与统计。mode=natural：自然语言/fop_fpc 知识检索，中文自动译成英文参与检索，优先 fop-fpc 匹配、无命中回退 tac 全文，支持关键词组过滤（组内 OR、组间 AND）与字段统计；mode=boolean：布尔表达式高级检索（仅支持中文），query 须符合 field:text 格式，如 (title:人工智能 OR abst:人工智能) AND (title:大模型 OR abst:大模型)，常用字段 title=标题、abst=摘要、applicantFirst=第一申请人、eff_1=高级功效（完整 60+ 字段表见接口文档）。适用场景：用户描述技术需求、确认 fpc/fop 知识后发起检索、或直接给出检索式。查期刊文献改用 search_journals；按发明原理拓展检索改用 search_by_principle。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "mode": { "type": "string", "enum": ["natural", "boolean"], "description": "natural=自然语言/fop_fpc 检索（后端 patent_search）；boolean=布尔表达式高级检索（后端 high_patent_search）" },
+          "query": { "type": "string", "description": "natural 模式：自然语言检索意图，如『在有噪音条件下，如何实现对语音测试设备的实时语音识别能力进行监控和有效评估』；boolean 模式：布尔检索式" },
+          "fop_fpc": {
+            "type": "object",
+            "properties": {
+              "f": { "type": "array", "items": { "type": "string" } },
+              "o": { "type": "array", "items": { "type": "string" } },
+              "p": { "type": "array", "items": { "type": "string" } },
+              "field": { "type": "array", "items": { "type": "string" } },
+              "product": { "type": "array", "items": { "type": "string" } },
+              "component": { "type": "array", "items": { "type": "string" } }
+            },
+            "description": "仅 natural 模式。fop/fpc 知识（用户编辑确认后传入），优先于 query 生效"
+          },
+          "keywords_info": {
+            "type": "object",
+            "properties": {
+              "words": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": { "word": { "type": "array", "items": { "type": "string" } } },
+                  "required": ["word"]
+                }
+              },
+              "source": { "type": "array", "items": { "type": "string" } },
+              "operator": { "type": "string", "enum": ["and", "or"] }
+            },
+            "description": "仅 natural 模式。words：tac 中必须命中的词组，组内 OR、组间 AND；source：返回字段，默认 ['pubid','tech_field_sent','tech_problem_sent','tech_method_sent','tech_performance_sent','iks_info','scis_app']；operator：关键词组与主查询（query 或 fop_fpc）的逻辑关系"
+          },
+          "cnt_keys": { "type": "array", "items": { "type": "string" }, "description": "仅 natural 模式。需统计分布的字段，如 ['eff_1','eff_2','eff_3','appYear']，结果在返回的 cnt_dict 中" },
+          "source": { "type": "array", "items": { "type": "string" }, "description": "仅 boolean 模式。返回字段列表，不传走服务端默认" },
+          "size": { "type": "integer", "default": 500, "description": "返回数量，默认 500，上限 2000（超过取 2000）" }
+        },
+        "required": ["mode", "query"]
+      },
+      "x_backend": [
+        { "when": "mode=natural", "endpoint": "http://140.210.4.206:30010/consult", "method": "patent_search", "query_fields": ["query", "size", "fop_fpc", "keywords_info", "cnt_keys"] },
+        { "when": "mode=boolean", "endpoint": "http://140.210.4.206:30010/consult", "method": "high_patent_search", "query_fields": ["query", "source", "size"] }
+      ]
+    },
+    {
+      "name": "search_by_principle",
+      "description": "按 TRIZ 发明原理做跨领域拓展检索。输入发明原理名称列表与主维度，召回体现该原理的专利，用于创新范式探索与跨领域方案启发。用户明确要『拓展搜索/创新范式检索/按发明原理检索』时使用；普通技术需求检索用 search_patents。注意：query 仅用于记录用户原始意图，不参与检索。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "names": { "type": "array", "items": { "type": "string" }, "description": "发明原理名称列表，如 ['气动与液压法','多孔材料法','同质法','属性维度法']" },
+          "flag": { "type": "string", "description": "发明原理主维度，如：主系统、主作用" },
+          "query": { "type": "string", "description": "仅记录用户意图，不参与检索" },
+          "source": { "type": "array", "items": { "type": "string" }, "description": "返回字段，不传或空数组时默认 ['pubid','tech_field_sent','tech_problem_sent','tech_method_sent','tech_performance_sent','iks_info','scis_app']" },
+          "size": { "type": "integer", "default": 500, "description": "召回数量，默认 500，上限 2000" }
+        },
+        "required": ["names", "flag"]
+      },
+      "x_backend": [
+        { "when": "always", "endpoint": "http://140.210.4.206:30010/consult", "method": "extend_patent_search", "query_fields": ["query", "names", "flag", "source", "size"] }
+      ]
+    },
+    {
+      "name": "search_journals",
+      "description": "期刊文献布尔检索（仅支持中文）。query 须符合 field:text 布尔格式，可用字段：title=期刊标题、abst=期刊摘要、keywords=期刊关键词。示例：keywords:政府 AND keywords:信息。用户要查论文/期刊文献时使用；查专利用 search_patents。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "布尔检索式，如 'keywords:政府 AND keywords:信息'" },
+          "source": { "type": "array", "items": { "type": "string" }, "description": "返回字段，不传走服务端默认" },
+          "size": { "type": "integer", "default": 500, "description": "返回数量，默认 500，上限 2000" }
+        },
+        "required": ["query"]
+      },
+      "x_backend": [
+        { "when": "always", "endpoint": "http://140.210.4.206:30010/consult", "method": "high_journal_search", "query_fields": ["query", "source", "size"] }
+      ]
+    },
+    {
+      "name": "get_patent_details",
+      "description": "按专利公开号批量获取专利完整数据。用户在检索结果中勾选专利后取详情、或做技术方案抽取前补全字段时使用。patent_source 区分中美专利库；data_source 传空数组返回库内全部字段（含背景技术、四句摘要、权利要求、申请人、IPC/CPC 分类、FOP 数组等）。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pubids": { "type": "array", "items": { "type": "string" }, "description": "专利公开号列表" },
+          "patent_source": { "type": "string", "enum": ["cn", "us"], "description": "专利库：cn=中国，us=美国" },
+          "data_source": { "type": "array", "items": { "type": "string" }, "default": [], "description": "需要返回的字段列表；空数组=返回数据库内全部字段" }
+        },
+        "required": ["pubids", "patent_source"]
+      },
+      "x_backend": [
+        { "when": "always", "endpoint": "http://116.204.102.229:30020/consult", "method": "get_patent_by_ids", "query_fields": ["pubids", "patent_source", "data_source"] }
+      ]
+    },
+    {
+      "name": "detect_word_ontology",
+      "description": "FOP（功能-对象-属性）词的本体识别与同义扩展。用于检索前扩展关键词、优化检索式、理解用户输入的技术知识。两种入参二选一：① 分词模式：分别给 f/o/p/adj 词表；② 组合模式：fop_list，每组含 label（fo 或 fop）与 name 词序列。返回词对应本体及 top-N 关联词。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "f": { "type": "array", "items": { "type": "string" }, "description": "分词模式：功能词列表，如 ['提高']" },
+          "o": { "type": "array", "items": { "type": "string" }, "description": "分词模式：对象词列表，如 ['材料']" },
+          "p": { "type": "array", "items": { "type": "string" }, "description": "分词模式：属性词列表，如 ['燃点']" },
+          "adj": { "type": "array", "items": { "type": "string" }, "description": "分词模式：修饰词列表，如 ['尽可能']" },
+          "fop_list": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": { "type": "string", "enum": ["fo", "fop"] },
+                "name": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["label", "name"]
+            },
+            "description": "组合模式：FOP 组合列表，如 [{'label':'fo','name':['提高','材料']},{'label':'fop','name':['提高','材料','燃点']}]"
+          },
+          "top": { "type": "integer", "default": 3, "description": "返回关联词数量" }
+        },
+        "oneOf": [
+          { "required": ["f"] },
+          { "required": ["fop_list"] }
+        ]
+      },
+      "x_backend": [
+        { "when": "always", "endpoint": "http://116.204.102.229:30020/consult", "method": "detect_word_onto", "query_fields": ["f", "o", "p", "adj", "fop_list", "top"] }
+      ]
+    },
+    {
+      "name": "extract_solutions",
+      "description": "从专利批次中抽取技术方案（服务端批量 LLM 并发，耗时随专利数增长，只对用户勾选确认过的专利调用）。patent_df 每项必须包含 pubid、tech_field_sent、tech_problem_sent、tech_method_sent、tech_performance_sent（四句摘要）、iks_info、scies_app 字段（即 search_patents 默认返回字段），通常将检索/详情结果直接传入。key_info.cluster 必填（发明原理主维度：主系统/主作用等），缺失会导致后续聚合接口出错；key_info 其他键值对会填充进每条抽取结果。返回技术方案列表（含方案-效果对）。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "patent_df": { "type": "array", "items": { "type": "object" }, "description": "专利列表，每项须含 pubid、四句摘要（tech_field_sent/tech_problem_sent/tech_method_sent/tech_performance_sent）、iks_info、scies_app" },
+          "key_info": {
+            "type": "object",
+            "properties": {
+              "cluster": { "type": "string", "description": "必填。发明原理主维度：主系统、主作用等" }
+            },
+            "required": ["cluster"],
+            "description": "额外填充信息，会合并进每条结果；cluster 必填"
+          },
+          "async_num": { "type": "integer", "default": 100, "description": "服务端并发数，默认 100，暂不建议调整" }
+        },
+        "required": ["patent_df", "key_info"]
+      },
+      "x_backend": [
+        { "when": "always", "endpoint": "http://116.204.102.229:30020/consult", "method": "auto_ai_patent_write_solution", "query_fields": ["patent_df", "key_info", "async_num"] }
+      ]
+    },
+    {
+      "name": "filter_solutions",
+      "description": "针对待解决技术问题处理技术方案集。action=filter：从备选方案中筛出能有效解决该问题的技术方案（需给待解决问题 query）；action=cluster：对全部方案聚合生成解决方案组，每个方案标注 label 聚合标签及与待解决问题的关系。method_df 是 extract_solutions 的返回结果，字段须完整保留不可裁剪，通常上一步输出直接传入。必须在 extract_solutions 之后调用。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string", "enum": ["filter", "cluster"], "description": "filter=筛选可解决待解决问题的方案；cluster=聚合生成解决方案组" },
+          "query": { "type": "string", "description": "待解决技术问题，action=filter 时必填" },
+          "method_df": { "type": "array", "items": { "type": "object" }, "description": "技术方案列表，extract_solutions 的返回，字段不可裁剪" },
+          "key_info": { "type": "object", "description": "额外填充信息，可选" },
+          "async_num": { "type": "integer", "default": 100, "description": "服务端并发数，默认 100，暂不建议调整" }
+        },
+        "required": ["action", "method_df"]
+      },
+      "x_backend": [
+        { "when": "action=filter", "endpoint": "http://116.204.102.229:30020/consult", "method": "auto_ai_patent_write_solution2result", "query_fields": ["query", "method_df", "key_info", "async_num"] },
+        { "when": "action=cluster", "endpoint": "http://116.204.102.229:30020/consult", "method": "auto_ai_patent_write_result_cluster", "query_fields": ["method_df", "async_num"] }
+      ]
+    },
+    {
+      "name": "generate_with_prompt",
+      "description": "按 prompt_id 调用 prompt_factory 预置模板生成文本，支持批量（prompt_id_arr 与 context_arr 一一对应）。交底书章节、标题生成、技术背景扩展、关键词扩展等文本生成任务用此工具。model_id：1=doubao_pro_256（默认）、14=doubao_seed_16_flash、15=doubao_seed_16_lite、16=doubao_seed_16（自动 thinking）、17=doubao_seed_16 最新、32=deepseek。已知 prompt_id：key_words_extend（参数 tech_word/func_word/object_word/prop_word，关键词扩展）、tech_background_summary（参数 sentence，技术背景总结）。注意：模板参数值必须全部是 string。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prompt_id_arr": { "type": "array", "items": { "type": "string" }, "description": "prompt 模板 id 列表，必须是 prompt_factory 中已存在的 id" },
+          "context_arr": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "user_args": { "type": "object", "additionalProperties": { "type": "string" }, "description": "user_prompt 模板参数（参数值全部 string）" },
+                "system_args": { "type": "object", "additionalProperties": { "type": "string" }, "description": "system_prompt 模板参数（参数值全部 string）" }
+              },
+              "required": ["user_args"]
+            },
+            "description": "与 prompt_id_arr 一一对应的上下文数组"
+          },
+          "model_id": { "type": "integer", "default": 1, "description": "大模型 id：1=doubao_pro_256、14=doubao_seed_16_flash、15=doubao_seed_16_lite、16=doubao_seed_16（thinking）、17=doubao_seed_16 最新、32=deepseek" }
+        },
+        "required": ["prompt_id_arr", "context_arr"]
+      },
+      "x_backend": [
+        { "when": "always", "endpoint": "http://116.204.102.229:30020/consult", "method": "llm_requests_prompt_temple", "query_fields": ["prompt_id_arr", "context_arr", "model_id"] }
+      ]
+    },
+    {
+      "name": "user_results",
+      "description": "用户结果存档管理（action 三选一）。save：保存结果，user_id+name 唯一、重复报错，time 格式 'YYYY-MM-DD HH:MM:SS'，info 为字符串（通常 json.dumps 后传入）；list：列出用户全部存档名，按时间由近到远；fetch：按 user_id+name 取回存档内容。交底书/方案组草稿的保存、恢复、历史查看用此工具。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string", "enum": ["save", "list", "fetch"], "description": "save=保存、list=列存档名、fetch=取存档内容" },
+          "user_id": { "type": "string", "description": "用户 id（主键）" },
+          "name": { "type": "string", "description": "存档名，save/fetch 必填；save 时不可与已有重复，否则报错" },
+          "time": { "type": "string", "description": "保存时间戳，save 必填，格式 'YYYY-MM-DD HH:MM:SS'" },
+          "info": { "type": "string", "description": "存档内容字符串，save 必填，可为 json.dumps 后的结果" }
+        },
+        "required": ["action", "user_id"]
+      },
+      "x_backend": [
+        { "when": "action=save", "endpoint": "http://116.204.102.229:30020/consult", "method": "user_result_save_info", "query_fields": ["user_id", "time", "name", "info"] },
+        { "when": "action=list", "endpoint": "http://116.204.102.229:30020/consult", "method": "get_user_info_names", "query_fields": ["user_id"] },
+        { "when": "action=fetch", "endpoint": "http://116.204.102.229:30020/consult", "method": "get_user_info_detail", "query_fields": ["user_id", "name"] }
+      ]
+    }
+  ]
+}

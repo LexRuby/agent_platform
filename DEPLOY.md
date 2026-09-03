@@ -306,7 +306,31 @@ echo 'mypassword' > data/users/zhangsan.txt
 
 **E2E 冒烟**：`python scripts/smoke_agent_service.py`（登录→建凭据→Agent→会话→真模型对话→SSE 收流→清理，期望输出 PASS）
 
-### 步骤 8（可选）：外网访问
+### 步骤 8：智能写作 MCP Server（:30110）
+
+注册包在 `mcp_registry/smart_writing.json`（9 工具 → 两个后端 13 个 method，
+原稿见 AgentScope/mcp_data/）。实现为 `app/smart_writing.py` 无状态
+streamable-http MCP server，systemd 常驻：
+
+```bash
+systemctl status agentforge-smart-writing   # 健康检查
+curl http://localhost:30110/health          # 应列出 9 个工具
+```
+
+**挂载到平台会话**（Web UI 的 MCP 面板添加，或 API）：
+
+```bash
+curl -X POST "http://localhost:30000/workspace/mcp?agent_id=<AID>&session_id=<SID>" \
+  -H "X-User-ID: admin" -H "Content-Type: application/json" \
+  -d '{"name":"smart-writing","is_stateful":true,"mcp_config":{"type":"http_mcp","url":"http://localhost:30110/mcp"}}'
+```
+
+**注意：必须 `is_stateful: true`**。官方 app 对 stateless MCPClient 有缓存
+bug（第二轮对话起 setup 失败），详见 TESTS.md 第 24 节。后端地址
+（140.210.4.206:30010 搜索类 / 116.204.102.229:30020 其余）变更时改
+`mcp_registry/smart_writing.json` 重启服务即可。
+
+### 步骤 9（可选）：外网访问
 
 华为云控制台 → 安全组 → 放行 8100（如需公网访问）。**建议仅内网/VPN 访问**；该服务无鉴权，公网裸奔有风险，上公网前需加网关鉴权。
 
