@@ -1,0 +1,15 @@
+[Unit]
+Description=AgentForge smart-writing MCP server (port 30110)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/zhaohongyu/AgentScope/agentforge
+Environment=AGENTFORGE_MCP_REGISTRY=mcp_registry/smart_writing.json
+Environment=AGENTFORGE_MCP_PORT=30110
+ExecStart=/root/miniconda3/envs/agentforge/bin/python -m app.smart_writing
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

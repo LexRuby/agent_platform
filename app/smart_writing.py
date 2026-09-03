@@ -1,9 +1,13 @@
 """智能写作能力 MCP Server（无状态 streamable HTTP，JSON-RPC 2.0）。
 
-注册源：``mcp_registry/smart_writing.json``（用户整理的机读注册包，
-原稿见 AgentScope/mcp_data/2026-09-03_MCP注册规格-智能写作.json）。
+注册源：``mcp_registry/*.json``（用户整理的机读注册包，原稿见
+AgentScope/mcp_data/2026-09-03_MCP注册规格-智能写作.json）。
+按用户分组拆分为两个 MCP 服务（同一份代码、不同注册包）：
 
-- 9 个工具的 name / description / inputSchema **原样透传**给调用方
+- ``patent_search.json``  → 专利文献检索（4 工具，:30111）
+- ``smart_writing.json``  → 智能写作（5 工具，:30110）
+
+- 工具的 name / description / inputSchema **原样透传**给调用方
   （文档注意事项 1：description 里的"何时用/何时不用"负例直接决定
   Agent 选工具的准确率，禁止压缩改写）
 - 调用时按 ``x_backend[].when`` 路由（mode=natural/boolean、
@@ -24,11 +28,17 @@
 无状态 MCP：不签发 Mcp-Session-Id，每次请求独立处理——标准 MCP
 客户端（含 agentscope 内置 HttpMCPConfig）兼容此模式。
 
-启动：uvicorn app.smart_writing:mcp_app --port 30110
+启动（按注册包区分服务）：
+
+- AGENTFORGE_MCP_REGISTRY=mcp_registry/smart_writing.json \\
+  AGENTFORGE_MCP_PORT=30110 python -m app.smart_writing
+- AGENTFORGE_MCP_REGISTRY=mcp_registry/patent_search.json \\
+  AGENTFORGE_MCP_PORT=30111 python -m app.smart_writing
 """
 
 import json
 import logging
+import os
 from pathlib import Path
 
 import httpx
@@ -41,7 +51,6 @@ _BASE_DIR = Path(__file__).resolve().parent.parent
 _DEFAULT_REGISTRY = _BASE_DIR / "mcp_registry" / "smart_writing.json"
 
 PROTOCOL_VERSION = "2025-03-26"
-SERVER_INFO = {"name": "smart-writing", "version": "1.0.0"}
 
 # 批量 LLM 并发任务（注意事项 4：耗时随批量增长，超时 ≥ 300s）
 _SLOW_TOOLS = {"extract_solutions", "filter_solutions"}
@@ -78,17 +87,13 @@ _CONDITIONAL_REQUIRED = {
 
 
 def _registry_path() -> Path:
-    import os
-
     return Path(
-        os.environ.get(
-            "AGENTFORGE_SMART_WRITING_REGISTRY", str(_DEFAULT_REGISTRY),
-        ),
+        os.environ.get("AGENTFORGE_MCP_REGISTRY", str(_DEFAULT_REGISTRY)),
     )
 
 
-def load_tools(path: Path | None = None) -> list[dict]:
-    """读注册包 tools；结构非法直接抛错（启动即失败，不带病上线）。"""
+def load_registry(path: Path | None = None) -> dict:
+    """读整个注册包；结构非法直接抛错（启动即失败，不带病上线）。"""
     p = path or _registry_path()
     data = json.loads(p.read_text(encoding="utf-8"))
     tools = data.get("tools")
@@ -100,7 +105,23 @@ def load_tools(path: Path | None = None) -> list[dict]:
                 raise ValueError(f"注册包工具缺字段 {field}: {t.get('name')}")
         if not t.get("x_backend"):
             raise ValueError(f"注册包工具缺 x_backend 路由: {t['name']}")
-    return tools
+    if not data.get("server_name"):
+        raise ValueError(f"注册包缺 server_name: {p}")
+    return data
+
+
+def load_tools(path: Path | None = None) -> list[dict]:
+    """读注册包 tools（兼容旧调用方）。"""
+    return load_registry(path)["tools"]
+
+
+def _server_info() -> dict:
+    """serverInfo 从注册包取（name/version），initialize 时返回。"""
+    data = load_registry()
+    return {
+        "name": data["server_name"],
+        "version": data.get("version", "1.0.0"),
+    }
 
 
 def route_backend(tool: dict, arguments: dict) -> dict:
@@ -219,7 +240,7 @@ async def mcp_endpoint(request: Request) -> Response:
         return _result(request_id, {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
-            "serverInfo": SERVER_INFO,
+            "serverInfo": _server_info(),
         })
 
     if method == "tools/list":
@@ -275,17 +296,19 @@ async def mcp_get() -> Response:
 @mcp_app.get("/health")
 async def health() -> dict:
     """部署健康检查 + 注册包自检。"""
-    tools = load_tools()
-    return {"ok": True, "tools": [t["name"] for t in tools]}
+    data = load_registry()
+    return {
+        "ok": True,
+        "server": data["server_name"],
+        "tools": [t["name"] for t in data["tools"]],
+    }
 
 
 def main() -> None:
-    """独立进程入口：uvicorn :30110。"""
-    import os
-
+    """独立进程入口：端口与注册包从环境变量读（见模块 docstring）。"""
     import uvicorn
 
-    port = int(os.environ.get("AGENTFORGE_SMART_WRITING_PORT", "30110"))
+    port = int(os.environ.get("AGENTFORGE_MCP_PORT", "30110"))
     uvicorn.run(mcp_app, host="0.0.0.0", port=port, log_level="info")
 
 

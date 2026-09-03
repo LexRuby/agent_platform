@@ -66,29 +66,43 @@ def registry(tmp_path, monkeypatch):
     }
     p = tmp_path / "reg.json"
     p.write_text(json.dumps(pkg, ensure_ascii=False), encoding="utf-8")
-    monkeypatch.setenv("AGENTFORGE_SMART_WRITING_REGISTRY", str(p))
+    monkeypatch.setenv("AGENTFORGE_MCP_REGISTRY", str(p))
     return p
 
 
 class TestLoadTools:
     def test_load_real_package(self):
-        """真实注册包必须可加载：9 个工具、字段齐全（上线自检）。"""
-        tools = sw.load_tools(Path(__file__).parent.parent / "mcp_registry" / "smart_writing.json")
-        names = {t["name"] for t in tools}
-        assert names == {
-            "search_patents", "search_by_principle", "search_journals",
-            "get_patent_details", "detect_word_ontology", "extract_solutions",
+        """两个真实注册包均可加载：字段齐全、拆分边界正确（上线自检）。
+
+        2026-09-03 拆分：检索类 4 工具（:30111），写作类 5 工具（:30110），
+        原 9 工具单包按用户文档的领域边界一分为二。
+        """
+        reg = Path(__file__).parent.parent / "mcp_registry"
+        writing = sw.load_tools(reg / "smart_writing.json")
+        search = sw.load_tools(reg / "patent_search.json")
+
+        assert {t["name"] for t in writing} == {
+            "detect_word_ontology", "extract_solutions",
             "filter_solutions", "generate_with_prompt", "user_results",
         }
-        # 路由总表（文档第 3 节）：13 method → 9 工具
-        assert sum(len(t["x_backend"]) for t in tools) == 13
-        # 地址规则：搜索类在 backend-a(140.210.4.206:30010)，其余在 116.204.102.229:30020
-        for t in tools:
+        assert {t["name"] for t in search} == {
+            "search_patents", "search_by_principle", "search_journals",
+            "get_patent_details",
+        }
+        # 路由总表（文档第 3 节）：13 method 拆为 8（写作）+ 5（检索）
+        assert sum(len(t["x_backend"]) for t in writing) == 8
+        assert sum(len(t["x_backend"]) for t in search) == 5
+        # 地址规则：三个检索工具在 30010；get_patent_details（get_patent_by_ids）
+        # 与全部写作工具在后端 30020（见 mcp_data 工具层设计第 2 节路由表）
+        for t in writing:
             for r in t["x_backend"]:
-                if t["name"] in ("search_patents", "search_by_principle", "search_journals"):
-                    assert ":30010" in r["endpoint"]
-                else:
-                    assert ":30020" in r["endpoint"]
+                assert ":30020" in r["endpoint"]
+        for t in search:
+            expected = (
+                ":30020" if t["name"] == "get_patent_details" else ":30010"
+            )
+            for r in t["x_backend"]:
+                assert expected in r["endpoint"]
 
     def test_description_passthrough_real_package(self):
         """注意事项 1：description 必须原样注册不压缩——负例防混选。"""
