@@ -19,7 +19,15 @@ def cards_dir(tmp_path, monkeypatch):
 
 
 class TestChatModelFilter:
-    """_is_chat_model：对话模型家族过滤规则。"""
+    """_is_chat_model / _is_usable：对话与可用状态过滤规则。"""
+
+    def _m(self, mid, task_type=None, status=None):
+        m = {"id": mid}
+        if task_type is not None:
+            m["task_type"] = task_type
+        if status is not None:
+            m["status"] = status
+        return m
 
     @pytest.mark.parametrize("model_id", [
         "doubao-seed-2-1-pro-260628",
@@ -35,7 +43,13 @@ class TestChatModelFilter:
         "doubao-seed-translation-250915",
     ])
     def test_chat_families_accepted(self, model_id):
-        assert ark._is_chat_model(model_id) is True
+        assert ark._is_chat_model(self._m(model_id)) is True
+
+    def test_task_type_text_generation_accepted(self):
+        """task_type 含 TextGeneration 即便家族未知也接受。"""
+        assert ark._is_chat_model(
+            self._m("mystery-model", task_type=["TextGeneration"]),
+        ) is True
 
     @pytest.mark.parametrize("model_id", [
         # 向量模型
@@ -60,36 +74,107 @@ class TestChatModelFilter:
         "some-unknown-model",
     ])
     def test_non_chat_models_rejected(self, model_id):
-        assert ark._is_chat_model(model_id) is False
+        assert ark._is_chat_model(self._m(model_id)) is False
+
+    @pytest.mark.parametrize("status", [None, "Active", ""])
+    def test_usable_statuses(self, status):
+        assert ark._is_usable(self._m("doubao-x", status=status)) is True
+
+    @pytest.mark.parametrize("status", ["Shutdown", "Retiring"])
+    def test_unusable_statuses(self, status):
+        assert ark._is_usable(self._m("doubao-x", status=status)) is False
+
+
+class TestLabelAndPrice:
+    """_pretty_label / _price_tag / _chat_card 的展示构造。"""
+
+    def test_pretty_label_dotted_name(self):
+        assert ark._pretty_label("doubao-seed-2.1-pro") == "Doubao Seed 2.1 Pro"
+
+    def test_pretty_label_hyphenated(self):
+        assert ark._pretty_label("deepseek-v4-pro") == "DeepSeek V4 Pro"
+
+    def test_pretty_label_known_brands(self):
+        assert ark._pretty_label("glm-5.2") == "GLM 5.2"
+        assert ark._pretty_label("kimi-k2") == "Kimi K2"
+
+    def test_pretty_label_acronyms_uppercase(self):
+        # 缩写词保持全大写：deepseek-v4-pro-ga → DeepSeek V4 Pro GA
+        assert ark._pretty_label("deepseek-v4-pro-ga") == "DeepSeek V4 Pro GA"
+
+    def test_price_tag_dotted_and_hyphenated(self):
+        # ARK name 字段用点号，id 用连字符，两者都能匹配
+        assert "¥6/¥30" in ark._price_tag("doubao-seed-2.1-pro")
+        assert "¥6/¥30" in ark._price_tag("doubao-seed-2-1-pro")
+
+    def test_price_tag_versioned_id(self):
+        assert "¥3/¥15" in ark._price_tag("doubao-seed-2.1-turbo")
+
+    def test_price_tag_unknown_model_empty(self):
+        assert ark._price_tag("mystery-model") == ""
+
+    def test_price_tag_prefix_must_match_boundary(self):
+        # 前缀匹配不能误伤（doubao-seed-2 ≠ doubao-seed-2.0-pro 的兄弟名）
+        assert "¥" not in ark._price_tag("doubao-seed-9-9-unknown")
+
+    def test_chat_card_uses_api_specs(self):
+        m = {
+            "id": "doubao-seed-2-1-pro-260628",
+            "name": "doubao-seed-2.1-pro",
+            "token_limits": {
+                "context_window": 262144,
+                "max_output_token_length": 262144,
+            },
+            "modalities": {"input_modalities": ["text", "image", "video"]},
+        }
+        card = ark._chat_card(m)
+        assert card["name"] == "doubao-seed-2-1-pro-260628"
+        assert card["label"] == "Doubao Seed 2.1 Pro · ¥6/¥30 起每百万token"
+        assert card["context_size"] == 262144
+        assert card["output_size"] == 262144
+        # 图像模态映射为图片输入类型
+        assert "image/jpeg" in card["input_types"]
+        assert "image/png" in card["input_types"]
+
+    def test_chat_card_falls_back_without_token_limits(self):
+        m = {"id": "totally-unknown-270101", "name": "totally-unknown"}
+        card = ark._chat_card(m)
+        assert card["context_size"] == 131_072  # 保守默认
+        assert card["output_size"] == 16_384
+        assert card["label"] == "Totally Unknown"  # 无价格不拼接
+
+
+def _card(name, **over):
+    base = {
+        "name": name, "label": name, "status": "active",
+        "input_types": ["text/plain"], "output_types": ["text/plain"],
+        "context_size": 131_072, "output_size": 16_384,
+        "parameters_overrides": {},
+    }
+    base.update(over)
+    return base
 
 
 class TestWriteChatCards:
-    def test_known_model_uses_curated_spec(self, cards_dir):
-        ark._write_chat_cards(["doubao-seed-2-1-pro-260628"])
-        card = yaml.safe_load(
-            (cards_dir / "chat" / "doubao-seed-2-1-pro-260628.yaml").read_text(),
-        )
-        assert card["label"] == "Doubao Seed 2.1 Pro"
-        assert card["context_size"] == 256_000
-        assert card["output_size"] == 32_768
-        assert card["status"] == "active"
-        assert card["parameter_overrides"]["voice"]["hidden"] is True
-
-    def test_unknown_model_gets_conservative_defaults(self, cards_dir):
-        ark._write_chat_cards(["brand-new-model-270101"])
-        card = yaml.safe_load(
-            (cards_dir / "chat" / "brand-new-model-270101.yaml").read_text(),
-        )
-        assert card["context_size"] == 131_072
-        assert card["output_size"] == 16_384
+    def test_filename_order_prefix(self, cards_dir):
+        """文件名带序号前缀固化发布日期排序（glob 顺序不可靠，sorted 断言）。"""
+        ark._write_chat_cards([_card("model-a"), _card("model-b")])
+        names = sorted(p.name for p in (cards_dir / "chat").glob("*.yaml"))
+        assert names == ["0000-model-a.yaml", "0001-model-b.yaml"]
 
     def test_rewrite_clears_stale_cards(self, cards_dir):
-        ark._write_chat_cards(["model-a", "model-b"])
-        assert len(list((cards_dir / "chat").glob("*.yaml"))) == 2
+        ark._write_chat_cards([_card("model-a"), _card("model-b")])
         # 下架 model-a 后同步，旧卡必须被清除
-        ark._write_chat_cards(["model-b"])
-        names = [p.stem for p in (cards_dir / "chat").glob("*.yaml")]
-        assert names == ["model-b"]
+        ark._write_chat_cards([_card("model-b")])
+        names = [p.name for p in (cards_dir / "chat").glob("*.yaml")]
+        assert names == ["0000-model-b.yaml"]
+
+    def test_yaml_fields_preserved(self, cards_dir):
+        ark._write_chat_cards([_card("m1", label="模型一", context_size=999)])
+        p = next((cards_dir / "chat").glob("*.yaml"))
+        card = yaml.safe_load(p.read_text())
+        assert card["label"] == "模型一"
+        assert card["context_size"] == 999
 
     def test_embedding_cards_written(self, cards_dir):
         ark._write_model_cards()
@@ -97,6 +182,15 @@ class TestWriteChatCards:
         assert len(emb) == len(ark._EMBEDDING_MODELS)
         card = yaml.safe_load((emb[0]).read_text())
         assert card["output_types"] == ["application/x-embedding"]
+
+    def test_static_cards_carry_price(self, cards_dir):
+        ark._write_model_cards()
+        p = next(
+            x for x in (cards_dir / "chat").glob("*.yaml")
+            if "doubao-seed-2-1-pro" in x.name
+        )
+        card = yaml.safe_load(p.read_text())
+        assert "¥6/¥30" in card["label"]
 
 
 def _fake_http(monkeypatch, *, status=200, payload=None, exc=None):
@@ -143,26 +237,45 @@ def _fake_http(monkeypatch, *, status=200, payload=None, exc=None):
 class TestSyncArkModels:
     ARK_PAYLOAD = {
         "data": [
-            {"id": "doubao-seed-2-1-pro-260628"},
-            {"id": "doubao-embedding-large-text-250515"},  # 应被过滤
-            {"id": "deepseek-v4-pro-260425"},
-            {"id": "totally-unknown-chat-270101"},
+            {"id": "doubao-seed-2-1-pro-260628", "name": "doubao-seed-2.1-pro",
+             "created": 100, "task_type": ["TextGeneration"],
+             "token_limits": {"context_window": 262144,
+                              "max_output_token_length": 262144}},
+            {"id": "doubao-embedding-large-text-250515", "created": 100},
+            {"id": "deepseek-v4-pro-260425", "name": "deepseek-v4-pro",
+             "created": 300, "status": "Shutdown"},  # 已下架 → 过滤
+            {"id": "deepseek-v4-flash-260425", "name": "deepseek-v4-flash",
+             "created": 200, "status": "Retiring"},  # 退役中 → 过滤
+            {"id": "kimi-k2-250711", "name": "kimi-k2", "created": 400},
+            {"id": "totally-unknown-chat-270101", "created": 100},
         ],
     }
 
     async def test_sync_success(self, monkeypatch, cards_dir):
         fake = _fake_http(monkeypatch, payload=self.ARK_PAYLOAD)
         n = await ark.sync_ark_models(api_key="test-key")
-        # embedding 被过滤 + 未知家族（totally-unknown-*）被家族规则过滤
+        # 过滤：embedding（非对话）+ Shutdown/Retiring（不可用）+ 未知家族
         assert n == 2
-        names = sorted(p.stem for p in (cards_dir / "chat").glob("*.yaml"))
+        # 排序：created 降序（kimi 400 > doubao 100），序号固化进文件名
+        names = sorted(p.name for p in (cards_dir / "chat").glob("*.yaml"))
         assert names == [
-            "deepseek-v4-pro-260425",
-            "doubao-seed-2-1-pro-260628",
+            "0000-kimi-k2-250711.yaml",
+            "0001-doubao-seed-2-1-pro-260628.yaml",
         ]
         # 认证头正确
         assert fake.calls[0]["headers"] == {"Authorization": "Bearer test-key"}
         assert fake.calls[0]["url"] == ark.ARK_MODELS_URL
+
+    async def test_sync_card_uses_api_specs(self, monkeypatch, cards_dir):
+        _fake_http(monkeypatch, payload=self.ARK_PAYLOAD)
+        await ark.sync_ark_models(api_key="k")
+        p = next(
+            x for x in (cards_dir / "chat").glob("*.yaml")
+            if "doubao-seed-2-1-pro" in x.name
+        )
+        card = yaml.safe_load(p.read_text())
+        assert card["context_size"] == 262144  # 来自 token_limits 而非默认值
+        assert "¥6/¥30" in card["label"]  # 价格标注来自内置表
 
     async def test_sync_without_key_returns_zero(self, monkeypatch, cards_dir):
         monkeypatch.delenv("ARK_API_KEY", raising=False)
@@ -171,26 +284,61 @@ class TestSyncArkModels:
     async def test_sync_failure_keeps_existing_cards(
         self, monkeypatch, cards_dir,
     ):
-        ark._write_chat_cards(["existing-model"])
+        ark._write_chat_cards([_card("existing-model")])
         _fake_http(monkeypatch, status=500)
         n = await ark.sync_ark_models(api_key="k")
         assert n == 0
-        names = [p.stem for p in (cards_dir / "chat").glob("*.yaml")]
-        assert names == ["existing-model"]  # 失败不清空
+        names = [p.name for p in (cards_dir / "chat").glob("*.yaml")]
+        assert names == ["0000-existing-model.yaml"]  # 失败不清空
 
     async def test_sync_network_error_keeps_cards(self, monkeypatch, cards_dir):
         import httpx
 
-        ark._write_chat_cards(["existing-model"])
+        ark._write_chat_cards([_card("existing-model")])
         _fake_http(monkeypatch, exc=httpx.ConnectError("no network"))
         assert await ark.sync_ark_models(api_key="k") == 0
-        assert (cards_dir / "chat" / "existing-model.yaml").exists()
+        assert (cards_dir / "chat" / "0000-existing-model.yaml").exists()
 
     async def test_uses_env_key_when_not_given(self, monkeypatch, cards_dir):
         fake = _fake_http(monkeypatch, payload={"data": []})
         monkeypatch.setenv("ARK_API_KEY", "env-key")
         await ark.sync_ark_models()
         assert fake.calls[0]["headers"]["Authorization"] == "Bearer env-key"
+
+
+class TestArkChatModelListModels:
+    """ArkChatModel.list_models：按文件名序号（发布日期降序）返回。"""
+
+    def test_returns_cards_in_release_order(self, cards_dir):
+        ark._write_chat_cards([
+            _card("newest-model"), _card("middle-model"), _card("oldest-model"),
+        ])
+        cards = ark.ArkChatModel.list_models()
+        assert [c.name for c in cards] == [
+            "newest-model", "middle-model", "oldest-model",
+        ]
+
+    def test_card_fields_loaded(self, cards_dir):
+        ark._write_chat_cards([_card("m1", context_size=999, output_size=88)])
+        card = ark.ArkChatModel.list_models()[0]
+        assert card.context_size == 999
+        assert card.output_size == 88
+
+    def test_empty_dir_returns_empty(self, cards_dir):
+        assert ark.ArkChatModel.list_models() == []
+
+    def test_broken_card_skipped(self, cards_dir):
+        (cards_dir / "chat").mkdir(parents=True, exist_ok=True)
+        (cards_dir / "chat" / "0000-broken.yaml").write_text(
+            "not: [valid", encoding="utf-8",
+        )
+        (cards_dir / "chat" / "0001-good.yaml").write_text(
+            "name: good\nlabel: good\nstatus: active\ncontext_size: 1\n"
+            "output_size: 1\nparameter_schema: {}\nparameters_overrides: {}\n",
+            encoding="utf-8",
+        )
+        cards = ark.ArkChatModel.list_models()
+        assert [c.name for c in cards] == ["good"]
 
 
 class TestArkCredentialSchema:
