@@ -65,6 +65,28 @@ class TestDeployedWebui:
         assert "/@vite/client" not in html, "index.html 引用了 /@vite/client——误部署了开发构建"
 
 
+class TestSrcAssetReloadGuard:
+    """动态 import 失败自愈刷新（2026-09-04 事故）：部署新版后，已打开的
+    旧页面懒加载旧 hash chunk 404 → "Failed to fetch dynamically imported
+    module" 页面崩溃。main.tsx 全局捕获后自动 reload（sessionStorage
+    防死循环），build 脚本 assets 增量保留旧 chunk 双保险。"""
+
+    def test_main_has_asset_reload_guard(self):
+        """main.tsx 必须含自愈刷新：错误识别 + 防死循环标记 + load 清除。"""
+        t = _src("main.tsx")
+        assert "Failed to fetch dynamically imported module" in t
+        assert "sessionStorage" in t and "reload" in t
+        # 新页面加载成功后清除标记：下次部署失效还能再自愈一次
+        assert 'addEventListener("load"' in t or "addEventListener('load'" in t
+
+    def test_build_script_keeps_old_assets(self):
+        """build_webui.sh 不得 rm -rf 产物目录（旧 chunk 需保留给已打开
+        的旧页面），必须增量覆盖部署。"""
+        script = (_BASE_DIR / "scripts" / "build_webui.sh").read_text(encoding="utf-8")
+        assert "rm -rf" not in script, "禁止整目录删除：旧 hash chunk 被删会让已打开页面崩溃"
+        assert "mkdir -p" in script and "cp -r dist/*" in script
+
+
 class TestSrcSameOrigin:
     """前端源码必须保留同源 API 基址的正确实现（事故回归锁）。"""
 

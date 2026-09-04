@@ -314,6 +314,29 @@ setup 失败（疑似官方 bug，UI 内确认未复现，观察中）。
 > localStorage（用户显式切换过才用英文）。浏览器 E2E 复验 SVG 节点
 > 全中文（「主理人（大A）」「暂无职责说明」「团队互动」「N 位成员」）。
 
+### 25. `test_webui_static.py` 新增 `TestSrcAssetReloadGuard`（2026-09-04 事故）
+
+> 用户点击技能中心 rdkit 报 "Failed to fetch dynamically imported
+> module: …/highlighted-body-KPVGNVTW-BEhgSw5n.js"：部署新构建时
+> 整目录删除旧 assets，部署前已在浏览器打开的旧 SPA 懒加载旧 hash
+> chunk → 404 → 页面崩溃。no-cache 只保证"下次导航拿新 HTML"，
+> 救不了"已打开的旧页面"。双保险修复：
+
+- **部署侧**：`scripts/build_webui.sh` 增量合并（禁止整目录删除），
+  旧 hash chunk 保留给旧页面用；另加 node >= 20 版本防护（PATH 里的
+  v12 老 node 会让 tsc 报 "Unexpected token '?'"）
+- **前端侧**：`main.tsx` 全局监听 unhandledrejection / error（捕获
+  阶段），识别动态 import 失败后自动 `location.reload()`（index.html
+  是 no-cache，刷新即新版）；sessionStorage 标记防死循环，load 成功
+  后清除（下次部署失效仍可再自愈）
+- 测试：源码断言 main.tsx 含错误识别+标记+清除三要素；构建脚本
+  无 `rm -rf` 且为 mkdir -p + cp 增量模式
+
+**真实浏览器验证**：技能中心点 rdkit 详情正常渲染无错误页；注入不
+存在的模块 import → 页面自动 reload（导航类型=reload）；load 后标记
+清除 PASS；第二次失败不再刷新（防死循环）。
+注意：事故时已打开的旧页面因无自愈代码，需手动强刷一次（Ctrl+F5）。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量
