@@ -1,0 +1,8 @@
+{
+	// IDE 使用项目自带的 TypeScript 6.x（node_modules 内），
+	// 避免内置 5.x 版本不认识 ignoreDeprecations:"6.0" /
+	// erasableSyntaxOnly 等新选项而在 tsconfig 上误报红线
+	// （2026-09-07：命令行 tsc -b 与构建均零错误，纯 IDE 版本问题）
+	"typescript.tsdk": "node_modules/typescript/lib",
+	"typescript.enablePromptUseWorkspaceTsdk": true
+}
