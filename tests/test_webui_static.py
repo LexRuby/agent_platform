@@ -854,3 +854,21 @@ class TestMemberRoleFallback:
         assert body.find("invite_config?.invite_description") < body.find(
             "Your role:",
         ), "邀请字段优先，prompt 段回退"
+
+
+class TestTeamFlowPanelAutoScroll:
+    """团队驾驶舱 Tab 自动跟随最新（2026-09-08 用户反馈"团队动态/
+    产物不沉底"）。"""
+
+    def test_tab_content_autoscroll(self):
+        src = (
+            _SRC_DIR / "components" / "panel" / "TeamFlowPanel.tsx"
+        ).read_text(encoding="utf-8")
+        # 滚动容器必须挂 ref + onScroll（跟随判定数据源）
+        assert "tabScrollRef" in src and "handleTabScroll" in src
+        assert "ref={tabScrollRef}" in src, "Tab 内容区必须绑定 ref"
+        assert "onScroll={handleTabScroll}" in src, "必须监听滚动判定用户是否在底部"
+        # 新事件 + 切 Tab 都要沉底（stick 判定防打扰上翻阅读）
+        assert "stickToBottomRef" in src
+        assert "el.scrollTop = el.scrollHeight" in src, "必须显式沉底"
+        assert "scrollHeight - el.scrollTop - el.clientHeight" in src

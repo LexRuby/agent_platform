@@ -32,7 +32,7 @@ import {
         Users,
         Wrench,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
 
@@ -358,6 +358,33 @@ export function TeamFlowPanel({
         const [focus, setFocus] = useState<string | null>(null);
 
         const { events } = useMemo(() => buildTimeline(msgs), [msgs]);
+
+        // Tab 内容区自动跟随最新（2026-09-08 用户反馈"团队动态/产物
+        // 不沉底"）：新事件到达时若视口在底部附近（< 60px）则自动
+        // 滚到最底；用户上翻阅读历史时不打扰。切 Tab 时也回到最底。
+        const tabScrollRef = useRef<HTMLDivElement>(null);
+        const stickToBottomRef = useRef(true);
+
+        const handleTabScroll = () => {
+                const el = tabScrollRef.current;
+                if (!el) return;
+                stickToBottomRef.current =
+                        el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+        };
+
+        useEffect(() => {
+                const el = tabScrollRef.current;
+                if (el && stickToBottomRef.current) {
+                        el.scrollTop = el.scrollHeight;
+                }
+        }, [events, tab]);
+
+        useEffect(() => {
+                // 切 Tab 视为"回到最新"：恢复跟随并沉底
+                stickToBottomRef.current = true;
+                const el = tabScrollRef.current;
+                if (el) el.scrollTop = el.scrollHeight;
+        }, [tab]);
 
         // 团队名 / 任务描述：最近一次 TeamCreate
         const teamMeta = useMemo(() => {
@@ -805,8 +832,12 @@ export function TeamFlowPanel({
 									)}
 								</div>
 
-								{/* Tab 内容区 */}
-								<div className="no-scrollbar max-h-64 overflow-y-auto px-3 py-2">
+								{/* Tab 内容区：自动跟随最新（上翻阅读时不打扰） */}
+					<div
+						ref={tabScrollRef}
+						onScroll={handleTabScroll}
+						className="no-scrollbar max-h-64 overflow-y-auto px-3 py-2"
+					>
 									{tab === 'activity' && (
 										<div className="space-y-1">
 												{timelineEvents.map((e, i) => (
