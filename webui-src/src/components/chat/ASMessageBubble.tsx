@@ -44,6 +44,15 @@ import {
 } from '@/components/ui/collapsible.tsx';
 import { Message, MessageFooter, MessageContent } from '@/components/ui/message';
 import { useAudioBlock, useReplayController } from '@/context/AudioContext';
+import { createContext, useContext } from 'react';
+
+/**
+ * 主理会话中为 true：团队消息（hint <team-message>）在消息流里
+ * 渲染为紧凑单行（完整内容已在右侧团队驾驶舱的"团队动态/产物"），
+ * 避免对话区被团队过程刷屏（2026-09-07 用户反馈）。成员会话与
+ * 普通 agent 会话保持完整折叠块（那里没有驾驶舱）。
+ */
+export const TeamHintCompactContext = createContext(false);
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
 import { formatNumber, formatTime } from '@/utils/common';
@@ -543,6 +552,8 @@ interface ASBlockProps {
 
 export function ASBlock({ block, ...props }: ASBlockProps) {
 	const { t } = useTranslation();
+	// Hooks 规则：useContext 必须在顶层（主理会话的团队 hint 紧凑化）
+	const teamHintCompact = useContext(TeamHintCompactContext);
 
 	switch (block.type) {
 		case 'text':
@@ -613,6 +624,18 @@ export function ASBlock({ block, ...props }: ASBlockProps) {
 		case 'thinking':
 			return <ThinkingBlockView block={block} />;
 		case 'hint': {
+			// 主理会话的团队消息 → 紧凑单行（驾驶舱已完整展示）
+			if (teamHintCompact) {
+				const hintText = typeof block.hint === 'string' ? block.hint : '';
+				const senderMatch = hintText.match(/<team-message[^>]*from="([^"]+)"/);
+				if (senderMatch) {
+					return (
+						<div className="w-full text-xs text-muted-foreground">
+							📤 {senderMatch[1]} {t('messageBubble.teamHintCompact')}
+						</div>
+					);
+				}
+			}
 			// Parse source: try JSON, fall back to plain string, default to t('common.message').
 			let hintLabel: string;
 			let hintSublabel: string | null = null;

@@ -1,23 +1,32 @@
-"""团队解散策略 patch + 团队历史查询 API（2026-09-07 培养能力重构）。
+"""团队删除确认 + 软解散（2026-09-07 培养资产保护，双层防护）。
 
-官方 ``TeamDelete`` 是全灭式级联（delete_team）：created 成员的
-agent+session 全删、invited 成员的团队 session 删除、team 记录删除。
-这与"培养"产品理念冲突——成员在任务中的上下文、产出、以及"随时
-介入对话继续培养"的可能性全部随解散消失（用户 2026-09-07 反馈：
-点成员"进入会话迭代"看不到团队聊天内容）。
+产品背景（用户 2026-09-07）："大A 只是 Team 的入口，培养好的
+大A+Team 是要完整绑定开放给别人用的产品资产——完全不能接受
+随便就把 team 删了，删除一定要我确认。"
 
-本模块启动时 monkey-patch ``RedisStorage.delete_team``：
+官方 ``TeamDelete`` 是 LLM 自主工具 + 全灭式级联（created 成员的
+agent+session 物理删除、invited 成员团队 session 删除、team 记录
+删除）。两层问题：LLM 不该有自主删除权；就算删除也不该毁掉培养
+资产。
 
-- **保留** 成员 agent、成员团队 session（工作成果，可回看、可
-  继续对话介入培养——成员 session 是标准 agent session，
-  ``POST /chat`` 直接可用）
-- **保留** team 记录（成员↔session 映射可追溯）
-- **只清** leader session 的 ``team_id``：官方 view.team 判定依据
-  session.team_id，清空即视为解散（TeamSay 等团队操作自然失效）
+**第一层：强制用户确认**。patch ``TeamDelete.check_permissions`` 返回
+bypass-immune 的 ASK——DEFAULT / ACCEPT_EDITS 模式下必然弹出用户
+确认卡（官方 ConfirmCard），用户"始终允许"的规则也压不住
+（bypass-immune 契约）；DONT_ASK（无人值守）转为 DENY；EXPLORE
+本就 DENY；BYPASS 是用户显式选择的完全信任模式，按框架契约放行
+（并由第二层兜底）。
 
-另提供 ``GET /team-sessions/{leaderSessionId}``：返回该主理会话
-所有团队（含已解散）的成员 session 映射，供前端"进入会话迭代"
-跳转到成员的**团队会话**而非空白独立会话。
+**第二层：软解散**。patch ``SessionService.delete_team``——确认后
+实际执行时：取消成员正在运行的任务（cancel_session_run，不删
+任何记录）→ 清 leader session 的 team_id（view.team 判定解散，
+团队工具随之失效）→ 成员 agent / 成员团队 session / team 记录
+**全部保留**（培养资产：上下文、产出、介入对话能力）。
+
+注意：此前版本 patch 的是 ``RedisStorage.delete_team``——但
+``SessionService.delete_team`` 在调 storage 之前就先对每个成员执行
+``delete_agent`` / ``delete_session``（物理删除），storage 层 patch
+拦得太晚。本版改为 patch service 层（TeamDelete 工具的唯一执行
+路径），storage 层级联（用户删 leader 会话时的连带清理）不受影响。
 """
 
 import logging
@@ -30,39 +39,80 @@ _logger = logging.getLogger("agentforge.team_preserve")
 team_history_router = APIRouter(tags=["agentforge"])
 
 
-def patch_delete_team() -> Any:
-    """替换官方 RedisStorage.delete_team 为"软解散"。
+def patch_team_protection() -> None:
+    """挂载双层防护：TeamDelete 强制确认 + delete_team 软解散。"""
+    _patch_team_delete_permission()
+    _patch_delete_team_service()
 
-    保留成员/会话/团队记录，仅解除 leader session 的 team 绑定。
-    升级官方包后签名变化会在启动时显式报错（无静默失效）。
 
-    Returns:
-        soft_delete_team 函数对象（测试可绑定到 duck-typing 的
-        FakeStorage 上复用同一实现，不依赖真实 Redis）。
+def _patch_team_delete_permission() -> None:
+    """TeamDelete.check_permissions → bypass-immune ASK（强制用户确认）。"""
+    from agentscope.app._tool._team_delete import TeamDelete
+    from agentscope.permission import PermissionBehavior, PermissionDecision
+
+    async def require_user_confirm(
+        self: Any,
+        tool_input: dict[str, Any],
+        context: Any,
+    ) -> PermissionDecision:
+        return PermissionDecision(
+            behavior=PermissionBehavior.ASK,
+            message=(
+                "主理人请求解散团队。团队与成员是培养资产（上下文与"
+                "产出将保留），解散后团队停止运行。是否确认？"
+            ),
+            decision_reason="agentforge: 团队删除必须经用户确认（培养资产保护）",
+            bypass_immune=True,
+        )
+
+    TeamDelete.check_permissions = require_user_confirm  # type: ignore[method-assign]
+    _logger.info("已 patch TeamDelete.check_permissions → 强制用户确认")
+
+
+def _patch_delete_team_service() -> None:
+    """SessionService.delete_team → 软解散（保留全部培养资产）。
+
+    成员运行中的任务取消（避免僵尸运行），记录一律不删；
+    leader session 的 team_id 清空（view.team 判定解散）。
     """
-    from agentscope.app.storage._redis_storage import RedisStorage
+    from agentscope.app._service._session import SessionService
 
     async def soft_delete_team(self: Any, user_id: str, team_id: str) -> bool:
-        # 取 team 记录：不存在 → 已被旧版硬删/从未存在，无事可做
-        team = await self.get_team(user_id, team_id)
+        team = await self._storage.get_team(user_id, team_id)
         if team is None:
             return False
 
-        # 解除 leader session 绑定：view.team 判定失效 = 团队解散。
-        # 成员 agent / 成员 session / team 记录全部保留（培养资产）。
-        await self.set_session_team_id(user_id, team.session_id, None)
+        # 成员清单：与官方 _ensure_team_members 同源（team.data.members）
+        members = getattr(getattr(team, "data", None), "members", None) or []
+        for m in members:
+            m_session = m.get("session_id") if isinstance(m, dict) else m.session_id
+            m_name = (
+                m.get("agent_id", "")[:8]
+                if isinstance(m, dict)
+                else str(getattr(m, "agent_id", ""))[:8]
+            )
+            if m_session:
+                try:
+                    await self.cancel_session_run(m_session)
+                except Exception:  # noqa: BLE001 — 成员可能已停，尽力而为
+                    _logger.exception(
+                        "软解散: 取消成员运行失败 team=%s member=%s",
+                        team_id,
+                        m_name,
+                    )
+
+        # 解除 leader 绑定：view.team 判定失效 = 团队解散（工具随之不可用）
+        await self._storage.set_session_team_id(user_id, team.session_id, None)
 
         _logger.info(
-            "团队软解散（保留成员与会话）: team=%s name=%s members=%d",
+            "团队软解散（确认后执行，资产保留）: team=%s members=%d",
             team_id,
-            getattr(getattr(team, "data", None), "name", ""),
-            len(getattr(getattr(team, "data", None), "members", []) or []),
+            len(members),
         )
         return True
 
-    RedisStorage.delete_team = soft_delete_team  # type: ignore[method-assign]
-    _logger.info("已 patch RedisStorage.delete_team → 软解散（保留培养资产）")
-    return soft_delete_team
+    SessionService.delete_team = soft_delete_team  # type: ignore[method-assign]
+    _logger.info("已 patch SessionService.delete_team → 软解散（保留培养资产）")
 
 
 @team_history_router.get("/team-sessions/{leader_session_id}")
@@ -98,8 +148,7 @@ async def get_team_sessions(leader_session_id: str, request: Request) -> dict:
                     "role": m_role,
                 }
             )
-        # 解散判定：该 team 仍有 agent 绑定过的 leader session（team_id
-        # 已被软解散清空）→ dissolved。官方硬删的团队不会出现在列表里。
+        # 解散判定：leader session 的 team_id 已被软解散清空 → dissolved
         leader_session = await storage.get_session(user_id, team.leader_agent_id, team.session_id)
         dissolved = leader_session is None or leader_session.team_id != team.id
         team_data = getattr(team, "data", None)

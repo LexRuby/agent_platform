@@ -419,6 +419,41 @@ webui_static 3 项（RouteError 自愈/teamSessions 调用/按钮文字）。
 注：高考团队（09-03）等历史团队已被旧版硬删，无法追溯——软解散
 只保护之后的团队。
 
+### 29. TeamDelete 双层防护 + 团队 hint 紧凑化（2026-09-07）
+
+> 用户产品逻辑："大A 只是 Team 的入口，培养好的大A+Team 完整绑定
+> 开放给别人用——完全不能接受随便把 team 删了，删除一定要我确认。"
+> 同时反馈：消息流里的团队消息折叠块（"下拉"）与右栏驾驶舱内容重复。
+
+**关键发现（前版软解散 patch 的 bug）**：
+`SessionService.delete_team` 在调 `storage.delete_team` 之前就先对
+每个成员执行 `delete_agent`（created 成员连 agent 物理删除）/
+`delete_session`（invited 成员团队会话删除）——patch 在 storage 层
+拦得太晚，成员早已被删。
+
+双层防护（app/team_preserve.py 重写）：
+- **第一层 强制确认**：patch `TeamDelete.check_permissions` →
+  bypass-immune ASK。DEFAULT/ACCEPT_EDITS 必弹用户确认卡，
+  "始终允许"规则压不住（bypass-immune 契约）；DONT_ASK 转 DENY；
+  EXPLORE 本就 DENY；BYPASS 按框架契约放行（用户显式完全信任）
+- **第二层 软解散**：patch `SessionService.delete_team`（工具的
+  唯一执行路径）→ cancel_session_run 取消成员运行（防僵尸）+
+  清 leader session team_id（view.team 判定解散），成员 agent/
+  成员团队 session/team 记录全部保留。storage 层级联（用户删
+  leader 会话的连带清理）不受影响
+
+**团队 hint 紧凑化**（前端）：
+- `TeamHintCompactContext`（ASMessageBubble 导出）：主理会话
+  `compactTeamHints={isLeader}`，团队消息（`<team-message from=…>`）
+  渲染为紧凑单行「📤 成员名 已向主理人汇报（详见右侧团队面板）」
+- 成员会话/普通会话无驾驶舱，hint 保持完整折叠块
+- useContext 必须在组件顶层调用（Hooks 规则，不得在 switch case 内）
+
+测试：test_team_preserve.py 重写为 8 项（权限层 2 + 服务层 3 +
+API 层 3，FakeSessionService duck-typing）；webui_static +3
+（TestSrcTeamDeleteGuard）。全量 449 项通过。真实浏览器 E2E：
+主理会话紧凑单行 + 驾驶舱完整、成员会话 hint 保持完整全过。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量

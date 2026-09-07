@@ -883,6 +883,10 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									msgs={msgs}
 									loading={messagesLoading}
 									agentId={agentId}
+									// 主理会话：团队 hint 消息渲染为紧凑单行
+									// （完整内容在右侧团队驾驶舱，避免对话区被
+									// 团队过程刷屏）
+									compactTeamHints={isLeader}
 									sessionId={sessionId}
 									cwd={view?.session.config.cwd ?? null}
 									onCwdChange={handleCwdChange}

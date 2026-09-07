@@ -65,6 +65,37 @@ class TestDeployedWebui:
         assert "/@vite/client" not in html, "index.html 引用了 /@vite/client——误部署了开发构建"
 
 
+class TestSrcTeamDeleteGuard:
+    """TeamDelete 双层防护 + 团队 hint 紧凑化（2026-09-07 培养资产保护）。
+
+    用户诉求："大A+Team 是要完整绑定开放给别人用的产品资产，
+    完全不能接受随便删除，删除一定要我确认。"
+    """
+
+    def test_team_delete_requires_confirm(self):
+        """TeamDelete 必须 bypass-immune ASK（用户确认压不住）。"""
+        t = _src("../app/team_preserve.py")
+        assert "check_permissions" in t and "bypass_immune=True" in t
+        assert "PermissionBehavior.ASK" in t
+
+    def test_soft_delete_at_service_layer(self):
+        """软解散必须在 SessionService 层（storage 层拦不住成员物理删除）。"""
+        t = _src("../app/team_preserve.py")
+        assert "SessionService.delete_team" in t
+        assert "cancel_session_run" in t, "必须取消成员运行（防僵尸）"
+        assert "set_session_team_id" in t
+
+    def test_team_hint_compact(self):
+        """主理会话团队 hint 紧凑单行（详情在右栏驾驶舱）。"""
+        t = _src("components/chat/ASMessageBubble.tsx")
+        assert "TeamHintCompactContext" in t
+        assert "teamHintCompact" in t  # useContext 在组件顶层（Hooks 规则）
+        c = _src("components/chat/ChatContent.tsx")
+        assert "compactTeamHints" in c and "TeamHintCompactContext.Provider" in c
+        v = _src("pages/chat/ChatViewport.tsx")
+        assert "compactTeamHints={isLeader}" in v
+
+
 class TestSrcMemberTeamSession:
     """成员团队会话跳转 + RouteError 自愈（2026-09-07 培养能力重构）。
 

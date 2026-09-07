@@ -12,7 +12,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Button } from '../ui/button';
 import { DiffStats } from './tool-renderers/_shared';
 import type { GitStatus } from '@/api';
-import { ASMessageBubble } from '@/components/chat/ASMessageBubble.tsx';
+import {
+        ASMessageBubble,
+        TeamHintCompactContext,
+} from '@/components/chat/ASMessageBubble.tsx';
 import { ConfirmCard } from '@/components/chat/ConfirmCard.tsx';
 import { FlipCard } from '@/components/chat/FlipCard.tsx';
 import { TextInput } from '@/components/chat/TextInput.tsx';
@@ -74,6 +77,8 @@ interface ChatContentProps {
 	fileProcessor: (file: File) => Promise<ContentBlock | null>;
 	/** Agent owning the open session — drives the directory picker. */
 	agentId: string | null;
+	/** 主理会话传 true：团队 hint 消息渲染为紧凑单行（详情在右栏）。 */
+	compactTeamHints?: boolean;
 	/** The open session, whose working directory the picker edits. */
 	sessionId: string | null;
 	/** Current working directory, relative to the workspace root. */
@@ -100,6 +105,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	allowedInputTypes,
 	fileProcessor,
 	agentId,
+	compactTeamHints = false,
 	sessionId,
 	cwd,
 	onCwdChange,
@@ -138,6 +144,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	// On an empty session the prompt and the input centre together, so every box
 	// down to the message list shrinks to its content instead of filling.
 	return (
+		<TeamHintCompactContext.Provider value={compactTeamHints}>
 		<div
 			className={cn(
 				'flex flex-col h-full w-full items-center gap-4',
@@ -297,6 +304,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 				</div>
 			)}
 		</div>
+		</TeamHintCompactContext.Provider>
 	);
 };
 

@@ -133,7 +133,8 @@
       "internal": "An unexpected internal error occurred.",
       "setup": "The session could not be prepared — check the agent's model, tools and knowledge bases.",
       "unknown": "The reply failed with an unknown error."
-    }
+    },
+    "teamHintCompact": "reported to the leader (see the team panel on the right)"
   },
   "chat": {
     "inputPlaceholder": "Type a message...",

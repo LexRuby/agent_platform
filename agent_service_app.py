@@ -41,7 +41,7 @@ from app.prompt_templates import (
 from app.spa_static import SPAStaticFiles
 from app.startup_hook import StartupHook
 from app.team_archive import team_archive_router
-from app.team_preserve import patch_delete_team, team_history_router
+from app.team_preserve import patch_team_protection, team_history_router
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -91,7 +91,7 @@ app.include_router(leader_team_router)
 app.include_router(team_archive_router)
 
 # 团队软解散（保留成员/会话培养资产）+ 团队历史查询 API
-patch_delete_team()
+patch_team_protection()
 app.include_router(team_history_router)
 
 # agent 版本封板：freeze/unfreeze/save-version/restore API
