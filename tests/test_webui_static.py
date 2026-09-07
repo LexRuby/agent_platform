@@ -65,6 +65,39 @@ class TestDeployedWebui:
         assert "/@vite/client" not in html, "index.html 引用了 /@vite/client——误部署了开发构建"
 
 
+class TestSrcMemberTeamSession:
+    """成员团队会话跳转 + RouteError 自愈（2026-09-07 培养能力重构）。
+
+    用户反馈：点成员"进入会话迭代"进入的是空白独立会话，看不到
+    成员在团队任务中的聊天内容。修复：无活跃团队时经
+    GET /team-sessions/{leaderSid} 补成员历史 session_id，跳转到
+    成员的团队会话（可继续对话介入培养）。
+    """
+
+    def test_route_error_self_heal(self):
+        """RouteError 必须识别动态 import 失败并自动整页刷新。
+
+        React Router 捕获懒加载路由错误后不走 unhandledrejection
+        （main.tsx 的监听接不住，2026-09-07 用户卡死在错误页）。
+        """
+        t = _src("components/error/RouteError.tsx")
+        assert "Failed to fetch dynamically imported module" in t
+        assert "sessionStorage" in t and "reload" in t
+
+    def test_chat_viewport_uses_team_history(self):
+        """ChatViewport 必须调 team-sessions 补成员历史会话。"""
+        t = _src("pages/chat/ChatViewport.tsx")
+        assert "teamSessions" in t, "缺少团队历史 API 调用"
+        assert "TeamHistoryEntry" in t
+        # fallback 名单的 sessionId 来自历史映射（不再是写死 null）
+        assert "historyByAgent.get(a.id) ?? null" in t
+
+    def test_layout_button_labeled(self):
+        """布局切换按钮必须带文字标签（纯图标用户找不到）。"""
+        t = _src("pages/chat/ChatViewport.tsx")
+        assert "classicLayout" in t and "focusedLayout" in t
+
+
 class TestSrcFocusedLayout:
     """专注布局与菜单收缩（2026-09-07 用户布局重构）。
 

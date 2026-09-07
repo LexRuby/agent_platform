@@ -387,6 +387,38 @@ setup 失败（疑似官方 bug，UI 内确认未复现，观察中）。
 E2E：专注默认（驾驶舱+资源Tab）、对话区全宽、切经典（团队面板回
 顶部）、经典菜单仅 3 项、刷新保持偏好、切回专注全部断言通过。
 
+### 28. 团队培养资产保留 + 成员团队会话跳转（2026-09-07）
+
+> 用户反馈：① 点成员"进入会话迭代"进入空白独立会话，看不到成员
+> 在团队任务中的聊天内容；② 部署窗口期动态 import 404 卡死错误页
+> （RouteError 的"重试"对被缓存的 lazy import 失败无效）。
+> 根因：官方 TeamDelete 全灭式级联（成员 agent+session+team 记录
+> 全删），解散后映射无从追溯；React Router 捕获路由懒加载错误，
+> main.tsx 的 unhandledrejection 自愈监听接不住。
+
+修复（app/team_preserve.py + 前端）：
+- **软解散 patch**：启动时 monkey-patch RedisStorage.delete_team——
+  只清 leader session 的 team_id（view.team 判定失效=解散），
+  成员 agent/成员团队 session/team 记录全部保留
+- **GET /team-sessions/{leaderSid}**：返回历次团队（含解散）的
+  成员 agent↔session 映射；成员读取兼容 pydantic/dict 两种形状
+- **前端跳转**：无活跃团队时 flowMembers 从 team-sessions 补
+  sessionId，"进入会话迭代"跳成员的**团队会话**（有任务上下文，
+  可继续对话介入培养——成员 session 是标准 agent session）
+- **RouteError 自愈**：识别动态 import 失败自动整页刷新
+  （sessionStorage 防死循环）
+- **布局按钮文字化**："经典布局/专注布局"文字+图标（纯图标用户
+  找不到）
+
+测试 +9：test_team_preserve.py（软解散保留/幂等/不存在/映射 API/
+解散标记/空会话，FakeStorage duck-typing 不依赖真实 Redis）+
+webui_static 3 项（RouteError 自愈/teamSessions 调用/按钮文字）。
+真实浏览器 E2E：布局按钮可见、成员团队会话路由有内容、点"进入
+会话迭代"跳转成功且输入框可用（可介入对话）、API 映射正确。
+
+注：高考团队（09-03）等历史团队已被旧版硬删，无法追溯——软解散
+只保护之后的团队。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量

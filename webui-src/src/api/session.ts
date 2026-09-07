@@ -40,7 +40,27 @@ export function takeFreshlyCreated(sessionId: string): boolean {
 	return freshlyCreated.delete(sessionId);
 }
 
+/** 团队历史：主理会话 → 历次团队成员 session 映射（含已解散）。 */
+export interface TeamHistoryEntry {
+        team_id: string;
+        name: string;
+        dissolved: boolean;
+        members: {
+                agent_id: string;
+                agent_name: string;
+                session_id: string | null;
+                role: string;
+        }[];
+}
+
 export const sessionApi = {
+     /** 主理会话的历次团队成员 session 映射（agent_id → 团队会话）。 */
+     teamSessions: (leaderSessionId: string) =>
+             client.get<{ teams: TeamHistoryEntry[] }>(
+                     `/team-sessions/${leaderSessionId}`,
+                     undefined,
+                     { silent: true },
+             ),
 	list: (agentId: string) => client.get<SessionListResponse>('/sessions/', { agent_id: agentId }),
 
 	create: async (body: CreateSessionRequest) => {

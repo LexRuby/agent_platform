@@ -169,7 +169,9 @@
       "earlier": "更早"
     },
     "switchToClassic": "切换为经典布局（团队面板在对话顶部，右上角菜单开关面板）",
-    "switchToFocused": "切换为专注布局（完整对话，右侧为团队与资源栏）"
+    "switchToFocused": "切换为专注布局（完整对话，右侧为团队与资源栏）",
+    "classicLayout": "经典布局",
+    "focusedLayout": "专注布局"
   },
   "dialog-agent-create": {
     "title": "创建智能体",

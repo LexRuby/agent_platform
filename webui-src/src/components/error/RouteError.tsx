@@ -34,6 +34,25 @@ export function RouteError() {
 		console.error(error);
 	}, [error]);
 
+	// 部署窗口期撞上时，懒加载路由的动态 import 失败会进到这里
+	// （React Router 捕获，不走 unhandledrejection——main.tsx 的
+	// 自愈监听接不住，2026-09-07 用户卡死在错误页）。识别后自动
+	// 整页刷新：index.html 是 no-cache，刷新即拿到引用现存 chunk
+	// 的新版。sessionStorage 防死循环（资产持续 404 时只刷一次）。
+	const assetMsg =
+		error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+	if (
+		/Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(
+			assetMsg,
+		)
+	) {
+		const FLAG = 'agentforge:asset-reloaded';
+		if (!sessionStorage.getItem(FLAG)) {
+			sessionStorage.setItem(FLAG, '1');
+			window.location.reload();
+		}
+	}
+
 	const detail = formatErrorDetail(error);
 
 	return (

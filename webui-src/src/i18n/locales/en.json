@@ -169,7 +169,9 @@
       "earlier": "Earlier"
     },
     "switchToClassic": "Switch to classic layout (team panel above chat, panels via top-right menu)",
-    "switchToFocused": "Switch to focused layout (full-width chat, team & resources on the right)"
+    "switchToFocused": "Switch to focused layout (full-width chat, team & resources on the right)",
+    "classicLayout": "Classic",
+    "focusedLayout": "Focused"
   },
   "dialog-agent-create": {
     "title": "Create agent",

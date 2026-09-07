@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom';
 
 import type {
 	ChatModelConfig,
+     TeamHistoryEntry,
 	PermissionMode,
 	SessionKnowledgeConfig,
 	TTSModelConfig,
@@ -361,6 +362,27 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		}));
 	}, [view, agentRecord, agents]);
 
+	// 团队历史：无活跃团队时（已解散/新会话），从后端补成员在历次
+	// 团队任务中的 session_id——"进入会话迭代"要跳到成员的团队会话
+	// （有任务上下文，可继续对话介入培养），而不是空白独立会话。
+	const [teamHistory, setTeamHistory] = useState<TeamHistoryEntry[]>([]);
+	useEffect(() => {
+		if (!sessionId) return;
+		let cancelled = false;
+		sessionApi
+			.teamSessions(sessionId)
+			.then((res) => {
+				if (!cancelled) setTeamHistory(res.teams ?? []);
+			})
+			.catch(() => {
+				// 无团队历史（普通会话）静默
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [sessionId]); // 建队/解散由消息流事件触发 refetchSessions → view 变化重渲染
+
+
 	// 流程图的成员档案：在册成员带职责（邀请说明）与会话 id，
 	// 点击成员卡片可跳到该小A 的会话单独迭代优化。
 	// 无活跃团队时（新会话尚未组队、或已解散）回退到主理人
@@ -374,20 +396,26 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 				sessionId: m.session_id,
 			}));
 		}
-		return (agentRecord?.team_members ?? [])
-			.map((id) => {
-				const a = agents.find((x) => x.id === id);
-				return a
-					? {
-							id: a.id,
-							name: a.data.name,
-							description: a.data.invite_config?.invite_description ?? '',
-							sessionId: null,
-						}
-					: null;
-			})
-			.filter((m): m is NonNullable<typeof m> => m !== null);
-	}, [view, agentRecord, agents]);
+            const historyByAgent = new Map<string, string>();
+            for (const team of teamHistory) {
+                    for (const m of team.members) {
+                            if (m.session_id) historyByAgent.set(m.agent_id, m.session_id);
+                    }
+            }
+            return (agentRecord?.team_members ?? [])
+                    .map((id) => {
+                            const a = agents.find((x) => x.id === id);
+                            return a
+                                    ? {
+                                                    id: a.id,
+                                                    name: a.data.name,
+                                                    description: a.data.invite_config?.invite_description ?? '',
+                                                    sessionId: historyByAgent.get(a.id) ?? null,
+                                            }
+                                    : null;
+                    })
+                    .filter((m): m is NonNullable<typeof m> => m !== null);
+	}, [view, agentRecord, agents, teamHistory]);
 
 	// 成员跳转：走 /chat/<leaderSessionId>/<memberAgentId>（memberId 槽），
 	// 与 TeamPanel 的导航约定一致；成员无会话时退回 /chat/<agentId>。
@@ -766,9 +794,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									    专注=完整对话+右侧团队/资源栏；经典=顶部团队
 									    面板+右上角菜单 dock。偏好持久化。 */}
 									<Button
-										variant="ghost"
+										variant="outline"
 										size="sm"
-										className="gap-1 px-2"
+										className="gap-1 px-2 text-xs"
 										title={
 											layoutMode === 'focused'
 												? t('chat.switchToClassic')
@@ -778,7 +806,21 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 											setLayoutMode((m) => (m === 'focused' ? 'classic' : 'focused'))
 										}
 									>
-										{layoutMode === 'focused' ? <PanelRightClose /> : <PanelRight />}
+										{layoutMode === 'focused' ? (
+											<>
+												<PanelRightClose className="size-3.5" />
+												<span className="hidden md:inline">
+													{t('chat.classicLayout')}
+												</span>
+											</>
+										) : (
+											<>
+												<PanelRight className="size-3.5" />
+												<span className="hidden md:inline">
+													{t('chat.focusedLayout')}
+												</span>
+											</>
+										)}
 									</Button>
 									{/* 经典布局才有 dock 菜单；专注布局资源面板常驻 */}
 									{layoutMode === 'classic' && (
