@@ -337,6 +337,32 @@ setup 失败（疑似官方 bug，UI 内确认未复现，观察中）。
 清除 PASS；第二次失败不再刷新（防死循环）。
 注意：事故时已打开的旧页面因无自愈代码，需手动强刷一次（Ctrl+F5）。
 
+### 26. 团队面板 = 工作流驾驶舱（2026-09-07 用户原型图重构）
+
+> 用户反馈五大问题：点成员跳走而非看互动；连线计数点击显示
+> "邀请加入"；团队名"高考志愿规划小组"不展示；志愿兵汇报全文
+> 看不到；无时间轴概念。根因：数据全在消息流里（hint 块
+> `<team-message from=…>` 全文、TeamCreate input 的 name/description、
+> 块级 created_at），但旧面板只渲染了摘要关系图。
+
+重构（TeamFlowPanel.tsx 完全重写）：
+- 头部：团队名 + 运行状态徽章（TeamDelete 前后区分）+ 任务描述
+- 统计行：N 位成员 · N 次协作 · N 次工具调用 · 运行 Xs
+- 四 Tab：
+  - 团队动态：时间轴（HH:MM:SS + 事件 + 可展开全文），支持按成员过滤
+  - 工作流：组建 → 分派 → 执行（含被中断状态）→ 汇报 → 汇总
+  - 成员：卡片（名字/职责/状态徽章/协作明细），"进入会话迭代"为
+    次要入口；点 SVG 成员卡片 = 本页看互动，不再跳转
+  - 产物：成员汇报全文 Markdown 渲染
+- 事件模型：user_task / team_created / member_joined / dispatch /
+  member_report（全文）/ member_interrupted（system-reminder 解析）/
+  leader_say / tool / final / team_deleted，全部带块级时间戳
+
+测试：`test_webui_static.py::TestSrcLeaderTeam::test_team_flow_is_workflow_cockpit`
+锁定汇报全文解析、四 Tab、本页互动、中断状态、时间戳与 i18n 键。
+真实浏览器 E2E（高考主理会话）：头部/Tab/时间轴/成员状态/产物全文/
+五阶段工作流全部断言通过。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量

@@ -195,6 +195,46 @@ class TestSrcLeaderTeam:
         assert _src_exists("components/panel/TeamFlowPanel.tsx"), "丢失团队互动流程图组件"
         assert _src_exists("components/panel/TeamPanel.tsx"), "丢失团队面板组件"
 
+    def test_team_flow_is_workflow_cockpit(self):
+        """团队面板 = 工作流驾驶舱（2026-09-07 用户原型图重构）。
+
+        核心诉求回归锁定：
+        - 成员完整汇报必须解析展示（hint <team-message from=…> 全文，
+          不再只显示"汇报"两字摘要）
+        - 团队名（TeamCreate name）与任务描述（description）上头部卡片
+        - 四 Tab：团队动态（时间轴）/ 工作流 / 成员 / 产物
+        - 点成员卡片 = 本页看互动（不跳转）；跳转是成员 Tab 的次要入口
+        - 时间轴渲染块级 created_at 时间戳
+        """
+        t = _src("components/panel/TeamFlowPanel.tsx")
+        # 汇报全文解析：team-message 提取 from + 剥壳内容入 content
+        assert 'team-message' in t and 'member_report' in t
+        # 团队名/任务描述：TeamCreate 的 name + description
+        assert 'team_created' in t and 'input.description' in t
+        # 四 Tab
+        for key in ("'activity'", "'workflow'", "'members'", "'artifacts'"):
+            assert key in t, f"丢失 Tab {key}"
+        # 点成员卡片本页看互动：focusMember 切 Tab 不调 onOpenMember
+        assert 'focusMember' in t
+        # 成员中断状态展示（system-reminder was interrupted）
+        assert 'member_interrupted' in t and "was interrupted" in t
+        # 时间轴时间戳
+        assert 'created_at' in t and 'toLocaleTimeString' in t
+        # i18n 键齐备
+        zh = json.loads((_BASE_DIR / "webui-src/src/i18n/locales/zh.json").read_text(encoding="utf-8"))
+        tf = zh["panel"]["teamFlow"]
+        for key in (
+            "statusRunning",
+            "tabActivity",
+            "tabWorkflow",
+            "tabMembers",
+            "tabArtifacts",
+            "stReported",
+            "stInterrupted",
+            "evFinal",
+        ):
+            assert key in tf, f"zh.json panel.teamFlow 缺 {key}"
+
 
 class TestSrcMCPToolsDrawer:
     """「我的 MCP」点开看工具清单（2026-09-03 用户反馈：注册的 MCP 无法点击）。"""
