@@ -12,6 +12,7 @@ import {
 import { MAX_CONCURRENT_UPLOADS, isTerminal, type UploadTask } from './uploadTypes';
 import { knowledgeBaseApi } from '@/api';
 import type { KnowledgeDocumentStatus } from '@/api';
+import { uuid } from '@/utils/uuid';
 
 /**
  * Public contract the surrounding app sees. Exposed via the React
@@ -161,7 +162,7 @@ function reducer(state: UploadTask[], action: Action): UploadTask[] {
 
 function newTaskId(): string {
 	if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-		return crypto.randomUUID();
+		return uuid();
 	}
 	return `upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }

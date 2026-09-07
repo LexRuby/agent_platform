@@ -33,6 +33,7 @@ import { Spinner } from '@/components/ui/spinner';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
+import { uuid } from '@/utils/uuid';
 
 /** How long a load may run before it is worth showing a spinner. */
 const SPINNER_DELAY_MS = 150;
@@ -211,7 +212,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 													onClick={() => {
 														onSend([
 															{
-																id: crypto.randomUUID(),
+																id: uuid(),
 																type: 'text',
 																text: t(
 																	'chat.maxItersExceeded.continue',

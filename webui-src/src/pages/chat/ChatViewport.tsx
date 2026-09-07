@@ -59,6 +59,7 @@ import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
 import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
+import { uuid } from '@/utils/uuid';
 
 interface ChatViewportProps {
 	/**
@@ -1041,7 +1042,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 										const filePath = (file as File & { path?: string }).path;
 										if (filePath) {
 											return {
-												id: crypto.randomUUID(),
+												id: uuid(),
 												type: 'data' as const,
 												source: {
 													type: 'url' as const,
@@ -1056,7 +1057,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 										if (file.type === 'text/plain') {
 											const text = await file.text();
 											return {
-												id: crypto.randomUUID(),
+												id: uuid(),
 												type: 'text' as const,
 												text: `[File: ${file.name}]\n${text}`,
 												created_at: new Date().toISOString(),
@@ -1070,7 +1071,7 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 										}
 										const base64 = btoa(binary);
 										return {
-											id: crypto.randomUUID(),
+											id: uuid(),
 											type: 'data' as const,
 											source: {
 												type: 'base64' as const,

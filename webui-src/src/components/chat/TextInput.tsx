@@ -35,6 +35,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n.ts';
 import { cn } from '@/lib/utils';
+import { uuid } from '@/utils/uuid';
 
 /**
  * Represents a file that has been selected and processed (or is being processed).
@@ -225,7 +226,7 @@ export const TextInput = forwardRef<TextInputRef, TextInputProps>(
 			// Add text block
 			if (value.trim()) {
 				const textBlock: TextBlock = {
-					id: crypto.randomUUID(),
+					id: uuid(),
 					type: 'text',
 					text: value.trim(),
 					created_at: new Date().toISOString(),

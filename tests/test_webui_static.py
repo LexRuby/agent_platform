@@ -789,3 +789,48 @@ class TestBrandAgentForge:
             assert "AgentScope" not in text, (
                 f"{locale}.json 残留用户可见的 AgentScope 文案"
             )
+
+
+class TestInsecureContextPolyfill:
+    """裸 IP HTTP 访问（不安全上下文）回归锁。
+
+    2026-09-07 事故：crypto.randomUUID 在 http://<裸IP> 下为
+    undefined，官方包 UserMsg 抛 TypeError 被 unhandledrejection
+    监听器静默吞掉——用户点发送：输入框清空、无 POST、无报错。
+    修复 = polyfill.ts 最先 import + 自有代码 uuid() 回退。
+    """
+
+    def test_polyfill_exists_and_imported_first(self):
+        src = (_SRC_DIR / "polyfill.ts").read_text(encoding="utf-8")
+        assert "getRandomValues" in src, "polyfill 必须用 getRandomValues 回退"
+        assert "0x40" in src and "0x80" in src, "必须设置 RFC4122 v4 版本/变体位"
+        assert "!crypto.randomUUID" in src, "必须判断缺失才补（安全上下文走原生）"
+
+        main = (_SRC_DIR / "main.tsx").read_text(encoding="utf-8")
+        poly_pos = main.find("import './polyfill'")
+        assert poly_pos != -1, "main.tsx 必须 import polyfill"
+        # 必须在应用模块（App/i18n/css）之前
+        for later in ("import './index.css'", "import './i18n'", "import App"):
+            assert main.find(later) > poly_pos, f"polyfill 必须先于 {later}"
+
+    def test_no_direct_random_uuid_in_our_src(self):
+        """自有源码不允许直接调用 crypto.randomUUID()（用 uuid()）。"""
+        offenders = []
+        for f in _SRC_DIR.rglob("*.ts*") if _SRC_DIR.exists() else []:
+            if f.name in ("polyfill.ts", "uuid.ts"):
+                continue
+            if "crypto.randomUUID()" in f.read_text(encoding="utf-8"):
+                offenders.append(str(f))
+        assert not offenders, f"直接调用点必须换成 uuid()：{offenders}"
+
+    def test_uuid_util_fallback_shape(self):
+        src = (_SRC_DIR / "utils" / "uuid.ts").read_text(encoding="utf-8")
+        assert "crypto.randomUUID" in src and "getRandomValues" in src
+        assert "export function uuid" in src
+
+    def test_unhandledrejection_not_silent(self):
+        """unhandledrejection 监听器必须 console.error 非资产错误。"""
+        main = (_SRC_DIR / "main.tsx").read_text(encoding="utf-8")
+        assert "console.error('[unhandledrejection]'" in main, (
+            "吞异常无痕是 2026-09-07 排查灾难的帮凶，必须留 console 痕迹"
+        )
