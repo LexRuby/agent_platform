@@ -1,6 +1,6 @@
 """生产部署形态 B：AgentScope 官方 agent-service（多租户/多会话）+ Web UI。
 
-- 存储：Redis（docker: agentforge-redis，:6379）
+- 存储：Redis（docker: agentforge-redis，:6379；AOF 每秒刷盘）
 - 消息总线：进程内（单 worker 部署；多进程时换 RedisMessageBus）
 - MCP：不在工作区默认注入任何 MCP；需要时在 UI 的「MCP」页显式添加
 - Web UI：官方 examples/web_ui 构建产物挂载在同源 "/"（零配置，访问 :30000 即用）
@@ -8,7 +8,11 @@
   ASGI 鉴权中间件（未登录 401/302 /login，伪造 X-User-ID 无效）
 - 提示词模板：prompt_templates/*.yaml，创建 Agent 时可选（/prompt-templates）
 
-启动前置：Redis 运行中。
+启动前置：Redis 运行中。容器必须带 AOF 启动（2026-09-07 宿主机异常重启曾丢
+41 分钟数据——RDB 快照窗口太长，「机械控制实验室」智能体因此丢失）：
+  docker run -d --name agentforge-redis --restart unless-stopped \\
+    -p 6379:6379 -v <redis数据卷>:/data \\
+    redis:7 --appendonly yes --appendfsync everysec
 模型凭据在 UI 的「凭据」页配置（豆包 = OpenAI 兼容：ARK key + base_url + 模型名）。
 """
 
