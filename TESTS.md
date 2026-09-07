@@ -1,6 +1,6 @@
 # 测试用例说明（TESTS.md）
 
-自动化测试体系：**384 个用例**，`pytest` 一条命令全量回归（约 18 秒，不依赖任何真实外部服务）。
+自动化测试体系：**534 个用例**（532 通过 + 2 冒烟跳过），`pytest` 一条命令全量回归（约 22 秒，不依赖任何真实外部服务）。
 
 > 2026-09-03：旧工单服务（`app/main.py`、`app/console.py`、`app/workflow/`）及其测试
 > （test_main_api / test_console_api / test_workflow，共 55 例）随服务下线一并删除。
@@ -524,6 +524,80 @@ API 层 3，FakeSessionService duck-typing）；webui_static +3
 验证：pytest 480 项通过；浏览器 E2E 登录→导航→页面渲染→窗口
 切换全过（当时后端未重启故空态为预期）；`curl /usage/summary`
 联通。
+
+### 33. `test_local_skill_hub.py`（17 例）+ `test_mcp_tools.py`（6 例）—— 本地技能中心与 MCP 工具清单
+
+> 用户需求："技能/ MCP 装了之后，我要能看到每个包里到底有什么工具、
+> 什么说明，再决定怎么用。"
+
+**本地技能中心**（`app/local_skill_hub.py`，17 用例）：目录扫描 /
+> 搜索 / 分页 / 详情 / 下载全链路，读 registry 目录结构不访问网络；
+> manifest + SKILL.md 双文件解析（缺一降级不崩溃）。
+
+**MCP 工具清单**（`app/mcp_tools.py`，6 用例）：`GET /mcp-tools/{id}`
+> 列出指定 MCP server 的工具清单；monkeypatch `_list_tools_via_probe`
+> 不访问真实 server，storage 用假 record。
+
+### 34. `test_agent_share.py`（33 例）—— 智能体跨账号共享 + 版本化发布
+
+> 用户需求（v1，2026-09-07）："我发布之后，能选择哪些账号可以看到
+> 我的大A/小A。"
+> 用户需求（v2，2026-09-08）："发布的时候要有版本控制——同一智能体
+> 的 v2（文科版）、v3（理科版）要能分别发布、对外重命名。"
+
+**共享 v1**（`RedisAgentSharePolicy` + 管理端点，24 例）：
+- 官方 `ResourceAccessPolicyBase` 的 Redis 实现——授予的 agent 以
+  只读 ResourceRef 并入官方 ResourceAccessService（列表合并
+  editable=false / resolve_for_edit 403 / 会话聊天放行，全链路官方自带）
+- 三种可见性：私有（默认，他人 404）/ 指定账号 / 全部账号
+- 管理端点 `GET /agent-share/mine`、`PUT /agent-share/{id}`（发布/
+  改可见性）、`DELETE /agent-share/{id}`（取消发布）
+- 测试用**真类** `ResourceAccessService` 验证策略与官方链路集成
+
+**版本化发布 v2**（`TestVersionedPublish`，9 例）：
+- `POST /agent-share/publish`：版本快照 → 复制出独立对外产品
+  （可重命名）+ 共享；发布物元数据（源 agent + 源版本）入 Redis
+- `GET /agent-share/pubs`：我的发布物列表（含溯源）
+- 取消发布清理 pubmeta（防已下架产品残留列表）
+- 发布必须是 users/public 模式（发布必共享）；版本快照必须存在
+
+### 35. 账户中心（2026-09-07/08，test_usage_metering 扩展 28 例 + test_webui_static 扩展）
+
+> 用户需求："一个账户界面，直观看到我的消费情况（模型、大A/小A、
+> 输入、输出）+ 管理我发布的智能体。"
+
+**消费概览 v2**（`/account` Tab）：产品维度聚合——"大A及team"
+> （含全部成员成本）与"独立小A"分行，按模型/输入/输出/调用次数
+> 拆分；团队行可展开成员成本构成；归因按当前团队结构（member→
+> leader 映射），消费记调用方账号（SaaS 惯例）。test_usage_metering
+> 21→28 例（+7 产品维度聚合）。
+
+**入口收敛**：旧 /usage、/share 独立页并入 /account 双 Tab
+> （消费概览 + 智能体管理），路由保留重定向；侧边栏 ChartPie/Share2
+> 双图标收编为 CircleUserRound 单入口。
+
+### 36. `test_agent_version.py` 扩展（33 例）+ 智能体管理界面（2026-09-08 v2）
+
+> 用户需求："发布新版本怎么没反应？""我要基于基础版优化出文科版、
+> 理科版两个智能体""管理界面不要只有发布——增删改查都应该有。"
+
+**save-version 修复**：配置未变时曾静默复用旧版本号（界面无反馈
+> = 用户遇到的"点了没反应"）→ `force=True` 每次发版必新增。
+
+**复制智能体**（`TestDuplicate`，+8 例）：`POST /agent/{id}/duplicate`
+> 从当前配置或任意版本快照分叉新个体；所有权按 storage.get_agent
+> 键控校验（防列表含共享智能体导致的越权复制）；团队成员智能体
+> 随团队生命周期管理，不支持复制（400）。
+
+**前端智能体管理页**（`AgentManagement.tsx` 取代 ShareManagement）：
+> 完整增删改查（新建/编辑/删除）+ 版本管理 + 复制 + 发布版本 +
+> 可见性 + 我的发布物（溯源展示）+ 共享给我（只读）。静态锁
+> `test_share_management_migrated` 重写：断言 CRUD 组件、三条版本化
+> 链路（duplicate/publish/publications）及旧页面已删。
+
+验证：pytest 532 项通过；浏览器 E2E 全链路（发版 v1/v2 → 复制
+> "高考志愿兵-文科" → 发布"高考志愿兵-文科版"给指定账号 →
+> 发布物溯源展示）实测通过。
 
 ## 维护规则
 
