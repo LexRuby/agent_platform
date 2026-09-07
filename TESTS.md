@@ -624,6 +624,26 @@ Redis seed 5 条消息 → truncate 保留 3 归档 2 → flow-archive 副本
 浏览器 E2E：重启确认对话框+toast、继续按钮触发 wake、Split hover
 按钮+确认对话框、团队驾驶舱暂停/继续按钮（真实团队数据渲染）。
 
+
+### 38. `TestBrandAgentForge` 静态锁（2026-09-08，7 例）
+
+> 用户需求："平台是 Agent Forge，基于 AgentScope 二次开发没问题，
+> 但 UI 太像原生 AgentScope 了，帮我切换成 Agent Forge。"
+> 品牌触点全量切换：favicon/title/侧边栏 logo/登录页/错误文案；
+> `@agentscope-ai/...` npm 包导入不属于品牌，不检查。
+
+| 触点 | 变更 | 锁 |
+|---|---|---|
+| SPA 入口 | title→Agent Forge，favicon→/agentforge.svg | `test_index_html_brand` + `test_deployed_favicon` |
+| 侧边栏 | 新 mono 标识（铁砧+火花）+ hover 提示 | `test_sidebar_logo` |
+| 品牌资产 | 新增 agentforge_mono/agentforge.svg；旧 agentscope 三件套删除 | `test_brand_assets_exist_and_old_removed` |
+| 登录页 | 「Agent Forge · 智能体控制台」+🔨+锻造副标题 | `test_login_page_brand` |
+| 后端放行 | STATIC_EXACT 增 /agentforge.svg | `test_auth_static_allowlist` |
+| 翻译文案 | errorNotAgentScope→errorNotService（键+值去 AgentScope） | `test_i18n_no_visible_agentscope_brand` |
+
+验证：pytest 568 项通过；浏览器 E2E 6 项全 PASS（登录页品牌/标签页
+标题/侧边栏 logo/favicon 可达/console 无错/chat 正常渲染）。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量

@@ -32,7 +32,7 @@ USERNAME_RE = re.compile(r"^[a-zA-Z0-9_-]{2,32}$")
 SESS_PREFIX = "agentforge:sess:"
 
 # 放行规则：认证端点、登录页与静态资源（未登录可访问）
-STATIC_EXACT = {"/login", "/health", "/agentscope.svg", "/favicon.ico"}
+STATIC_EXACT = {"/login", "/health", "/agentforge.svg", "/favicon.ico"}
 STATIC_PREFIX = ("/assets/",)
 
 _pool: aioredis.Redis | None = None

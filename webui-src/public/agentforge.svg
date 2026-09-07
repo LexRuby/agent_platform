@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" role="img" aria-label="Agent Forge">
+  <!-- Agent Forge 品牌标识（favicon 彩色版）：深砧黑底 + 炉火橙金铁砧 + 锻造火花 -->
+  <defs>
+    <linearGradient id="afAnvil" x1="0.1" y1="0.15" x2="0.9" y2="0.85" gradientUnits="objectBoundingBox">
+      <stop offset="0%" stop-color="#FFB25E"/>
+      <stop offset="55%" stop-color="#F97316"/>
+      <stop offset="100%" stop-color="#E0520A"/>
+    </linearGradient>
+    <linearGradient id="afSpark" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0%" stop-color="#FFE08A"/>
+      <stop offset="100%" stop-color="#FFC24B"/>
+    </linearGradient>
+  </defs>
+  <!-- 圆角方形底（与 UI primary #18191c 同族） -->
+  <rect x="32" y="32" width="448" height="448" rx="96" fill="#1A1B1E"/>
+  <g transform="translate(64 64) scale(16)">
+    <!-- 大火花 -->
+    <path d="M17.5 1.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" fill="url(#afSpark)"/>
+    <!-- 小火花 -->
+    <path d="M12.5 3.5l.5 1.2 1.2.5-1.2.5-.5 1.2-.5-1.2-1.2-.5 1.2-.5z" fill="url(#afSpark)" opacity=".85"/>
+    <!-- 铁砧 -->
+    <path d="M1.5 9.5L3.5 8H21v3h-6.5v3H17v1.5h2.5V18h-15v-2.5H7V14h2.5v-3h-6z" fill="url(#afAnvil)"/>
+  </g>
+</svg>

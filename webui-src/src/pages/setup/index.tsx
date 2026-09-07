@@ -51,7 +51,7 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 			if (e.status === TIMEOUT_STATUS) return t('setup.errorTimeout');
 			// Something answered, but it has no /health — wrong address, or
 			// a backend too old to have one.
-			if (e.status === 404) return t('setup.errorNotAgentScope');
+			if (e.status === 404) return t('setup.errorNotService');
 			if (e.status === 401 || e.status === 422) return t('setup.errorUnauthorized');
 			if (e.status === 503) {
 				const down = notReadyComponents(e.detail);
@@ -60,7 +60,7 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 		}
 		// A 200 whose body will not parse as JSON: an SPA dev server or a
 		// catch-all proxy answering with HTML, not our backend.
-		if (e instanceof SyntaxError) return t('setup.errorNotAgentScope');
+		if (e instanceof SyntaxError) return t('setup.errorNotService');
 		return formatApiErrorForAlert(e);
 	};
 
@@ -82,7 +82,7 @@ export const SetupPage = ({ onComplete, className }: Props) => {
 			// Valid JSON that is not a health report means the address points
 			// at some other service that happens to answer 200.
 			if (typeof health.version !== 'string' || !health.components) {
-				setErrorMsg(t('setup.errorNotAgentScope'));
+				setErrorMsg(t('setup.errorNotService'));
 				return;
 			}
 			localStorage.setItem('server_url', trimmedUrl);

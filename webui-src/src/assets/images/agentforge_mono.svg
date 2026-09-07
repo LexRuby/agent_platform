@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="Agent Forge">
+  <!-- Agent Forge 品牌标识：铁砧 + 锻造火花（mono 版，跟随 currentColor） -->
+  <!-- 大火花 -->
+  <path d="M17.5 1.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>
+  <!-- 小火花 -->
+  <path d="M12.5 3.5l.5 1.2 1.2.5-1.2.5-.5 1.2-.5-1.2-1.2-.5 1.2-.5z" opacity=".75"/>
+  <!-- 铁砧：horn 尖角 + 砧面 + 收腰 + 双层底座 -->
+  <path d="M1.5 9.5L3.5 8H21v3h-6.5v3H17v1.5h2.5V18h-15v-2.5H7V14h2.5v-3h-6z"/>
+</svg>

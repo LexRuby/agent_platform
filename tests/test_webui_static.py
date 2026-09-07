@@ -723,3 +723,69 @@ class TestSrcSessionFlow:
             assert "pauseTeam" in tf and "resumeTeam" in tf, (
                 f"{locale}.json 丢失 panel.teamFlow.pauseTeam/resumeTeam"
             )
+
+
+class TestBrandAgentForge:
+    """品牌切换（2026-09-08）：UI 从 AgentScope 原生样式切换为 Agent Forge。
+
+    平台基于 AgentScope 二次开发，但用户可见的品牌触点（浏览器标题、
+    favicon、侧边栏 logo、登录页、错误文案）必须统一为 Agent Forge，
+    不得回退成上游原生品牌（否则平台"看起来像官方 demo"）。
+    注意：``@agentscope-ai/...`` 是 npm 包导入路径，不属于品牌，不检查。
+    """
+
+    def test_index_html_brand(self):
+        """SPA 入口：title 与 favicon 必须是 Agent Forge。"""
+        html = (_SRC_DIR.parent / "index.html").read_text(encoding="utf-8")
+        assert "<title>Agent Forge</title>" in html, "浏览器标题不是 Agent Forge"
+        assert 'href="/agentforge.svg"' in html, "favicon 未指向 /agentforge.svg"
+        assert "AgentScope" not in html, "index.html 残留 AgentScope 品牌"
+
+    def test_sidebar_logo(self):
+        """侧边栏 logo 必须用 Agent Forge mono 标识（铁砧+火花）。"""
+        sidebar = _src("components/layout/AppSidebar.tsx")
+        assert "agentforge_mono.svg?react" in sidebar, "侧边栏未使用 Agent Forge logo"
+        assert "agentscope_mono" not in sidebar, "侧边栏残留 AgentScope logo"
+        assert 'title="Agent Forge"' in sidebar, "logo 无 Agent Forge 提示"
+
+    def test_brand_assets_exist_and_old_removed(self):
+        """新品牌资产存在；旧 AgentScope svg 源文件必须删除。"""
+        assets = _SRC_DIR / "assets" / "images"
+        assert (assets / "agentforge_mono.svg").exists(), "缺侧边栏 mono 标识"
+        assert (_SRC_DIR.parent / "public" / "agentforge.svg").exists(), "缺 favicon 源"
+        assert not (assets / "agentscope_mono.svg").exists(), "旧 mono logo 未删"
+        assert not (assets / "agentscope.svg").exists(), "旧彩色 logo 未删"
+        assert not (_SRC_DIR.parent / "public" / "agentscope.svg").exists(), (
+            "旧 favicon 源未删"
+        )
+
+    def test_deployed_favicon(self):
+        """部署产物必须带新 favicon 且 index.html 引用一致。"""
+        assert (_WEBUI_DIR / "agentforge.svg").exists(), "webui/ 缺 agentforge.svg"
+        html = (_WEBUI_DIR / "index.html").read_text(encoding="utf-8")
+        assert "<title>Agent Forge</title>" in html
+        assert 'href="/agentforge.svg"' in html
+
+    def test_login_page_brand(self):
+        """后端登录页（login.html）必须是 Agent Forge 品牌。"""
+        login = (_BASE_DIR / "app" / "login.html").read_text(encoding="utf-8")
+        assert "Agent Forge" in login, "登录页无 Agent Forge 品牌"
+        assert "AgentScope" not in login, "登录页残留 AgentScope 品牌"
+
+    def test_auth_static_allowlist(self):
+        """favicon 放行名单必须包含 /agentforge.svg（未登录可取）。"""
+        auth = (_BASE_DIR / "app" / "auth.py").read_text(encoding="utf-8")
+        assert '"/agentforge.svg"' in auth, "STATIC_EXACT 缺 /agentforge.svg"
+
+    def test_i18n_no_visible_agentscope_brand(self):
+        """翻译文件中用户可见文案不得出现 AgentScope（品牌统一）。"""
+        for locale in ("zh", "en"):
+            data = json.loads(
+                (_SRC_DIR / "i18n" / "locales" / f"{locale}.json").read_text(
+                    encoding="utf-8",
+                ),
+            )
+            text = json.dumps(data, ensure_ascii=False)
+            assert "AgentScope" not in text, (
+                f"{locale}.json 残留用户可见的 AgentScope 文案"
+            )
