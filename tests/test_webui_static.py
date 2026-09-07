@@ -65,6 +65,51 @@ class TestDeployedWebui:
         assert "/@vite/client" not in html, "index.html 引用了 /@vite/client——误部署了开发构建"
 
 
+class TestSrcFocusedLayout:
+    """专注布局与菜单收缩（2026-09-07 用户布局重构）。
+
+    用户诉求：中间完整对话；右侧上=团队驾驶舱、下=资源面板
+    （MCP/技能/知识库 Tab）；计划/权限/团队从面板菜单移除
+    （被团队工作流/顶栏权限控件覆盖）；保留一键切回经典布局。
+    """
+
+    def test_resource_tabs_panel_exists(self):
+        """资源面板组件存在且聚合三类资源 Tab。"""
+        t = _src("components/panel/ResourceTabsPanel.tsx")
+        for key in ("'mcp'", "'skill'", "'knowledge'"):
+            assert key in t, f"资源面板丢失 Tab {key}"
+
+    def test_panel_key_shrunk(self):
+        """PanelKey 只剩 mcp/skill/knowledge——计划/权限/团队不再 dock。"""
+        t = _src("components/panel/PanelDock.tsx")
+        assert "'mcp' | 'skill' | 'knowledge'" in t
+        for gone in ("'plan'", "'permission'", "'team'"):
+            assert f"{gone} |" not in t and f"| {gone}" not in t, f"PanelKey 应移除 {gone}"
+
+    def test_focused_layout_toggle(self):
+        """ChatViewport 必须有布局模式切换（focused 默认/classic）且持久化。"""
+        t = _src("pages/chat/ChatViewport.tsx")
+        assert "chat_layout_mode" in t, "布局偏好未持久化"
+        assert "'focused'" in t and "'classic'" in t
+        assert "switchToClassic" in t and "switchToFocused" in t, "缺切换按钮文案键"
+        # 专注布局右侧栏：团队驾驶舱 + 资源面板
+        assert "ResourceTabsPanel" in t
+        # 旧面板组件不再挂载
+        for gone in ("TaskPanel", "PermissionPanel", "TeamPanel"):
+            assert f"<{gone}" not in t, f"{gone} 不应再被挂载"
+
+    def test_layout_i18n_keys(self):
+        """布局切换文案中英齐全。"""
+        for lang in ("zh", "en"):
+            d = json.loads(
+                (_BASE_DIR / f"webui-src/src/i18n/locales/{lang}.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            assert "switchToClassic" in d.get("chat", {}), f"{lang} 缺 switchToClassic"
+            assert "switchToFocused" in d.get("chat", {}), f"{lang} 缺 switchToFocused"
+
+
 class TestSrcAssetReloadGuard:
     """动态 import 失败自愈刷新（2026-09-04 事故）：部署新版后，已打开的
     旧页面懒加载旧 hash chunk 404 → "Failed to fetch dynamically imported

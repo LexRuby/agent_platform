@@ -167,7 +167,9 @@
       "emptyHasAgent": "Create a session to start chatting.",
       "today": "Today",
       "earlier": "Earlier"
-    }
+    },
+    "switchToClassic": "Switch to classic layout (team panel above chat, panels via top-right menu)",
+    "switchToFocused": "Switch to focused layout (full-width chat, team & resources on the right)"
   },
   "dialog-agent-create": {
     "title": "Create agent",

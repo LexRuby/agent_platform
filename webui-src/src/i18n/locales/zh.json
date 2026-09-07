@@ -167,7 +167,9 @@
       "emptyHasAgent": "创建会话开始对话。",
       "today": "今天",
       "earlier": "更早"
-    }
+    },
+    "switchToClassic": "切换为经典布局（团队面板在对话顶部，右上角菜单开关面板）",
+    "switchToFocused": "切换为专注布局（完整对话，右侧为团队与资源栏）"
   },
   "dialog-agent-create": {
     "title": "创建智能体",

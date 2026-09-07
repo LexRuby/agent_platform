@@ -363,6 +363,30 @@ setup 失败（疑似官方 bug，UI 内确认未复现，观察中）。
 真实浏览器 E2E（高考主理会话）：头部/Tab/时间轴/成员状态/产物全文/
 五阶段工作流全部断言通过。
 
+### 27. `test_webui_static.py` 新增 `TestSrcFocusedLayout`（2026-09-07 布局重构）
+
+> 用户布局诉求：中间完整对话（不再被顶部团队面板压缩）；右侧栏
+> 上=团队工作流驾驶舱、下=资源面板；右上角菜单收缩。同步决策：
+> - 计划/团队面板 → 被团队驾驶舱（TeamFlowPanel 时间轴/工作流）
+>   完全覆盖，移除
+> - 权限面板 → 顶栏 PermissionModeSelect 已覆盖，移除
+> - 知识库/MCP/技能 → 合并为右侧资源面板（ResourceTabsPanel，
+>   Tab 切换 + 已加载数量徽章），经典布局下仍可从右上角菜单 dock
+
+实现（ChatViewport 双布局，偏好持久化 `chat_layout_mode`）：
+- focused（默认）：完整对话 + 右侧栏（TeamFlowPanel 上、
+  ResourceTabsPanel 下，资源内容 JSX 与经典 dock 共用一次定义）
+- classic：旧布局原样保留（TeamFlowPanel 在对话顶部 + PanelDock
+  菜单开关），右上角一键切换往返
+- PanelKey 类型收缩为 'mcp' | 'skill' | 'knowledge'，localStorage
+  旧 layout 自动 drop 被移除的 key（loadPanelLayout 既有过滤）
+- TaskPanel/PermissionPanel/TeamPanel 组件文件保留但不再挂载
+
+测试 4 项：资源面板 Tab 齐全、PanelKey 收缩、布局切换三要素
+（持久化键/两模式/文案键）+ 旧面板不挂载、i18n 双语。真实浏览器
+E2E：专注默认（驾驶舱+资源Tab）、对话区全宽、切经典（团队面板回
+顶部）、经典菜单仅 3 项、刷新保持偏好、切回专注全部断言通过。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量

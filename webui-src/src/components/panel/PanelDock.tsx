@@ -12,8 +12,13 @@ import { Separator } from '@/components/ui/separator';
 /**
  * Identifier for a dockable panel. Used both as the React key and to
  * look its descriptor up in {@link PanelDockProps.panels}.
+ *
+ * 2026-09-07 菜单收缩（用户反馈）：plan/permission/team 移除——
+ * 计划与团队已被团队工作流驾驶舱（TeamFlowPanel）覆盖，权限由
+ * 顶栏的 PermissionModeSelect 控制；剩余"加载的资源"三类在
+ * 专注布局中常驻右侧资源面板，经典布局中仍可从这里 dock。
  */
-export type PanelKey = 'plan' | 'mcp' | 'skill' | 'permission' | 'knowledge' | 'team';
+export type PanelKey = 'mcp' | 'skill' | 'knowledge';
 
 /**
  * The presentation of a single panel: header chrome plus its already

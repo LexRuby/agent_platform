@@ -1,20 +1,15 @@
-import type { PermissionContext } from '@agentscope-ai/agentscope/permission';
-import type { TaskContext } from '@agentscope-ai/agentscope/state';
 import {
 	Archive,
 	BookText,
 	ChevronDown,
 	Database,
-	ListTodo,
 	PanelRight,
-	ShieldCheck,
-	UsersRound,
+	PanelRightClose,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import type {
-	AgentView,
 	ChatModelConfig,
 	PermissionMode,
 	SessionKnowledgeConfig,
@@ -30,11 +25,9 @@ import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDial
 import { KnowledgeBasePanel } from '@/components/panel/KnowledgeBasePanel';
 import { McpPanel } from '@/components/panel/McpPanel';
 import { PanelDock, type PanelDescriptor, type PanelKey } from '@/components/panel/PanelDock.tsx';
-import { PermissionPanel } from '@/components/panel/PermissionPanel';
+import { ResourceTabsPanel } from '@/components/panel/ResourceTabsPanel';
 import { SkillPanel } from '@/components/panel/SkillPanel';
-import { TaskPanel } from '@/components/panel/TaskPanel';
 import { TeamFlowPanel } from '@/components/panel/TeamFlowPanel';
-import { TeamPanel } from '@/components/panel/TeamPanel';
 import { KnowledgeBaseParametersPopover } from '@/components/popover/KnowledgeBaseParametersPopover';
 import { ModelParametersPopover } from '@/components/popover/ModelParametersPopover';
 import { LlmSelect } from '@/components/select/LlmSelect';
@@ -90,15 +83,27 @@ const MAX_PANELS_PER_COLUMN = 2;
 /** localStorage key holding the dock layout across page navigations. */
 const PANEL_LAYOUT_KEY = 'chat_panel_layout';
 
+/**
+ * localStorage key for the chat layout mode (2026-09-07 用户布局重构)：
+ * - focused（默认）：完整对话在中间；右侧栏上=团队工作流驾驶舱
+ *   （TeamFlowPanel），下=资源面板（MCP/技能/知识库 Tab）
+ * - classic：旧布局——TeamFlowPanel 在对话区顶部，右侧 dock 面板
+ *   由右上角菜单开关
+ */
+const LAYOUT_MODE_KEY = 'chat_layout_mode';
+
+type LayoutMode = 'focused' | 'classic';
+
+function loadLayoutMode(): LayoutMode {
+	return localStorage.getItem(LAYOUT_MODE_KEY) === 'classic' ? 'classic' : 'focused';
+}
+
 // Typed as a full Record so adding a PanelKey without listing it here
 // is a compile error rather than a silently unrestorable panel.
 const KNOWN_PANELS: Record<PanelKey, true> = {
-	plan: true,
 	mcp: true,
 	skill: true,
-	permission: true,
 	knowledge: true,
-	team: true,
 };
 
 /**
@@ -190,8 +195,6 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>('default');
 	const [credentialOpen, setCredentialOpen] = useState(false);
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
-	const [tasksContext, setTasksContext] = useState<TaskContext | null>(null);
-	const [permissionContext, setPermissionContext] = useState<PermissionContext | null>(null);
 	const [configPending, setConfigPending] = useState(false);
 	// 任务归档对话框（仅主理人会话显示入口）
 	const [archiveOpen, setArchiveOpen] = useState(false);
@@ -199,10 +202,16 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	// panels stacked top→bottom. Open order determines placement.
 	// Persisted so leaving and returning to /chat keeps the same panels.
 	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>(loadPanelLayout);
+	// 布局模式（focused/classic），持久化，默认 focused
+	const [layoutMode, setLayoutMode] = useState<LayoutMode>(loadLayoutMode);
 
 	useEffect(() => {
 		localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(panelLayout));
 	}, [panelLayout]);
+
+	useEffect(() => {
+		localStorage.setItem(LAYOUT_MODE_KEY, layoutMode);
+	}, [layoutMode]);
 
 	// When the viewport agent differs from the outer page's selected
 	// agent (i.e. user drilled into a team member), `refetchSessions`
@@ -215,23 +224,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	// `team_updated` also fires on `TeamDelete` and carries no payload,
 	// hence checking the refetched list rather than opening blindly.
 	const handleTeamUpdated = useCallback(async () => {
-		const next = await refetchSessions();
-		if (next.some((v) => v.session.id === sessionId && v.team)) {
-			// `openPanelInLayout`, not `togglePanel` — the latter would
-			// close a panel the user already has open.
-			setPanelLayout((layout) => openPanelInLayout(layout, 'team'));
-		}
+		// 团队事件（TeamCreate/AgentCreate/…）到达时刷新会话视图；
+		// 团队展示由 TeamFlowPanel 从消息流自解析，不再自动开 dock 面板。
+		await refetchSessions();
 		onTeamUpdated?.();
-	}, [refetchSessions, sessionId, onTeamUpdated]);
-
-	const handleStateUpdated = useCallback((value: Record<string, unknown>) => {
-		if (value.tasks_context) {
-			setTasksContext(value.tasks_context as TaskContext);
-		}
-		if (value.permission_context) {
-			setPermissionContext(value.permission_context as PermissionContext);
-		}
-	}, []);
+	}, [refetchSessions, onTeamUpdated]);
 
 	const {
 		msgs,
@@ -244,7 +241,6 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		interrupt,
 	} = useMessages(agentId, sessionId, {
 		onTeamUpdated: handleTeamUpdated,
-		onStateUpdated: handleStateUpdated,
 	});
 	const {
 		mcps,
@@ -423,55 +419,81 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		if (wasRunning && phase === 'idle') void refetchWorkspaceStatus();
 	}, [phase, refetchWorkspaceStatus]);
 
+	// 三类资源面板的内容节点：经典布局的 dock 与专注布局的右侧
+	// 资源面板共用（JSX 只定义一次，数据变化时同步重建）。
+	const resourceContent = useMemo(
+		() => ({
+			mcp: (
+				<McpPanel
+					mcps={mcps}
+					loading={mcpsLoading}
+					onAdd={addMcps}
+					onAddFromLibrary={addMcpsFromLibrary}
+					onRemove={removeMcp}
+				/>
+			),
+			skill: (
+				<SkillPanel
+					skills={skills}
+					loading={skillsLoading}
+					onUpload={uploadSkill}
+					onAddFromLibrary={addSkillsFromLibrary}
+					onRemove={removeSkill}
+				/>
+			),
+			knowledge: (
+				<KnowledgeBasePanel
+					knowledgeBases={knowledgeBases}
+					loading={knowledgeBasesLoading}
+					value={selectedKnowledgeConfig}
+					onChange={handleKnowledgeConfigChange}
+					disabled={!sessionId}
+				/>
+			),
+		}),
+		[
+			mcps,
+			mcpsLoading,
+			addMcps,
+			addMcpsFromLibrary,
+			removeMcp,
+			skills,
+			skillsLoading,
+			uploadSkill,
+			addSkillsFromLibrary,
+			removeSkill,
+			knowledgeBases,
+			knowledgeBasesLoading,
+			selectedKnowledgeConfig,
+			handleKnowledgeConfigChange,
+			sessionId,
+		],
+	);
+
+	// 知识库参数按钮：dock 面板头与资源面板 Tab 栏共用
+	const knowledgeActions = (
+		<KnowledgeBaseParametersPopover
+			value={selectedKnowledgeConfig}
+			schema={kbMiddlewareSchema}
+			onChange={handleKnowledgeConfigChange}
+			disabled={!sessionId}
+		/>
+	);
+
 	// Build the panel descriptors with live data. Rebuilt on every
 	// data change so the dock always renders the latest state — the
 	// dock itself stays free of any data dependency.
 	const panels = useMemo<Record<PanelKey, PanelDescriptor>>(
 		() => ({
-			plan: {
-				title: t('panel.plan.title'),
-				icon: <ListTodo className="size-4" />,
-				content: <TaskPanel tasksContext={tasksContext} />,
-			},
 			mcp: {
 				title: 'MCP',
 				icon: <MCPSvg className="size-4" />,
-				content: (
-					<McpPanel
-						mcps={mcps}
-						loading={mcpsLoading}
-						onAdd={addMcps}
-						onAddFromLibrary={addMcpsFromLibrary}
-						onRemove={removeMcp}
-					/>
-				),
+				content: resourceContent.mcp,
 			},
 			skill: {
 				title: t('panel.skill.title'),
 				icon: <BookText className="size-4" />,
-				content: (
-					<SkillPanel
-						skills={skills}
-						loading={skillsLoading}
-						onUpload={uploadSkill}
-						onAddFromLibrary={addSkillsFromLibrary}
-						onRemove={removeSkill}
-					/>
-				),
-			},
-			permission: {
-				title: (
-					<span className="flex items-center gap-x-2">
-						{t('panel.permission.title')}
-						{permissionContext?.mode ? (
-							<Badge variant="outline" className="capitalize">
-								{t('panel.permission.mode', { mode: permissionContext.mode })}
-							</Badge>
-						) : null}
-					</span>
-				),
-				icon: <ShieldCheck className="size-4" />,
-				content: <PermissionPanel permissionContext={permissionContext} />,
+				content: resourceContent.skill,
 			},
 			knowledge: {
 				title: (
@@ -485,75 +507,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					</span>
 				),
 				icon: <Database className="size-4" />,
-				actions: (
-					<KnowledgeBaseParametersPopover
-						value={selectedKnowledgeConfig}
-						schema={kbMiddlewareSchema}
-						onChange={handleKnowledgeConfigChange}
-						disabled={!sessionId}
-					/>
-				),
-				content: (
-					<KnowledgeBasePanel
-						knowledgeBases={knowledgeBases}
-						loading={knowledgeBasesLoading}
-						value={selectedKnowledgeConfig}
-						onChange={handleKnowledgeConfigChange}
-						disabled={!sessionId}
-					/>
-				),
-			},
-			team: {
-				title: (
-					<span className="flex items-center gap-x-2">
-						{t('common.team')}
-						{view?.team ? (
-							<Badge variant="outline">{view.team.members.length}</Badge>
-						) : null}
-					</span>
-				),
-				icon: <UsersRound className="size-4" />,
-				content: (
-					<TeamPanel
-						team={view?.team ?? null}
-						currentSessionId={sessionId}
-						presetMembers={
-							isLeader
-								? (agentRecord?.team_members ?? [])
-										.map((id) => agents.find((a) => a.id === id))
-										.filter((a): a is AgentView => !!a)
-								: []
-						}
-						agentName={agentRecord?.data.name}
-					/>
-				),
+				actions: knowledgeActions,
+				content: resourceContent.knowledge,
 			},
 		}),
-		[
-			t,
-			tasksContext,
-			mcps,
-			mcpsLoading,
-			addMcps,
-			addMcpsFromLibrary,
-			removeMcp,
-			skills,
-			skillsLoading,
-			uploadSkill,
-			addSkillsFromLibrary,
-			removeSkill,
-			permissionContext,
-			knowledgeBases,
-			knowledgeBasesLoading,
-			selectedKnowledgeConfig,
-			kbMiddlewareSchema,
-			handleKnowledgeConfigChange,
-			sessionId,
-			view,
-			agents,
-			agentRecord,
-			isLeader,
-		],
+		[t, resourceContent, knowledgeActions],
 	);
 
 	// ChatViewport keeps its own `useSessions(agentId)` instance (the
@@ -620,31 +578,6 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	};
 
 	// Seed tasks + permission from the session snapshot ONCE per
-	// session, then leave them to the CustomEvent(name="state_updated")
-	// stream via `handleStateUpdated`.
-	//
-	// Seeding on every `view` change would be wrong: storage is only
-	// written when a run ends, so mid-run the snapshot still holds the
-	// run-start values. `view` gets a new identity on every
-	// `refetchSessions()` — which `team_updated` triggers — and
-	// re-seeding then would silently roll both panels back to where the
-	// reply started. Clearing on `!view` still matters so switching
-	// sessions cannot leak the previous session's tasks or rules.
-	const seededSessionRef = useRef<string | null>(null);
-	useEffect(() => {
-		if (!view) {
-			seededSessionRef.current = null;
-			setTasksContext(null);
-			setPermissionContext(null);
-			return;
-		}
-		if (seededSessionRef.current === view.session.id) return;
-		seededSessionRef.current = view.session.id;
-		const state = view.session.state as Record<string, unknown> | undefined;
-		setTasksContext((state?.tasks_context as TaskContext) ?? null);
-		setPermissionContext((state?.permission_context as PermissionContext) ?? null);
-	}, [view]);
-
 	// Sync selectedModel + selectedFallbackModel from the session
 	// record. If the session has no model configured yet, auto-pick
 	// the first available one and persist it back so subsequent
@@ -829,68 +762,65 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 											<Archive className="size-4" />
 										</Button>
 									)}
-									<DropdownMenu>
-										<DropdownMenuTrigger asChild>
-											<Button
-												variant="ghost"
-												size="sm"
-												className="gap-1 px-2"
-											>
-												<PanelRight />
-												<ChevronDown className="size-3 text-muted-foreground" />
-											</Button>
-										</DropdownMenuTrigger>
-										<DropdownMenuContent align="end" className="w-auto">
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('plan')}
-												onCheckedChange={() => togglePanel('plan')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<ListTodo />
-												{t('panel.plan.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('mcp')}
-												onCheckedChange={() => togglePanel('mcp')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<MCPSvg className="size-4" />
-												MCP
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('skill')}
-												onCheckedChange={() => togglePanel('skill')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<BookText />
-												{t('panel.skill.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('permission')}
-												onCheckedChange={() => togglePanel('permission')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<ShieldCheck />
-												{t('panel.permission.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('knowledge')}
-												onCheckedChange={() => togglePanel('knowledge')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<Database />
-												{t('panel.knowledge.title')}
-											</DropdownMenuCheckboxItem>
-											<DropdownMenuCheckboxItem
-												checked={isPanelOpen('team')}
-												onCheckedChange={() => togglePanel('team')}
-												onSelect={(e) => e.preventDefault()}
-											>
-												<UsersRound />
-												{t('common.team')}
-											</DropdownMenuCheckboxItem>
-										</DropdownMenuContent>
-									</DropdownMenu>
+									{/* 布局模式一键切换（2026-09-07）：专注 ↔ 经典。
+									    专注=完整对话+右侧团队/资源栏；经典=顶部团队
+									    面板+右上角菜单 dock。偏好持久化。 */}
+									<Button
+										variant="ghost"
+										size="sm"
+										className="gap-1 px-2"
+										title={
+											layoutMode === 'focused'
+												? t('chat.switchToClassic')
+												: t('chat.switchToFocused')
+										}
+										onClick={() =>
+											setLayoutMode((m) => (m === 'focused' ? 'classic' : 'focused'))
+										}
+									>
+										{layoutMode === 'focused' ? <PanelRightClose /> : <PanelRight />}
+									</Button>
+									{/* 经典布局才有 dock 菜单；专注布局资源面板常驻 */}
+									{layoutMode === 'classic' && (
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild>
+												<Button
+													variant="ghost"
+													size="sm"
+													className="gap-1 px-2"
+												>
+													<PanelRight />
+													<ChevronDown className="size-3 text-muted-foreground" />
+												</Button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="end" className="w-auto">
+												<DropdownMenuCheckboxItem
+													checked={isPanelOpen('mcp')}
+													onCheckedChange={() => togglePanel('mcp')}
+													onSelect={(e) => e.preventDefault()}
+												>
+													<MCPSvg className="size-4" />
+													MCP
+												</DropdownMenuCheckboxItem>
+												<DropdownMenuCheckboxItem
+													checked={isPanelOpen('skill')}
+													onCheckedChange={() => togglePanel('skill')}
+													onSelect={(e) => e.preventDefault()}
+												>
+													<BookText />
+													{t('panel.skill.title')}
+												</DropdownMenuCheckboxItem>
+												<DropdownMenuCheckboxItem
+													checked={isPanelOpen('knowledge')}
+													onCheckedChange={() => togglePanel('knowledge')}
+													onSelect={(e) => e.preventDefault()}
+												>
+													<Database />
+													{t('panel.knowledge.title')}
+												</DropdownMenuCheckboxItem>
+											</DropdownMenuContent>
+										</DropdownMenu>
+									)}
 								</div>
 							</div>
 							<div className="flex flex-1 flex-col min-h-0 overflow-hidden">
@@ -1003,10 +933,52 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 							</div>
 						</div>
 					</ResizablePanel>
-					{panelLayout.length > 0 && (
-						<ResizableHandle withHandle className="bg-transparent w-1.5" />
+					{layoutMode === 'focused' ? (
+						<>
+							<ResizableHandle withHandle className="bg-transparent w-1.5" />
+							{/* 专注布局右侧栏：上=团队工作流驾驶舱（无团队时组件
+							    自行隐藏），下=资源面板（MCP/技能/知识库） */}
+							<ResizablePanel
+								minSize="19rem"
+								defaultSize="23rem"
+								maxSize="40rem"
+								className="flex min-h-0 flex-col gap-2 overflow-y-auto"
+							>
+								{isLeader && sessionId ? (
+									<div className="shrink-0">
+										<TeamFlowPanel
+											msgs={msgs}
+											leaderName={leaderName}
+											members={flowMembers}
+											onOpenMember={handleOpenFlowMember}
+										/>
+									</div>
+								) : null}
+								<ResourceTabsPanel
+									mcp={resourceContent.mcp}
+									skill={resourceContent.skill}
+									knowledge={resourceContent.knowledge}
+									knowledgeActions={knowledgeActions}
+									mcpCount={mcps.length}
+									skillCount={skills.length}
+									knowledgeCount={
+										selectedKnowledgeConfig?.knowledge_base_ids.length ?? 0
+									}
+								/>
+							</ResizablePanel>
+						</>
+					) : (
+						<>
+							{panelLayout.length > 0 && (
+								<ResizableHandle withHandle className="bg-transparent w-1.5" />
+							)}
+							<PanelDock
+								layout={panelLayout}
+								panels={panels}
+								onClosePanel={closePanel}
+							/>
+						</>
 					)}
-					<PanelDock layout={panelLayout} panels={panels} onClosePanel={closePanel} />
 				</ResizablePanelGroup>
 			</main>
 			<CreateCredentialDialog
