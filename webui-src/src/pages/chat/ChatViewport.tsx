@@ -876,7 +876,11 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									onOpenMember={handleOpenFlowMember}
 								/>
 							) : null}
-								<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:48rem]">
+								{/* 对话列宽度：填满中间面板（2026-09-07 用户反馈
+								"顶栏宽、对话窄，对不上，与右栏之间留空白"）。
+								顶栏/消息/输入框同宽对齐；经典布局的顶部团队
+								面板同为全宽，纵向完全对齐。 */}
+								<div className="flex flex-1 justify-center min-h-0 overflow-hidden relative [--chat-content-w:100%]">
 									<ChatContent
 									className={'max-w-[var(--chat-content-w)] w-full'}
 									msgs={msgs}

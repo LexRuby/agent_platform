@@ -477,6 +477,24 @@ API 层 3，FakeSessionService duck-typing）；webui_static +3
 修复后 E2E 四断言全过：专注唯一右栏、顶部干净、经典回顶部、
 切换+刷新保持。全量 451 项通过。
 
+### 31. 对话列与顶栏同宽对齐（2026-09-07）
+
+> 用户反馈："顶栏宽、对话窄，对不上；对话与右侧小组面板之间留
+> 空白。"
+
+根因：消息/输入列固定 48rem（768px）居中，顶栏全宽——中间面板
+宽于 48rem 时上下错位，右侧出现大片空白。修复：`--chat-content-w`
+改为 100%（填满中间面板），顶栏/消息/输入框同宽对齐，与右栏驾驶
+舱仅余边距。
+
+注意测量方法（E2E 教训）：对齐断言要量**输入卡片**（textarea 的
+`rounded-[32px]` 祖先）而非 textarea 本身（后者含内边距，天然窄于
+容器，会误判 FAIL）。
+
+静态锁：TestSrcChatWidthAlignment——宽度变量必须 100%、不得回退
+48rem。实测：顶栏(x=329,w=721) === 输入卡(x=329,w=721)，距右栏
+驾驶舱 19px。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量

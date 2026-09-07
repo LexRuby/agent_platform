@@ -65,6 +65,22 @@ class TestDeployedWebui:
         assert "/@vite/client" not in html, "index.html 引用了 /@vite/client——误部署了开发构建"
 
 
+class TestSrcChatWidthAlignment:
+    """对话列与顶栏同宽对齐（2026-09-07 宽度错位回归锁）。
+
+    用户反馈："顶栏宽、对话窄，对不上；对话与右侧小组面板之间
+    留空白"。根因：消息/输入列被固定 48rem 居中，而顶栏全宽。
+    修复：--chat-content-w 改为 100%（填满中间面板），顶栏/
+    消息/输入框同宽，与右栏驾驶舱仅余边距。
+    """
+
+    def test_chat_content_fills_panel(self):
+        """对话列宽度变量必须是 100%（不再固定 48rem）。"""
+        t = _src("pages/chat/ChatViewport.tsx")
+        assert "--chat-content-w:100%" in t, "对话列应填满中间面板"
+        assert "--chat-content-w:48rem" not in t, "48rem 定宽导致与顶栏错位"
+
+
 class TestSrcNoDuplicateTeamPanel:
     """团队驾驶舱不得重复渲染（2026-09-07 顶部面板重复 bug 回归锁）。
 
