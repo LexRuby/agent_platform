@@ -1290,6 +1290,16 @@ export interface ListTTSModelResponse {
 
 // ─── Usage（Token 用量统计） ──────────────────────────────────────────────────
 
+/** 智能体共享状态（发布管理行数据）。 */
+export interface ShareInfo {
+	agent_id: string;
+	agent_name: string;
+	/** private | users | public */
+	mode: string;
+	users: string[];
+	shared_at: string;
+}
+
 /** 汇总口径的四项指标：输入/输出/缓存 tokens 与调用次数。 */
 export interface UsageTotals {
 	in: number;

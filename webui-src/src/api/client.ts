@@ -144,6 +144,12 @@ export const client = {
 		params?: Record<string, string>,
 		options?: { silent?: boolean },
 	) => request<T>(path, { method: 'POST', body, params, silent: options?.silent }),
+	put: <T>(
+		path: string,
+		body?: unknown,
+		params?: Record<string, string>,
+		options?: { silent?: boolean },
+	) => request<T>(path, { method: 'PUT', body, params, silent: options?.silent }),
 	patch: <T>(
 		path: string,
 		body?: unknown,

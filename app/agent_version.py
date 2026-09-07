@@ -34,6 +34,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from agentscope.app.access import ResourceKind
+
 from .agent_type import _replay
 from .team_archive import _call_official
 
@@ -205,6 +207,30 @@ def _require_user(request: Request) -> str:
     return user_id
 
 
+async def _require_agent_visible(agent_id: str, request: Request | None) -> None:
+    """版本信息含提示词快照：仅对 owner 或被共享账号可见（2026-09-07 共享 v1）。
+
+    之前版本端点只认 agent_id（UUID 猜不中即安全），共享上线后
+    必须显式校验——避免未授权账号凭 id 探读提示词资产。
+    """
+    if request is None:
+        return  # 进程内调用（team_archive 等 _call_official 会带头）
+    storage = getattr(request.app.state, "storage", None)
+    if storage is None:
+        # 无存储环境（独立测试栈等）：退化为仅凭 agent_id 的原行为
+        return
+    user_id = _require_user(request)
+    # 自己的（含团队成员）或被共享的都放行
+    if await storage.get_agent(user_id, agent_id) is not None:
+        return
+    policy = getattr(request.app.state, "resource_access_policy", None)
+    if policy is not None:
+        refs = await policy.list_accessible(user_id, ResourceKind.AGENT, storage)
+        if any(r.resource_id == agent_id for r in refs):
+            return
+    raise HTTPException(status_code=404, detail="智能体不存在")
+
+
 @agent_version_router.post(
     "/agent/{agent_id}/freeze",
     response_model=AgentVersionStatus,
@@ -259,7 +285,8 @@ async def save_version(agent_id: str, body: FreezeRequest | None = None, request
     response_model=AgentVersionStatus,
     summary="版本列表（不含快照正文）",
 )
-async def list_versions(agent_id: str) -> AgentVersionStatus:
+async def list_versions(agent_id: str, request: Request = None) -> AgentVersionStatus:
+    await _require_agent_visible(agent_id, request)
     return _status(AgentVersionStore(), agent_id)
 
 
@@ -268,7 +295,8 @@ async def list_versions(agent_id: str) -> AgentVersionStatus:
     response_model=VersionDetail,
     summary="版本详情（含配置快照）",
 )
-async def get_version(agent_id: str, version: int) -> VersionDetail:
+async def get_version(agent_id: str, version: int, request: Request = None) -> VersionDetail:
+    await _require_agent_visible(agent_id, request)
     entry = AgentVersionStore().get_version(agent_id, version)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"版本 v{version} 不存在")

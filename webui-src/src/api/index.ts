@@ -15,3 +15,4 @@ export { channelApi } from './channel';
 export { healthApi } from './health';
 export { authApi } from './auth';
 export { usageApi } from './usage';
+export { agentShareApi } from './agentShare';

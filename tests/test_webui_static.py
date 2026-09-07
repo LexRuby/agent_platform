@@ -500,3 +500,80 @@ class TestSrcUsagePage:
         assert "patch_usage_metering" in svc, "服务缺实时计量钩子挂载"
         assert "backfill_usage" in svc, "服务缺存量回填启动任务"
         assert "usage_router" in svc, "服务缺 usage 路由注册"
+
+
+class TestSrcSharePage:
+    """共享管理页（账号→智能体可见性，2026-09-07 共享 v1）回归锁。
+
+    用户需求："我能选择我发布之后，这些大A/小A 是什么账号能看到的"。
+    后端 RedisAgentSharePolicy 驱动官方 ResourceAccess 链路（列表
+    合并 editable=false、PATCH 403、会话 resolve_agent），前端必须有：
+    /share 管理页（我的智能体可见性 + 共享给我）+ 发布设置对话框
+    （私有/指定账号/公开）+ API 客户端 + 官方策略注入。
+    """
+
+    def test_route_registered(self):
+        app = _src("App.tsx")
+        assert "path: '/share'" in app, "丢失 /share 路由"
+        assert "from '@/pages/share'" in app, "丢失 SharePage 导入"
+
+    def test_sidebar_nav_entry(self):
+        sidebar = _src("components/layout/AppSidebar.tsx")
+        assert "Share2" in sidebar, "丢失共享导航图标 Share2"
+        assert "navigate('/share')" in sidebar, "丢失 /share 导航跳转"
+
+    def test_page_publish_dialog_and_sections(self):
+        page = _src("pages/share/index.tsx")
+        # 发布设置对话框：三种模式 + 账号添加
+        for marker in (
+            "ShareSettingDialog",
+            "'private'",
+            "'users'",
+            "'public'",
+            "agentShareApi.set",
+            "sharedToMe",
+        ):
+            assert marker in page, f"共享页丢失关键实现 {marker}"
+
+    def test_shared_agents_readonly_detection(self):
+        """共享给我的检测必须基于 editable=false（官方合并链路）。"""
+        page = _src("pages/share/index.tsx")
+        assert "!a.editable" in page, "丢失只读共享检测（editable=false）"
+
+    def test_api_client_wired(self):
+        api = _src("api/agentShare.ts")
+        assert "/agent-share/mine" in api
+        assert "agentShareApi.set" in api or "set:" in api
+        index = _src("api/index.ts")
+        assert "from './agentShare'" in index, "api/index.ts 缺 agentShareApi 导出"
+        client = _src("api/client.ts")
+        assert "put: <T>" in client, "client 缺 PUT 方法（发布设置用）"
+
+    def test_backend_policy_injected(self):
+        """官方 create_app 必须注入共享策略，否则跨账号全断。"""
+        svc = (_BASE_DIR / "agent_service_app.py").read_text(encoding="utf-8")
+        assert "resource_access_policy=RedisAgentSharePolicy(storage)" in svc, (
+            "create_app 缺 resource_access_policy 注入"
+        )
+        assert "app.include_router(agent_share_router)" in svc, "缺共享管理路由注册"
+
+    def test_version_endpoints_visibility_guard(self):
+        """版本端点必须带可见性校验（提示词资产防探读）。"""
+        p = (_BASE_DIR / "app" / "agent_version.py").read_text(encoding="utf-8")
+        assert "_require_agent_visible" in p, "版本端点缺可见性校验"
+        assert "resource_access_policy" in p, "版本校验未接入共享策略"
+
+    def test_i18n_keys_present(self):
+        for locale in ("zh", "en"):
+            data = json.loads(
+                (_SRC_DIR / "i18n" / "locales" / f"{locale}.json").read_text(
+                    encoding="utf-8",
+                ),
+            )
+            assert "share" in data, f"{locale}.json 丢失 share 文案节点"
+            keys = ("title", "my-agents", "shared-to-me", "mode-private",
+                    "mode-users-label", "mode-public-label", "publish",
+                    "dialog-title")
+            for k in keys:
+                assert k in data["share"], f"{locale}.json 丢失 share.{k}"
+            assert "share" in data["common"], f"{locale}.json 丢失 common.share 导航词条"

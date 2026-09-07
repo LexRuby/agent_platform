@@ -8,6 +8,7 @@ import {
 	KeyRound,
 	Languages,
 	LibraryBig,
+	Share2,
 } from 'lucide-react';
 import { useOnborda } from 'onborda';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -124,6 +125,17 @@ export function AppSidebar() {
 									className="justify-center"
 								>
 									<ChartPie />
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							{/* 共享管理：发布大小A给指定账号（账号→智能体可见性） */}
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									tooltip={{ children: t('common.share'), hidden: false }}
+									isActive={location.pathname === '/share'}
+									onClick={() => navigate('/share')}
+									className="justify-center"
+								>
+									<Share2 />
 								</SidebarMenuButton>
 							</SidebarMenuItem>
 							<SidebarMenuItem>

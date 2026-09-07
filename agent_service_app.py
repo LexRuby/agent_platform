@@ -28,6 +28,7 @@ from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.rag import ApproxTokenChunker, QdrantStore
 from fastapi.responses import HTMLResponse
 
+from app.agent_share import RedisAgentSharePolicy, agent_share_router
 from app.agent_type import AgentTypeMiddleware
 from app.agent_version import AgentVersionMiddleware, agent_version_router
 from app.auth import AuthMiddleware, _LOGIN_HTML, auth_router
@@ -67,6 +68,9 @@ app = create_app(
     # 本地技能中心：skill_registry/ 目录（专利检索、智能写作），
     # 技能中心页安装 → 会话工作区装配 SKILL.md 全自动可用
     skill_hubs=[LocalSkillHub(BASE_DIR / "skill_registry")],
+    # 跨账号共享（2026-09-07）：Redis 授权记录驱动官方 ResourceAccess
+    # 链路——列表合并/只读 403/会话聊天 resolve_agent 全自动生效
+    resource_access_policy=RedisAgentSharePolicy(storage),
     extra_middlewares=[
         Middleware(
             CORSMiddleware,
@@ -101,6 +105,9 @@ app.include_router(usage_router)
 
 # agent 版本封板：freeze/unfreeze/save-version/restore API
 app.include_router(agent_version_router)
+
+# 智能体共享管理：发布/取消/我的发布列表 API（策略已注入 create_app）
+app.include_router(agent_share_router)
 
 # 提示词模板：列表 API + 注入 /agent/schema/v2（前端据此渲染模板下拉）
 app.include_router(prompt_templates_router)

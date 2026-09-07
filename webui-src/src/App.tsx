@@ -16,6 +16,7 @@ import { ChatPage } from '@/pages/chat';
 import { CredentialPage } from '@/pages/credential';
 import { KnowledgePage } from '@/pages/knowledge';
 import { SchedulePage } from '@/pages/schedule';
+import { SharePage } from '@/pages/share';
 import { UsagePage } from '@/pages/usage';
 
 const router = createBrowserRouter([
@@ -39,6 +40,7 @@ const router = createBrowserRouter([
 					{ path: '/channel', element: <ChannelPage /> },
 					{ path: '/credential', element: <CredentialPage /> },
 					{ path: '/usage', element: <UsagePage /> },
+					{ path: '/share', element: <SharePage /> },
 					{ path: '/mcp', element: <MCPHubPage /> },
 					{ path: '/mcp/:hubId', element: <MCPHubPage /> },
 					{ path: '/skill', element: <SkillHubPage /> },
