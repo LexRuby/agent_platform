@@ -23,7 +23,12 @@ class SPAStaticFiles(StaticFiles):
             # 访问 "/" 时 StaticFiles(html=True) 自动返回 index.html，
             # 与深链接回退同样需要 no-cache（旧 HTML 引用已删除的
             # 旧 hash chunk → 页面瘫痪，见类 docstring）
-            if response.path.endswith("index.html"):
+            #
+            # 浏览器刷新会带 If-None-Match/If-Modified-Since 条件请求，
+            # Starlette 返回 NotModifiedResponse(304)——它没有 .path
+            # 属性（2026-09-07 用户刷新 500、发送按钮瘫痪事故），
+            # 直接放行：缓存校验语义由首次 200 响应的 no-cache 头决定。
+            if getattr(response, "path", "").endswith("index.html"):
                 response.headers["Cache-Control"] = "no-cache"
             return response
         except HTTPException as exc:

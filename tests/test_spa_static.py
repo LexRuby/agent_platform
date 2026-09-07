@@ -95,3 +95,69 @@ class TestSPAStaticFiles:
         assert r.status_code == 200
         assert "SPA_ROOT" in r.text
         assert "root:" not in r.text  # 未泄漏系统文件内容
+
+
+class TestConditionalRequests:
+    """浏览器条件请求（If-None-Match/If-Modified-Since）回归测试。
+
+    2026-09-07 事故：用户刷新页面时浏览器带缓存校验头，Starlette
+    返回 NotModifiedResponse(304)，旧代码 ``response.path`` 直接
+    AttributeError → 500 → 前端页面瘫痪、发送按钮不可用。
+    """
+
+    def test_root_conditional_get_returns_304_not_500(self, client):
+        # 首次请求拿到 ETag，再带 If-None-Match 校验 → 必须 304（曾 500）
+        first = client.get("/")
+        assert first.status_code == 200
+        etag = first.headers.get("etag")
+        assert etag, "StaticFiles 应为 index.html 生成 ETag"
+
+        r = client.get("/", headers={"If-None-Match": etag})
+        assert r.status_code == 304, (
+            f"条件请求应返回 304，实际 {r.status_code}：{r.text[:200]}"
+        )
+
+    def test_root_200_carries_no_cache(self, client):
+        # 首次 200 响应必须带 no-cache（index.html 引用 hash chunk，
+        # 部署后必须回源校验）
+        r = client.get("/")
+        assert r.status_code == 200
+        assert "no-cache" in r.headers.get("cache-control", "")
+
+    def test_deep_link_fallback_conditional_304(self, client):
+        # 深链接回退路径同样要经受条件请求考验
+        first = client.get("/chat/a/b", headers={"Accept": HTML_ACCEPT})
+        assert first.status_code == 200
+        etag = first.headers.get("etag")
+        assert etag
+
+        r = client.get(
+            "/chat/a/b",
+            headers={"Accept": HTML_ACCEPT, "If-None-Match": etag},
+        )
+        assert r.status_code == 304
+
+    def test_asset_conditional_get_304(self, client):
+        # 静态资产走同一条 get_response 覆写路径，条件请求同样不能 500
+        first = client.get("/assets/app.js")
+        assert first.status_code == 200
+        etag = first.headers.get("etag")
+        assert etag
+
+        r = client.get("/assets/app.js", headers={"If-None-Match": etag})
+        assert r.status_code == 304
+
+    def test_stale_etag_returns_fresh_200(self, client):
+        # ETag 不匹配（部署后文件已变）→ 返回新 200 而非 304
+        r = client.get("/", headers={"If-None-Match": 'W/"stale-etag"'})
+        assert r.status_code == 200
+        assert "SPA_ROOT" in r.text
+
+    def test_if_modified_since_304(self, client):
+        # If-Modified-Since 条件分支（无 ETag 时的校验方式）
+        first = client.get("/")
+        last_modified = first.headers.get("last-modified")
+        assert last_modified
+
+        r = client.get("/", headers={"If-Modified-Since": last_modified})
+        assert r.status_code == 304
