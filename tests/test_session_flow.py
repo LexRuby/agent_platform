@@ -548,6 +548,44 @@ class TestTeamFlow:
         assert stack.session_svc.cancelled == ["s-m1"]
         assert stack.chat.interrupts == [("u1", SID, AGENT)]
 
+    def test_pause_sets_flags_resume_clears(self, stack):
+        """暂停设穿透拦截标志（leader+成员），继续清全部再 wake。
+
+        2026-09-07 实测：暂停后官方 _notify_leader_of_failure 自动
+        唤醒 leader（"暂停失效"），标志位由 chat_safety patch 拦截。
+        """
+        from app.chat_safety import PAUSED_KEY, is_paused
+
+        _seed_session(stack.fake, stack.storage, team_id="t-1")
+        _seed_team(
+            stack.fake, stack.storage,
+            members=[
+                {"agent_id": "a-m1", "session_id": "s-m1"},
+                {"agent_id": "a-m2", "session_id": "s-m2"},
+            ],
+        )
+
+        r = stack.client.post(
+            f"/team-flow/{SID}/pause",
+            params={"agent_id": AGENT},
+            headers=U,
+        )
+        assert r.status_code == 200, r.text
+        # leader + 两个成员的标志全部设置
+        assert stack.fake.get(PAUSED_KEY.format(user_id="u1", session_id=SID))
+        assert stack.fake.get(PAUSED_KEY.format(user_id="u1", session_id="s-m1"))
+        assert stack.fake.get(PAUSED_KEY.format(user_id="u1", session_id="s-m2"))
+
+        r = stack.client.post(
+            f"/team-flow/{SID}/resume",
+            params={"agent_id": AGENT},
+            headers=U,
+        )
+        assert r.status_code == 200, r.text
+        assert not stack.fake.get(PAUSED_KEY.format(user_id="u1", session_id=SID))
+        assert not stack.fake.get(PAUSED_KEY.format(user_id="u1", session_id="s-m1"))
+        assert not stack.fake.get(PAUSED_KEY.format(user_id="u1", session_id="s-m2"))
+
     def test_pause_standalone_leader(self, stack):
         """非团队会话暂停 = 仅中断该会话（幂等，idle 也可调）。"""
         _seed_session(stack.fake, stack.storage)

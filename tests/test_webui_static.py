@@ -834,3 +834,23 @@ class TestInsecureContextPolyfill:
         assert "console.error('[unhandledrejection]'" in main, (
             "吞异常无痕是 2026-09-07 排查灾难的帮凶，必须留 console 痕迹"
         )
+
+
+class TestMemberRoleFallback:
+    """团队成员职责说明回退锁（2026-09-07 团队实测：创建成员职责全空白）。
+
+    主理人创建的成员没有 invite_description，职责在官方生成的
+    system_prompt "Your role: ..." 段——前端必须两级取值。
+    """
+
+    def test_member_role_two_level_fallback(self):
+        src = (
+            _SRC_DIR / "pages" / "chat" / "ChatViewport.tsx"
+        ).read_text(encoding="utf-8")
+        assert "invite_config?.invite_description" in src, "邀请场景字段保留"
+        assert "Your role:" in src, "必须回退解析 system_prompt 的职责段"
+        # 函数体顺序：invited 先判断、prompt 段回退在后
+        body = src[src.find("memberRole"):]
+        assert body.find("invite_config?.invite_description") < body.find(
+            "Your role:",
+        ), "邀请字段优先，prompt 段回退"

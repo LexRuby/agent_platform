@@ -46,6 +46,8 @@ from agentscope.app._bus_ops import enqueue_run_trigger
 from agentscope.app.message_bus import MessageBusKeys
 from agentscope.state import ReplyContext
 
+from app.chat_safety import clear_paused, set_paused
+
 _logger = logging.getLogger("agentforge.session_flow")
 
 session_flow_router = APIRouter(tags=["agentforge"])
@@ -402,6 +404,11 @@ async def pause_team_flow(
     本次回复 / HITL parked 唤醒中断 / idle 静默）；全部成员走
     ``cancel_session_run``（广播取消）。上下文全部保留——"停止 +
     可继续"语义，``/resume`` 可随时唤醒。
+
+    同时设置团队暂停标志（leader+成员）：暂停期间拦截一切自动
+    唤醒（成员失败通知、inbox 投递），防止"暂停几秒后 leader 又
+    自动跑起来"（2026-09-07 实测：官方 _notify_leader_of_failure
+    会唤醒 leader 继续干活、再弹审批卡）。
     """
     user_id = _require_user(request)
     storage = request.app.state.storage
@@ -417,9 +424,13 @@ async def pause_team_flow(
 
     await chat_service.interrupt(user_id, leader_session_id, agent_id)
 
+    # 暂停标志：leader + 全部成员（穿透拦截，见 app.chat_safety）
+    member_sids = [m["session_id"] for m in members if m.get("session_id")]
+    await set_paused(storage, user_id, [leader_session_id, *member_sids])
+
     _logger.info(
         "团队暂停: user=%s leader_session=%s members=%d cancelled=%d "
-        "team=%s",
+        "team=%s（暂停标志已设置，自动唤醒将被拦截）",
         user_id, leader_session_id, len(members), cancelled, record.team_id,
     )
     return FlowOpResponse(
@@ -440,16 +451,24 @@ async def resume_team_flow(
 ) -> FlowOpResponse:
     """继续团队流程。
 
-    对 leader enqueue 一个 ``wake`` 触发（官方 ``input: None`` 语义：
-    从当前状态继续推理——上下文完整保留，上一步停在哪个 ReAct 轮，
-    继续时就从那里接着思考）。成员不直接唤醒：大A 被唤醒后自行
-    通过 TeamSay / 等待成员回报恢复调度（官方异步消息驱动模型）。
+    先清除全部暂停标志（leader+成员，恢复自动唤醒），再对 leader
+    enqueue 一个 ``wake`` 触发（官方 ``input: None`` 语义：从当前
+    状态继续推理——上下文完整保留，上一步停在哪个 ReAct 轮，继续
+    时就从那里接着思考）。成员不直接唤醒：大A 被唤醒后自行通过
+    TeamSay / 等待成员回报恢复调度（官方异步消息驱动模型）；暂停
+    期间积压的 inbox 消息（成员失败通知等）也会在 leader 恢复
+    运行时投递。
     """
     user_id = _require_user(request)
     storage = request.app.state.storage
     bus = request.app.state.message_bus
 
     await _get_session_record(storage, user_id, agent_id, leader_session_id)
+
+    # 先清标志再 wake——顺序关键：wake 到达 run 入口时标志必须已清除
+    members = await _leader_members(storage, user_id, leader_session_id)
+    member_sids = [m["session_id"] for m in members if m.get("session_id")]
+    await clear_paused(storage, user_id, [leader_session_id, *member_sids])
 
     await enqueue_run_trigger(
         bus,

@@ -389,6 +389,19 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 	}, [sessionId]); // 建队/解散由消息流事件触发 refetchSessions → view 变化重渲染
 
 
+	// 成员职责说明：邀请场景读 invite_description；主理人创建的成员
+	// 没有该字段，职责在官方生成的 system_prompt "Your role: ..." 段
+	// （2026-09-07 团队实测：创建成员职责全空白）
+	const memberRole = useCallback(
+		(data: { invite_config?: { invite_description?: string | null } | null; system_prompt?: string | null }): string => {
+			const invited = data.invite_config?.invite_description;
+			if (invited) return invited;
+			const m = /Your role:\s*([^\n]+)/.exec(data.system_prompt ?? '');
+			return m ? m[1].trim() : '';
+		},
+		[],
+	);
+
 	// 流程图的成员档案：在册成员带职责（邀请说明）与会话 id，
 	// 点击成员卡片可跳到该小A 的会话单独迭代优化。
 	// 无活跃团队时（新会话尚未组队、或已解散）回退到主理人
@@ -398,30 +411,30 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 			return view.team.members.map((m) => ({
 				id: m.agent.id,
 				name: m.agent.data.name,
-				description: m.agent.data.invite_config?.invite_description ?? '',
+				description: memberRole(m.agent.data),
 				sessionId: m.session_id,
 			}));
 		}
-            const historyByAgent = new Map<string, string>();
-            for (const team of teamHistory) {
-                    for (const m of team.members) {
-                            if (m.session_id) historyByAgent.set(m.agent_id, m.session_id);
-                    }
-            }
-            return (agentRecord?.team_members ?? [])
-                    .map((id) => {
-                            const a = agents.find((x) => x.id === id);
-                            return a
-                                    ? {
-                                                    id: a.id,
-                                                    name: a.data.name,
-                                                    description: a.data.invite_config?.invite_description ?? '',
-                                                    sessionId: historyByAgent.get(a.id) ?? null,
-                                            }
-                                    : null;
-                    })
-                    .filter((m): m is NonNullable<typeof m> => m !== null);
-	}, [view, agentRecord, agents, teamHistory]);
+		const historyByAgent = new Map<string, string>();
+		for (const team of teamHistory) {
+			for (const m of team.members) {
+				if (m.session_id) historyByAgent.set(m.agent_id, m.session_id);
+			}
+		}
+		return (agentRecord?.team_members ?? [])
+			.map((id) => {
+				const a = agents.find((x) => x.id === id);
+				return a
+					? {
+						id: a.id,
+						name: a.data.name,
+						description: memberRole(a.data),
+						sessionId: historyByAgent.get(a.id) ?? null,
+					}
+					: null;
+			})
+			.filter((m): m is NonNullable<typeof m> => m !== null);
+	}, [view, agentRecord, agents, teamHistory, memberRole]);
 
 	// 成员跳转：走 /chat/<leaderSessionId>/<memberAgentId>（memberId 槽），
 	// 与 TeamPanel 的导航约定一致；成员无会话时退回 /chat/<agentId>。

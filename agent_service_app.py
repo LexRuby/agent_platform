@@ -118,6 +118,12 @@ app.include_router(agent_share_router)
 # 团队暂停继续（team-flow pause/resume）/ 截断归档查询（2026-09-08 v3）
 app.include_router(session_flow_router)
 
+# 会话运行安全补丁（2026-09-07 团队实测三缺陷）：迟到确认炸 reply、
+# 同 id 消息重复追加、团队暂停被自动唤醒穿透
+from app.chat_safety import patch_chat_safety  # noqa: E402
+
+patch_chat_safety()
+
 # 提示词模板：列表 API + 注入 /agent/schema/v2（前端据此渲染模板下拉）
 app.include_router(prompt_templates_router)
 
