@@ -1333,13 +1333,43 @@ export interface UsageByModel {
 	calls: number;
 }
 
-/** `GET /usage/summary` 响应：账号消耗情况的四个维度。 */
+/** 产品成员构成（team 产品专有：成本明细）。 */
+export interface ProductMember {
+	agent_id: string;
+	name: string;
+	in: number;
+	out: number;
+	calls: number;
+}
+
+/**
+ * 产品维度聚合（v2）：平台产品只有两种形态——
+ * team = 大A及团队（大A + 全体成员的整体消耗），agent = 独立小A。
+ */
+export interface UsageProduct {
+	/** team | agent */
+	type: string;
+	product_id: string;
+	name: string;
+	/** 独立产品的大A/小A 属性（team 恒为 leader）。 */
+	agent_type: string;
+	in: number;
+	out: number;
+	cache: number;
+	calls: number;
+	by_model: UsageByModel[];
+	/** team 产品：成员成本构成（大A + 各小A）。 */
+	members?: ProductMember[];
+}
+
+/** `GET /usage/summary` 响应：账号消耗情况（日期/智能体/模型/产品维度）。 */
 export interface UsageSummary {
 	days: number;
 	totals: UsageTotals;
 	by_date: UsageByDate[];
 	by_agent: UsageByAgent[];
 	by_model: UsageByModel[];
+	products: UsageProduct[];
 }
 
 // ─── Health ───────────────────────────────────────────────────────────────────

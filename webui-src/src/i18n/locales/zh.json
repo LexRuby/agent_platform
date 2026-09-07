@@ -53,8 +53,7 @@
     "tts": "TTS",
     "embedding": "向量",
     "template-select": "从模板选择…",
-    "usage": "用量",
-    "share": "共享"
+    "account": "账户"
   },
   "error": {
     "description": "页面遇到意外错误。你可以重试或返回首页。",
@@ -578,8 +577,6 @@
     "toast-unpublished": "已取消发布，恢复私有"
   },
   "usage": {
-    "title": "用量统计",
-    "subtitle": "账号的 Token 消耗情况：按模型、按大A/小A、输入与输出",
     "refresh": "刷新",
     "range-days": "{{days}} 天",
     "load-failed": "用量数据加载失败",
@@ -591,11 +588,7 @@
     "total-calls": "调用次数",
     "input-tokens": "输入",
     "output-tokens": "输出",
-    "daily-trend": "每日消耗趋势",
-    "by-agent": "按智能体（大A / 小A）",
-    "by-agent-description": "主理人与各成员的消耗分布",
-    "by-model": "按模型",
-    "by-model-description": "不同模型的消耗占比与明细"
+    "daily-trend": "每日消耗趋势"
   },
   "schedule": {
     "subtitle": "为智能体设置定时或一次性的计划任务",
@@ -1044,5 +1037,23 @@
     "current": "当前登录",
     "unknown": "未登录",
     "logout": "退出登录"
+  },
+  "account": {
+    "title": "账户中心",
+    "subtitle": "{{user}}，这里是你的消费与发布管理",
+    "subtitle-loading": "正在获取账户信息…",
+    "tab-usage": "消费概览",
+    "tab-share": "发布管理",
+    "product-usage": "产品用量",
+    "product-usage-description": "平台产品 = 大A及team（整体消耗）或独立小A；展开团队行可看成员成本构成",
+    "product-type": "类型",
+    "product-type-team": "大A及团队",
+    "product-type-agent": "独立小A",
+    "team-size": "（{{count}} 个成员）",
+    "models-count": "{{count}} 个模型",
+    "model-detail": "按模型",
+    "team-breakdown": "团队成本构成（大A + 各成员小A）",
+    "expand-detail": "展开团队明细",
+    "collapse-detail": "收起团队明细"
   }
 }

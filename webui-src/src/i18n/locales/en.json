@@ -53,8 +53,7 @@
     "tts": "TTS",
     "embedding": "Embedding",
     "template-select": "Select from templates…",
-    "usage": "Usage",
-    "share": "Share"
+    "account": "Account"
   },
   "error": {
     "description": "The page hit an unexpected error. You can retry or go back home.",
@@ -578,8 +577,6 @@
     "toast-unpublished": "Unpublished — back to private"
   },
   "usage": {
-    "title": "Usage",
-    "subtitle": "Token consumption of this account: by model, by agent, input and output",
     "refresh": "Refresh",
     "range-days": "{{days}}d",
     "load-failed": "Failed to load usage data",
@@ -591,11 +588,7 @@
     "total-calls": "Calls",
     "input-tokens": "Input",
     "output-tokens": "Output",
-    "daily-trend": "Daily Trend",
-    "by-agent": "By Agent",
-    "by-agent-description": "Consumption of the leader and each member",
-    "by-model": "By Model",
-    "by-model-description": "Share and details per model"
+    "daily-trend": "Daily Trend"
   },
   "schedule": {
     "subtitle": "Schedule recurring or one-off tasks for your agents",
@@ -1044,5 +1037,23 @@
     "current": "Signed in as",
     "unknown": "Not signed in",
     "logout": "Sign out"
+  },
+  "account": {
+    "title": "Account Center",
+    "subtitle": "{{user}}, your consumption and publishing in one place",
+    "subtitle-loading": "Loading account info…",
+    "tab-usage": "Consumption",
+    "tab-share": "Publishing",
+    "product-usage": "Product Usage",
+    "product-usage-description": "Platform products = Big-A & team (total) or standalone small-A; expand team rows for member cost breakdown",
+    "product-type": "Type",
+    "product-type-team": "Big-A & Team",
+    "product-type-agent": "Standalone Small-A",
+    "team-size": "({{count}} members)",
+    "models-count": "{{count}} models",
+    "model-detail": "By model",
+    "team-breakdown": "Team cost breakdown (Big-A + member small-As)",
+    "expand-detail": "Expand team detail",
+    "collapse-detail": "Collapse team detail"
   }
 }

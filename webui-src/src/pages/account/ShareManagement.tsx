@@ -20,7 +20,6 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
 	Table,
@@ -241,16 +240,15 @@ function ShareSettingDialog({
 }
 
 /**
- * 共享管理页（2026-09-07 共享 v1）。
+ * 发布管理（账户中心 Tab，2026-09-08 从独立 /share 页迁入）。
  *
- * 回答用户问题"我能选择我发布之后，这些大A/小A 是什么账号能看到的"：
+ * 我封装/发布的大A、小A 的可见性管理：
  * - 我的智能体：逐个设置可见性（私有/指定账号/公开）
  * - 共享给我：他人发布的、我可使用的（只读，可直接开对话）
  *
- * 被共享账号在聊天页的智能体选择器自动出现（官方链路 + 只读保护），
- * 团队维度：共享的小A 可被邀请进他人团队（官方 invite 机制）。
+ * 被共享账号在聊天页的智能体选择器自动出现（官方链路 + 只读保护）。
  */
-export function SharePage() {
+export function ShareManagement() {
 	const { t } = useTranslation();
 	const [agents, setAgents] = useState<AgentView[]>([]);
 	const [shares, setShares] = useState<ShareInfo[]>([]);
@@ -290,166 +288,152 @@ export function SharePage() {
 		[shares],
 	);
 
+	if (loading) {
+		return (
+			<div className="flex flex-col gap-4">
+				<Skeleton className="h-10 w-64" />
+				<Skeleton className="h-48 rounded-xl" />
+				<Skeleton className="h-32 rounded-xl" />
+			</div>
+		);
+	}
+
 	return (
-		<div className="flex size-full p-2">
-			<main className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] bg-card shadow-panel">
-				<div className="flex items-start justify-between gap-3 px-6 pt-5 pb-4">
-					<div>
-						<div className="text-2xl font-semibold">{t('share.title')}</div>
-						<div className="mt-1 text-sm text-muted-foreground">
-							{t('share.subtitle')}
-						</div>
-					</div>
-				</div>
-				<Separator />
-
-				<div className="flex-1 overflow-y-auto px-6 py-5">
-					{loading ? (
-						<div className="flex flex-col gap-4">
-							<Skeleton className="h-10 w-64" />
-							<Skeleton className="h-48 rounded-xl" />
-							<Skeleton className="h-32 rounded-xl" />
-						</div>
+		<div className="flex flex-col gap-6">
+			{/* 我的智能体：可见性管理 */}
+			<Card className="gap-3">
+				<CardHeader>
+					<CardTitle className="flex items-center gap-2 text-base">
+						<Share2 className="size-4 text-primary" />
+						{t('share.my-agents')}
+						{published.length > 0 && (
+							<Badge variant="secondary">
+								{t('share.published-count', { count: published.length })}
+							</Badge>
+						)}
+					</CardTitle>
+					<CardDescription>{t('share.my-agents-description')}</CardDescription>
+				</CardHeader>
+				<CardContent>
+					{agents.filter((a) => a.editable).length === 0 ? (
+						<Empty className="border-none">
+							<EmptyHeader>
+								<EmptyTitle>{t('share.no-agents-title')}</EmptyTitle>
+								<EmptyDescription>{t('share.no-agents-description')}</EmptyDescription>
+							</EmptyHeader>
+						</Empty>
 					) : (
-						<div className="flex flex-col gap-6">
-							{/* 我的智能体：可见性管理 */}
-							<Card className="gap-3">
-								<CardHeader>
-									<CardTitle className="flex items-center gap-2 text-base">
-										<Share2 className="size-4 text-primary" />
-										{t('share.my-agents')}
-										{published.length > 0 && (
-											<Badge variant="secondary">
-												{t('share.published-count', { count: published.length })}
-											</Badge>
-										)}
-									</CardTitle>
-									<CardDescription>{t('share.my-agents-description')}</CardDescription>
-								</CardHeader>
-								<CardContent>
-									{agents.filter((a) => a.editable).length === 0 ? (
-										<Empty className="border-none">
-											<EmptyHeader>
-												<EmptyTitle>{t('share.no-agents-title')}</EmptyTitle>
-												<EmptyDescription>{t('share.no-agents-description')}</EmptyDescription>
-											</EmptyHeader>
-										</Empty>
-									) : (
-										<Table>
-											<TableHeader>
-												<TableRow>
-													<TableHead>{t('common.name')}</TableHead>
-													<TableHead>{t('share.type')}</TableHead>
-													<TableHead>{t('share.visibility')}</TableHead>
-													<TableHead>{t('share.visible-users')}</TableHead>
-													<TableHead className="text-right">{t('share.actions')}</TableHead>
-												</TableRow>
-											</TableHeader>
-											<TableBody>
-												{agents
-													.filter((a) => a.editable)
-													.map((a) => {
-														const s = shareByAgent.get(a.id) ?? null;
-														const mode = (s?.mode as ShareMode) ?? 'private';
-														return (
-															<TableRow key={a.id}>
-																<TableCell className="max-w-[220px] truncate font-medium">
-																	{a.data.name}
-																</TableCell>
-																<TableCell>
-																	<TypeBadge agent={a} />
-																</TableCell>
-																<TableCell>
-																	<ModeBadge mode={mode} users={s?.users ?? []} />
-																</TableCell>
-																<TableCell className="max-w-[260px]">
-																	{mode === 'users' && s && s.users.length > 0 ? (
-																		<span
-																			className="truncate font-mono text-xs text-muted-foreground"
-																			title={s.users.join('、')}
-																		>
-																			{s.users.join('、')}
-																		</span>
-																	) : (
-																		<span className="text-xs text-muted-foreground">
-																			{mode === 'public'
-																				? t('share.all-accounts')
-																				: '—'}
-																		</span>
-																	)}
-																</TableCell>
-																<TableCell className="text-right">
-																	<Button
-																		size="sm"
-																		variant="outline"
-																		onClick={() => setSettingAgent(a)}
-																	>
-																		{mode === 'private'
-																			? t('share.publish')
-																			: t('share.edit-visibility')}
-																	</Button>
-																</TableCell>
-															</TableRow>
-														);
-													})}
-											</TableBody>
-										</Table>
-									)}
-								</CardContent>
-							</Card>
+						<Table>
+							<TableHeader>
+								<TableRow>
+									<TableHead>{t('common.name')}</TableHead>
+									<TableHead>{t('share.type')}</TableHead>
+									<TableHead>{t('share.visibility')}</TableHead>
+									<TableHead>{t('share.visible-users')}</TableHead>
+									<TableHead className="text-right">{t('share.actions')}</TableHead>
+								</TableRow>
+							</TableHeader>
+							<TableBody>
+								{agents
+									.filter((a) => a.editable)
+									.map((a) => {
+										const s = shareByAgent.get(a.id) ?? null;
+										const mode = (s?.mode as ShareMode) ?? 'private';
+										return (
+											<TableRow key={a.id}>
+												<TableCell className="max-w-[220px] truncate font-medium">
+													{a.data.name}
+												</TableCell>
+												<TableCell>
+													<TypeBadge agent={a} />
+												</TableCell>
+												<TableCell>
+													<ModeBadge mode={mode} users={s?.users ?? []} />
+												</TableCell>
+												<TableCell className="max-w-[260px]">
+													{mode === 'users' && s && s.users.length > 0 ? (
+														<span
+															className="truncate font-mono text-xs text-muted-foreground"
+															title={s.users.join('、')}
+														>
+															{s.users.join('、')}
+														</span>
+													) : (
+														<span className="text-xs text-muted-foreground">
+															{mode === 'public'
+																? t('share.all-accounts')
+																: '—'}
+														</span>
+													)}
+												</TableCell>
+												<TableCell className="text-right">
+													<Button
+														size="sm"
+														variant="outline"
+														onClick={() => setSettingAgent(a)}
+													>
+														{mode === 'private'
+															? t('share.publish')
+															: t('share.edit-visibility')}
+													</Button>
+												</TableCell>
+											</TableRow>
+										);
+									})}
+							</TableBody>
+						</Table>
+					)}
+				</CardContent>
+			</Card>
 
-							{/* 共享给我：他人发布、我可使用（只读） */}
-							<Card className="gap-3">
-								<CardHeader>
-									<CardTitle className="flex items-center gap-2 text-base">
-										<Users className="size-4 text-primary" />
-										{t('share.shared-to-me')}
-										{sharedToMe.length > 0 && (
-											<Badge variant="secondary">{sharedToMe.length}</Badge>
-										)}
-									</CardTitle>
-									<CardDescription>{t('share.shared-to-me-description')}</CardDescription>
-								</CardHeader>
-								<CardContent>
-									{sharedToMe.length === 0 ? (
-										<Empty className="border-none">
-											<EmptyHeader>
-												<EmptyTitle>{t('share.no-shared-title')}</EmptyTitle>
-												<EmptyDescription>{t('share.no-shared-description')}</EmptyDescription>
-											</EmptyHeader>
-										</Empty>
-									) : (
-										<div className="flex flex-col gap-2">
-											{sharedToMe.map((a) => (
-												<div
-													key={a.id}
-													className="flex items-center gap-3 rounded-lg border px-3 py-2"
-												>
-													<Check className="size-4 shrink-0 text-emerald-600" />
-													<div className="min-w-0 flex-1">
-														<div className="flex items-center gap-2">
-															<span className="truncate text-sm font-medium">
-																{a.data.name}
-															</span>
-															<TypeBadge agent={a} />
-														</div>
-														<div className="text-xs text-muted-foreground">
-															{t('share.owner-label', { owner: a.user_id })}
-														</div>
-													</div>
-													<Badge variant="outline" className="text-muted-foreground">
-														{t('common.readOnly')}
-													</Badge>
-												</div>
-											))}
+			{/* 共享给我：他人发布、我可使用（只读） */}
+			<Card className="gap-3">
+				<CardHeader>
+					<CardTitle className="flex items-center gap-2 text-base">
+						<Users className="size-4 text-primary" />
+						{t('share.shared-to-me')}
+						{sharedToMe.length > 0 && (
+							<Badge variant="secondary">{sharedToMe.length}</Badge>
+						)}
+					</CardTitle>
+					<CardDescription>{t('share.shared-to-me-description')}</CardDescription>
+				</CardHeader>
+				<CardContent>
+					{sharedToMe.length === 0 ? (
+						<Empty className="border-none">
+							<EmptyHeader>
+								<EmptyTitle>{t('share.no-shared-title')}</EmptyTitle>
+								<EmptyDescription>{t('share.no-shared-description')}</EmptyDescription>
+							</EmptyHeader>
+						</Empty>
+					) : (
+						<div className="flex flex-col gap-2">
+							{sharedToMe.map((a) => (
+								<div
+									key={a.id}
+									className="flex items-center gap-3 rounded-lg border px-3 py-2"
+								>
+									<Check className="size-4 shrink-0 text-emerald-600" />
+									<div className="min-w-0 flex-1">
+										<div className="flex items-center gap-2">
+											<span className="truncate text-sm font-medium">
+												{a.data.name}
+											</span>
+											<TypeBadge agent={a} />
 										</div>
-									)}
-								</CardContent>
-							</Card>
+										<div className="text-xs text-muted-foreground">
+											{t('share.owner-label', { owner: a.user_id })}
+										</div>
+									</div>
+									<Badge variant="outline" className="text-muted-foreground">
+										{t('common.readOnly')}
+									</Badge>
+								</div>
+							))}
 						</div>
 					)}
-				</div>
-			</main>
+				</CardContent>
+			</Card>
 
 			{settingAgent && (
 				<ShareSettingDialog

@@ -1,4 +1,4 @@
-"""Token 用量计量与统计（2026-09-07 消费计量 v1）。
+"""Token 用量计量与统计（2026-09-07 消费计量 v1；v2 产品维度）。
 
 SaaS 前置能力：用户要知道"我这个账号的消耗情况——模型、大A/小A、
 输入、输出"。
@@ -21,8 +21,15 @@ SaaS 前置能力：用户要知道"我这个账号的消耗情况——模型�
 - **大A/小A**：session.agent_id + Msg.name（assistant 消息自带
   agent 显示名，主理人与成员各自落库自己的会话）
 
+产品维度（v2，2026-09-08）：平台产出的产品只有两种形态——
+**大A及team**（大A本体 + 全体成员小A 的整体消耗）与**独立小A**
+（自身消耗）。``products`` 聚合按 ``LeaderTeamStore`` 的当前团队
+结构归属：member 的消耗并入其所属大A 的 team 产品，方便直接看
+"调用一次任务的成本"。
+
 查询：``GET /usage/summary?days=N``——总计 + 按日期 + 按 agent +
-按模型四个维度。存储键按 user_id 隔离（复用认证注入，天然多租户）。
+按模型 + 按产品（含模型拆分与 team 成员构成）。存储键按 user_id
+隔离（复用认证注入，天然多租户）。
 """
 
 import json
@@ -31,6 +38,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
+
+from app.agent_type import AgentTypeStore, LEADER
+from app.leader_team import LeaderTeamStore
 
 _logger = logging.getLogger("agentforge.usage")
 
@@ -203,7 +213,11 @@ async def usage_summary(
     request: Request,
     days: int = Query(default=30, ge=1, le=365),
 ) -> dict:
-    """账号用量汇总：总计 + 按日期 + 按大A/小A + 按模型。
+    """账号用量汇总：总计 + 按日期 + 按大A/小A + 按模型 + 按产品。
+
+    产品维度（v2）：平台产品 = 大A及team（leader + 全体成员的整体
+    消耗）或 独立小A。member 消耗并入所属大A 的 team 产品——直观看
+    "调用一次任务的成本"（team 行含模型拆分 + 成员构成明细）。
 
     复用认证中间件注入的 X-User-ID（多租户隔离随主链路）。
     """
@@ -216,10 +230,36 @@ async def usage_summary(
 
     start = (datetime.now(timezone.utc) - timedelta(days=days - 1)).strftime("%Y-%m-%d")
 
+    # 产品归属映射（当前团队结构）：member → leader；leader 自成 team
+    teams = LeaderTeamStore().load()
+    member_to_leader: dict[str, str] = {}
+    for leader_id, member_ids in teams.items():
+        for m in member_ids:
+            # 一个 member 被多个团队引用时归第一个（v1 简化）
+            member_to_leader.setdefault(m, leader_id)
+
+    agent_types = AgentTypeStore().load()
+
+    def _product_of(agent_id: str) -> tuple[str, str]:
+        """agent_id → (产品类型, 产品主体 id)。team=大A及团队，agent=独立。"""
+        if agent_id in teams and teams[agent_id]:
+            return "team", agent_id
+        leader = member_to_leader.get(agent_id)
+        if leader:
+            return "team", leader
+        return "agent", agent_id
+
     totals = {"in": 0, "out": 0, "cache": 0, "calls": 0}
     by_date: dict[str, dict] = {}
     by_agent: dict[str, dict] = {}
     by_model: dict[str, dict] = {}
+    # 产品聚合：product_id → 总量；嵌套 by_model / 成员构成（team 专有）
+    products: dict[str, dict] = {}
+
+    def _bump(bucket: dict, val: dict) -> None:
+        bucket["in"] += val["in"]
+        bucket["out"] += val["out"]
+        bucket["calls"] += val["calls"]
 
     for field, val_json in raw.items():
         date, agent_id, model = field.split("|", 2)
@@ -241,14 +281,61 @@ async def usage_summary(
             {"agent_id": agent_id, "name": val.get("agent_name", agent_id[:8]),
              "in": 0, "out": 0, "calls": 0},
         )
-        a["in"] += val["in"]
-        a["out"] += val["out"]
-        a["calls"] += val["calls"]
+        _bump(a, val)
 
         m = by_model.setdefault(model, {"model": model, "in": 0, "out": 0, "calls": 0})
-        m["in"] += val["in"]
-        m["out"] += val["out"]
-        m["calls"] += val["calls"]
+        _bump(m, val)
+
+        # 产品维度
+        ptype, pid = _product_of(agent_id)
+        p = products.setdefault(
+            pid,
+            {
+                "type": ptype,
+                "product_id": pid,
+                "name": "",
+                "agent_type": agent_types.get(pid, "member"),
+                "in": 0, "out": 0, "cache": 0, "calls": 0,
+                "by_model": {},
+                "members": {},
+            },
+        )
+        _bump(p, val)
+        p["cache"] += val["cache"]
+        pm = p["by_model"].setdefault(model, {"model": model, "in": 0, "out": 0, "calls": 0})
+        _bump(pm, val)
+        mem = p["members"].setdefault(
+            agent_id,
+            {"agent_id": agent_id, "name": val.get("agent_name", agent_id[:8]),
+             "in": 0, "out": 0, "calls": 0},
+        )
+        _bump(mem, val)
+
+    # 产品名：team 用大A 名字（优先用量数据，其次 agent 存储）
+    for pid, p in products.items():
+        if p["type"] == "team":
+            leader_val = p["members"].get(pid)
+            p["name"] = leader_val["name"] if leader_val else f"团队({pid[:8]})"
+        else:
+            p["name"] = next(iter(p["members"].values()))["name"]
+
+    products_out = []
+    for p in products.values():
+        entry = {
+            "type": p["type"],
+            "product_id": p["product_id"],
+            "name": p["name"],
+            "agent_type": p["agent_type"],
+            "in": p["in"], "out": p["out"], "cache": p["cache"], "calls": p["calls"],
+            "by_model": sorted(
+                p["by_model"].values(), key=lambda x: -(x["in"] + x["out"]),
+            ),
+        }
+        if p["type"] == "team":
+            entry["members"] = sorted(
+                p["members"].values(), key=lambda x: -(x["in"] + x["out"]),
+            )
+        products_out.append(entry)
 
     return {
         "days": days,
@@ -258,4 +345,5 @@ async def usage_summary(
         ],
         "by_agent": sorted(by_agent.values(), key=lambda x: -(x["in"] + x["out"])),
         "by_model": sorted(by_model.values(), key=lambda x: -(x["in"] + x["out"])),
+        "products": sorted(products_out, key=lambda x: -(x["in"] + x["out"])),
     }

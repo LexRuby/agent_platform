@@ -11,13 +11,12 @@ import { buildChatTour } from '@/components/tour/chatTourSteps';
 import { TourCard } from '@/components/tour/TourCard';
 import { UploadProvider } from '@/context/UploadContext';
 import { useTranslation } from '@/i18n/useI18n';
+import { AccountPage } from '@/pages/account';
 import { ChannelPage } from '@/pages/channel';
 import { ChatPage } from '@/pages/chat';
 import { CredentialPage } from '@/pages/credential';
 import { KnowledgePage } from '@/pages/knowledge';
 import { SchedulePage } from '@/pages/schedule';
-import { SharePage } from '@/pages/share';
-import { UsagePage } from '@/pages/usage';
 
 const router = createBrowserRouter([
 	{
@@ -39,8 +38,10 @@ const router = createBrowserRouter([
 					{ path: '/schedule', element: <SchedulePage /> },
 					{ path: '/channel', element: <ChannelPage /> },
 					{ path: '/credential', element: <CredentialPage /> },
-					{ path: '/usage', element: <UsagePage /> },
-					{ path: '/share', element: <SharePage /> },
+									// 账户中心：消费概览 + 发布管理（旧 /usage、/share 并入）
+									{ path: '/account', element: <AccountPage /> },
+									{ path: '/usage', element: <Navigate to="/account" replace /> },
+									{ path: '/share', element: <Navigate to="/account" replace /> },
 					{ path: '/mcp', element: <MCPHubPage /> },
 					{ path: '/mcp/:hubId', element: <MCPHubPage /> },
 					{ path: '/skill', element: <SkillHubPage /> },

@@ -420,111 +420,76 @@ class TestSrcMCPToolsDrawer:
             assert key in zh["mcp-tools"], f"丢失 mcp-tools.{key} 文案"
 
 
-class TestSrcUsagePage:
-    """用量统计页（消费计量 v1，2026-09-07）回归锁。
+class TestSrcAccountPage:
+    """账户中心（消费概览 + 发布管理，2026-09-08 v2）回归锁。
 
-    用户需求："我要知道我这个账号的消耗情况——模型、大A/小A、
-    输入、输出"。后端 GET /usage/summary 四维度聚合，前端必须有：
-    路由入口（App.tsx）+ 侧边栏导航（AppSidebar.tsx）+ 页面四区块
-    （总计卡片/每日趋势/按智能体/按模型）+ API 客户端 + i18n 文案。
-    任何一环被误删，页面入口消失或维度缺失，测试立刻转红。
+    用户需求闭环："一个账户界面，直观看到我的消费情况 + 管理我发布的
+    大小A 的可见性"。消费按**产品维度**统计——平台产品 = 大A及team
+    （整体消耗）或独立小A（自身消耗）：
+        类型        名字       模型         输入   输出
+        大A及团队   高考主理人  doubao-pro  (大A+成员合计)
+        独立小A     政策研究员  glm-4.7     (自身)
+    旧 /usage、/share 独立页并入 /account 双 Tab，路由保留重定向。
     """
 
     def test_route_registered(self):
-        """/usage 路由与页面组件必须注册（入口消失 = 功能不可达）。"""
+        """/account 路由注册 + 旧 /usage、/share 重定向（入口收敛）。"""
         app = _src("App.tsx")
-        assert "path: '/usage'" in app, "丢失 /usage 路由"
-        assert "UsagePage" in app, "丢失 UsagePage 组件引用"
-        assert "from '@/pages/usage'" in app, "丢失 UsagePage 导入"
-
-    def test_sidebar_nav_entry(self):
-        """侧边栏必须有"用量"导航（ChartPie 图标，点进 /usage）。"""
-        sidebar = _src("components/layout/AppSidebar.tsx")
-        assert "ChartPie" in sidebar, "丢失用量导航图标 ChartPie"
-        assert "navigate('/usage')" in sidebar, "丢失 /usage 导航跳转"
-        assert "isActive={location.pathname === '/usage'}" in sidebar, (
-            "丢失 /usage 激活态高亮"
+        assert "path: '/account'" in app, "丢失 /account 路由"
+        assert "from '@/pages/account'" in app, "丢失 AccountPage 导入"
+        assert "<Navigate to=\"/account\" replace />" in app, (
+            "丢失旧 /usage、/share → /account 重定向"
         )
 
-    def test_page_covers_all_four_dimensions(self):
-        """页面必须覆盖用户要求的全部维度：总计/日期/大A小A/模型。"""
-        page = _src("pages/usage/index.tsx")
+    def test_sidebar_nav_entry(self):
+        """侧边栏账户入口（CircleUserRound 图标，点进 /account）。"""
+        sidebar = _src("components/layout/AppSidebar.tsx")
+        assert "CircleUserRound" in sidebar, "丢失账户导航图标 CircleUserRound"
+        assert "navigate('/account')" in sidebar, "丢失 /account 导航跳转"
+        assert "isActive={location.pathname === '/account'}" in sidebar, (
+            "丢失 /account 激活态高亮"
+        )
+        # 旧双图标必须收编（防三入口并存）
+        assert "ChartPie" not in sidebar, "旧用量图标应并入账户入口"
+        assert "Share2" not in sidebar, "旧共享图标应并入账户入口"
+
+    def test_account_page_tabs(self):
+        """账户中心双 Tab：消费概览 + 发布管理。"""
+        page = _src("pages/account/index.tsx")
+        for marker in (
+            "UsageOverview",     # 消费概览 Tab
+            "ShareManagement",   # 发布管理 Tab
+        ):
+            assert marker in page, f"账户中心丢失 {marker}"
+        # 页头显示当前账号（authApi 链式换行，分开断言）
+        assert "authApi" in page and ".me()" in page, "丢失当前账号获取"
+
+    def test_usage_overview_product_dimension(self):
+        """消费概览必须覆盖产品维度（v2 核心）：类型/名字/模型/输入/输出。"""
+        page = _src("pages/account/UsageOverview.tsx")
         assert "usageApi.summary" in page, "丢失 /usage/summary API 调用"
         for marker in (
-            "TotalCards",       # 总计：输入/输出/缓存/调用次数
-            "DailyTrendCard",   # 每日消耗趋势
-            "AgentTableCard",   # 按智能体（大A/小A）
-            "ModelTableCard",   # 按模型
+            "TotalCards",          # 总计：输入/输出/缓存/调用次数
+            "DailyTrendCard",     # 每日消耗趋势
+            "ProductUsageCard",   # 产品用量表（v2 核心）
+            "ProductTypeBadge",   # 大A及团队 / 独立小A 徽标
+            "product.members",    # team 成员构成（成本明细）
+            "by_model",           # 产品行按模型拆分
         ):
-            assert marker in page, f"用量页丢失维度组件 {marker}"
+            assert marker in page, f"消费概览丢失 {marker}"
         # 时间窗口切换（7/30/90 天）
         assert "RANGE_OPTIONS" in page and "90" in page, "丢失时间窗口切换"
 
-    def test_page_empty_and_error_states(self):
+    def test_usage_overview_states(self):
         """空状态/错误态/加载骨架必须齐备（不能白屏或裸 spinner）。"""
-        page = _src("pages/usage/index.tsx")
+        page = _src("pages/account/UsageOverview.tsx")
         assert "UsageSkeleton" in page, "丢失加载骨架"
         assert "usage.empty-title" in page, "丢失空状态文案键"
         assert "usage.load-failed" in page, "丢失错误态文案键"
 
-    def test_api_client_wired(self):
-        """API 层必须存在并从 index 导出（缺导出页面 import 报错）。"""
-        api = _src("api/usage.ts")
-        assert "/usage/summary" in api, "usage API 缺少端点路径"
-        index = _src("api/index.ts")
-        assert "from './usage'" in index, "api/index.ts 缺 usageApi 导出"
-        types = _src("api/types.ts")
-        for t in ("UsageSummary", "UsageTotals", "UsageByAgent", "UsageByModel", "UsageByDate"):
-            assert f"interface {t}" in types, f"丢失 {t} 类型定义"
-
-    def test_i18n_keys_present(self):
-        """中英文文案节点必须齐备（缺键页面渲染裸 key）。"""
-        for locale, title in (("zh", "用量统计"), ("en", "Usage")):
-            data = json.loads(
-                (_SRC_DIR / "i18n" / "locales" / f"{locale}.json").read_text(
-                    encoding="utf-8",
-                ),
-            )
-            assert "usage" in data, f"{locale}.json 丢失 usage 文案节点"
-            keys = ("title", "subtitle", "total-input", "total-output",
-                    "total-cache", "total-calls", "daily-trend",
-                    "by-agent", "by-model", "empty-title")
-            for k in keys:
-                assert k in data["usage"], f"{locale}.json 丢失 usage.{k}"
-            assert data["usage"]["title"] == title
-            assert "usage" in data["common"], f"{locale}.json 丢失 common.usage 导航词条"
-
-    def test_backend_metering_intact(self):
-        """后端计量模块与路由挂载必须在（前端页面对着它取数）。"""
-        svc = (_BASE_DIR / "agent_service_app.py").read_text(encoding="utf-8")
-        assert "patch_usage_metering" in svc, "服务缺实时计量钩子挂载"
-        assert "backfill_usage" in svc, "服务缺存量回填启动任务"
-        assert "usage_router" in svc, "服务缺 usage 路由注册"
-
-
-class TestSrcSharePage:
-    """共享管理页（账号→智能体可见性，2026-09-07 共享 v1）回归锁。
-
-    用户需求："我能选择我发布之后，这些大A/小A 是什么账号能看到的"。
-    后端 RedisAgentSharePolicy 驱动官方 ResourceAccess 链路（列表
-    合并 editable=false、PATCH 403、会话 resolve_agent），前端必须有：
-    /share 管理页（我的智能体可见性 + 共享给我）+ 发布设置对话框
-    （私有/指定账号/公开）+ API 客户端 + 官方策略注入。
-    """
-
-    def test_route_registered(self):
-        app = _src("App.tsx")
-        assert "path: '/share'" in app, "丢失 /share 路由"
-        assert "from '@/pages/share'" in app, "丢失 SharePage 导入"
-
-    def test_sidebar_nav_entry(self):
-        sidebar = _src("components/layout/AppSidebar.tsx")
-        assert "Share2" in sidebar, "丢失共享导航图标 Share2"
-        assert "navigate('/share')" in sidebar, "丢失 /share 导航跳转"
-
-    def test_page_publish_dialog_and_sections(self):
-        page = _src("pages/share/index.tsx")
-        # 发布设置对话框：三种模式 + 账号添加
+    def test_share_management_migrated(self):
+        """发布管理从旧 /share 页完整迁入（对话框 + 双区块）。"""
+        page = _src("pages/account/ShareManagement.tsx")
         for marker in (
             "ShareSettingDialog",
             "'private'",
@@ -532,22 +497,39 @@ class TestSrcSharePage:
             "'public'",
             "agentShareApi.set",
             "sharedToMe",
+            "!a.editable",   # 共享给我的只读检测（官方合并链路）
         ):
-            assert marker in page, f"共享页丢失关键实现 {marker}"
-
-    def test_shared_agents_readonly_detection(self):
-        """共享给我的检测必须基于 editable=false（官方合并链路）。"""
-        page = _src("pages/share/index.tsx")
-        assert "!a.editable" in page, "丢失只读共享检测（editable=false）"
+            assert marker in page, f"发布管理丢失关键实现 {marker}"
+        # 旧页面目录必须已删除（防双入口并存）
+        assert not (_SRC_DIR / "pages" / "share").exists(), "旧 share 页应删除"
+        assert not (_SRC_DIR / "pages" / "usage").exists(), "旧 usage 页应删除"
 
     def test_api_client_wired(self):
-        api = _src("api/agentShare.ts")
-        assert "/agent-share/mine" in api
-        assert "agentShareApi.set" in api or "set:" in api
+        """API 层必须存在并从 index 导出（缺导出页面 import 报错）。"""
+        api = _src("api/usage.ts")
+        assert "/usage/summary" in api, "usage API 缺少端点路径"
         index = _src("api/index.ts")
+        assert "from './usage'" in index, "api/index.ts 缺 usageApi 导出"
         assert "from './agentShare'" in index, "api/index.ts 缺 agentShareApi 导出"
         client = _src("api/client.ts")
         assert "put: <T>" in client, "client 缺 PUT 方法（发布设置用）"
+        types = _src("api/types.ts")
+        for t in ("UsageSummary", "UsageTotals", "UsageByAgent", "UsageByModel",
+                  "UsageByDate", "UsageProduct", "ProductMember"):
+            assert f"interface {t}" in types, f"丢失 {t} 类型定义"
+        types_src = types
+        assert "products: UsageProduct[]" in types_src, "UsageSummary 缺 products 字段"
+
+    def test_backend_metering_and_product_aggregation(self):
+        """后端计量 + 产品维度聚合 + 路由挂载必须在（前端对着它取数）。"""
+        svc = (_BASE_DIR / "agent_service_app.py").read_text(encoding="utf-8")
+        assert "patch_usage_metering" in svc, "服务缺实时计量钩子挂载"
+        assert "backfill_usage" in svc, "服务缺存量回填启动任务"
+        assert "usage_router" in svc, "服务缺 usage 路由注册"
+        metering = (_BASE_DIR / "app" / "usage_metering.py").read_text(encoding="utf-8")
+        assert "LeaderTeamStore" in metering, "产品聚合缺团队结构读取"
+        assert '"products"' in metering, "summary 缺 products 维度输出"
+        assert "member_to_leader" in metering, "缺 member→leader 归属映射"
 
     def test_backend_policy_injected(self):
         """官方 create_app 必须注入共享策略，否则跨账号全断。"""
@@ -564,16 +546,28 @@ class TestSrcSharePage:
         assert "resource_access_policy" in p, "版本校验未接入共享策略"
 
     def test_i18n_keys_present(self):
-        for locale in ("zh", "en"):
+        for locale, title in (("zh", "账户中心"), ("en", "Account Center")):
             data = json.loads(
                 (_SRC_DIR / "i18n" / "locales" / f"{locale}.json").read_text(
                     encoding="utf-8",
                 ),
             )
-            assert "share" in data, f"{locale}.json 丢失 share 文案节点"
-            keys = ("title", "my-agents", "shared-to-me", "mode-private",
-                    "mode-users-label", "mode-public-label", "publish",
-                    "dialog-title")
+            assert "account" in data, f"{locale}.json 丢失 account 文案节点"
+            keys = ("title", "subtitle", "tab-usage", "tab-share",
+                    "product-usage", "product-type", "product-type-team",
+                    "product-type-agent", "team-size", "team-breakdown")
             for k in keys:
+                assert k in data["account"], f"{locale}.json 丢失 account.{k}"
+            assert data["account"]["title"] == title
+            assert "account" in data["common"], f"{locale}.json 丢失 common.account 导航词条"
+            # 消费概览沿用的 usage 键
+            assert "usage" in data, f"{locale}.json 丢失 usage 文案节点"
+            for k in ("total-input", "total-output", "total-cache",
+                      "total-calls", "daily-trend", "empty-title"):
+                assert k in data["usage"], f"{locale}.json 丢失 usage.{k}"
+            # 发布管理沿用的 share 键
+            assert "share" in data, f"{locale}.json 丢失 share 文案节点"
+            for k in ("my-agents", "shared-to-me", "mode-private",
+                      "mode-users-label", "mode-public-label", "publish",
+                      "dialog-title"):
                 assert k in data["share"], f"{locale}.json 丢失 share.{k}"
-            assert "share" in data["common"], f"{locale}.json 丢失 common.share 导航词条"

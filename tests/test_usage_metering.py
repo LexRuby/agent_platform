@@ -565,3 +565,150 @@ class TestMeteringPipeline:
         assert body["totals"] == {"in": 500, "out": 250, "cache": 100, "calls": 1}
         assert body["by_agent"][0]["name"] == "高考志愿专家"
         assert body["by_model"][0]["model"] == "glm-4.7"
+
+
+# ---------------------------------------------------------------- 产品维度（v2）
+
+class TestProductAggregation:
+    """products 维度：平台产品 = 大A及team（整体） / 独立小A（2026-09-08）。
+
+    场景钉死用户核心表格：
+        类型        名字       模型         输入   输出
+        大A及团队   高考主理人  doubao-pro  (大A+成员合计)
+        独立小A     政策研究员  glm-4.7     (自身)
+    - leader 与其 member 的消耗必须并入同一个 team 产品
+    - team 产品含 by_model 拆分与 members 成本构成
+    - 无团队的 member / 独立 agent 单独成产品
+    """
+
+    @pytest.fixture
+    def product_env(self, tmp_path, monkeypatch):
+        """团队结构与类型文件指向 tmp（隔离生产 leader_teams.json）。"""
+        teams = tmp_path / "teams.json"
+        teams.write_text(
+            json.dumps({"leader-1": ["member-1", "member-2"]}),
+            encoding="utf-8",
+        )
+        types = tmp_path / "types.json"
+        types.write_text(
+            json.dumps({"leader-1": "leader", "member-1": "member", "solo-9": "member"}),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("AGENTFORGE_LEADER_TEAMS_FILE", str(teams))
+        monkeypatch.setenv("AGENTFORGE_AGENT_TYPES_FILE", str(types))
+        return tmp_path
+
+    def _seed(self, make_storage, api_app, user: str = "u1"):
+        """预置：leader-1(team) + member-1/team + member-2/team + solo-9(独立)。"""
+        import asyncio
+
+        storage = make_storage()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        data = {
+            f"{today}|leader-1|doubao-pro": {"in": 1000, "out": 400, "cache": 0, "calls": 4, "agent_name": "高考主理人"},
+            f"{today}|member-1|doubao-pro": {"in": 300, "out": 150, "cache": 0, "calls": 2, "agent_name": "高考志愿兵"},
+            f"{today}|member-2|glm-4.7": {"in": 200, "out": 100, "cache": 50, "calls": 1, "agent_name": "政策研究员"},
+            f"{today}|solo-9|glm-4.7": {"in": 700, "out": 350, "cache": 0, "calls": 3, "agent_name": "独立专家"},
+        }
+        for f, v in data.items():
+            asyncio.run(
+                storage._client.hset(_USAGE_KEY.format(user=user), f, json.dumps(v))
+            )
+        api_app.state.storage = storage
+        return TestClient(api_app)
+
+    def test_team_members_merge_into_one_product(self, make_storage, api_app, product_env):
+        """leader + member-1 + member-2 并入同一 team 产品，总量 = 三者之和。"""
+        client = self._seed(make_storage, api_app)
+        body = _summary(client, "u1")
+
+        products = body["products"]
+        team = next(p for p in products if p["type"] == "team")
+        assert team["product_id"] == "leader-1"
+        assert team["name"] == "高考主理人"
+        assert team["agent_type"] == "leader"
+        # team 总量 = 大A 1000/400 + 志愿兵 300/150 + 政策研究员 200/100
+        assert team["in"] == 1500 and team["out"] == 650
+        assert team["calls"] == 7 and team["cache"] == 50
+
+    def test_team_product_contains_model_breakdown(self, make_storage, api_app, product_env):
+        """team 行按模型拆分：doubao-pro（大A+志愿兵）与 glm-4.7（研究员）。"""
+        client = self._seed(make_storage, api_app)
+        team = next(p for p in _summary(client, "u1")["products"] if p["type"] == "team")
+
+        by_model = {m["model"]: m for m in team["by_model"]}
+        assert by_model["doubao-pro"]["in"] == 1300  # 1000 + 300
+        assert by_model["glm-4.7"]["in"] == 200
+        assert by_model["doubao-pro"]["calls"] == 6
+
+    def test_team_product_contains_member_breakdown(self, make_storage, api_app, product_env):
+        """team 成本构成：大A + 两个成员，各自名字与消耗可见。"""
+        client = self._seed(make_storage, api_app)
+        team = next(p for p in _summary(client, "u1")["products"] if p["type"] == "team")
+
+        members = {m["agent_id"]: m for m in team["members"]}
+        assert set(members) == {"leader-1", "member-1", "member-2"}
+        assert members["leader-1"]["name"] == "高考主理人"
+        assert members["member-1"]["in"] == 300
+        # 成员行结构固定：无 cache 字段干扰
+        assert set(members["member-2"]) == {"agent_id", "name", "in", "out", "calls"}
+
+    def test_standalone_agent_is_separate_product(self, make_storage, api_app, product_env):
+        """无团队的 solo-9 单独成产品（独立小A），不并入任何 team。"""
+        client = self._seed(make_storage, api_app)
+        products = {p["product_id"]: p for p in _summary(client, "u1")["products"]}
+
+        solo = products["solo-9"]
+        assert solo["type"] == "agent"
+        assert solo["name"] == "独立专家"
+        assert solo["in"] == 700 and solo["calls"] == 3
+        assert "members" not in solo  # 独立产品无成员构成
+        # 产品总数 = 1 个 team + 1 个独立
+        assert len(products) == 2
+
+    def test_products_sorted_by_consumption_desc(self, make_storage, api_app, product_env):
+        """产品按总消耗降序：team(2150) 在 solo(1050) 前。"""
+        client = self._seed(make_storage, api_app)
+        products = _summary(client, "u1")["products"]
+        totals = [p["in"] + p["out"] for p in products]
+        assert totals == sorted(totals, reverse=True)
+        assert products[0]["type"] == "team"
+
+    def test_product_window_filtering(self, make_storage, api_app, product_env, monkeypatch):
+        """窗口外的产品数据同样被 days 过滤（与 by_agent 一致）。"""
+        import asyncio
+
+        storage = make_storage()
+        api_app.state.storage = storage
+        old = _iso_days_ago(40)[:10]
+        asyncio.run(
+            storage._client.hset(
+                _USAGE_KEY.format(user="u1"),
+                f"{old}|member-1|doubao-pro",
+                json.dumps({"in": 999, "out": 999, "cache": 0, "calls": 9, "agent_name": "高考志愿兵"}),
+            )
+        )
+        body = _summary(TestClient(api_app), "u1", days=30)
+        # member-1 只有 40 天前的消耗 → 不产生任何产品行
+        assert body["products"] == []
+
+    def test_leader_without_members_is_standalone(self, make_storage, api_app, product_env, monkeypatch):
+        """未组队的 leader（teams 无记录）按独立产品处理。"""
+        import asyncio
+
+        # 清空团队结构：leader-9 没有成员
+        (product_env / "teams.json").write_text("{}", encoding="utf-8")
+        storage = make_storage()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        asyncio.run(
+            storage._client.hset(
+                _USAGE_KEY.format(user="u1"),
+                f"{today}|leader-9|glm-4.7",
+                json.dumps({"in": 10, "out": 5, "cache": 0, "calls": 1, "agent_name": "光杆大A"}),
+            )
+        )
+        api_app.state.storage = storage
+        products = _summary(TestClient(api_app), "u1")["products"]
+        assert len(products) == 1
+        assert products[0]["type"] == "agent"
+        assert products[0]["name"] == "光杆大A"

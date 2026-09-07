@@ -3,12 +3,11 @@ import {
 	BotMessageSquare,
 	Cable,
 	Calendars,
-	ChartPie,
+	CircleUserRound,
 	Compass,
 	KeyRound,
 	Languages,
 	LibraryBig,
-	Share2,
 } from 'lucide-react';
 import { useOnborda } from 'onborda';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -116,26 +115,15 @@ export function AppSidebar() {
 									<KeyRound />
 								</SidebarMenuButton>
 							</SidebarMenuItem>
-							{/* 用量统计：账号消耗情况（模型 / 大A小A / 输入输出） */}
+							{/* 账户中心：消费概览（产品维度）+ 发布管理（可见性控制） */}
 							<SidebarMenuItem>
 								<SidebarMenuButton
-									tooltip={{ children: t('common.usage'), hidden: false }}
-									isActive={location.pathname === '/usage'}
-									onClick={() => navigate('/usage')}
+									tooltip={{ children: t('common.account'), hidden: false }}
+									isActive={location.pathname === '/account'}
+									onClick={() => navigate('/account')}
 									className="justify-center"
 								>
-									<ChartPie />
-								</SidebarMenuButton>
-							</SidebarMenuItem>
-							{/* 共享管理：发布大小A给指定账号（账号→智能体可见性） */}
-							<SidebarMenuItem>
-								<SidebarMenuButton
-									tooltip={{ children: t('common.share'), hidden: false }}
-									isActive={location.pathname === '/share'}
-									onClick={() => navigate('/share')}
-									className="justify-center"
-								>
-									<Share2 />
+									<CircleUserRound />
 								</SidebarMenuButton>
 							</SidebarMenuItem>
 							<SidebarMenuItem>
