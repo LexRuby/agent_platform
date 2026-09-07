@@ -52,7 +52,8 @@
     "llm": "LLM",
     "tts": "TTS",
     "embedding": "向量",
-    "template-select": "从模板选择…"
+    "template-select": "从模板选择…",
+    "usage": "用量"
   },
   "error": {
     "description": "页面遇到意外错误。你可以重试或返回首页。",
@@ -537,6 +538,26 @@
     "entity": "MCP 服务器",
     "skillEntity": "技能",
     "skillDescription": "确定要将该技能从工作区中移除吗？"
+  },
+  "usage": {
+    "title": "用量统计",
+    "subtitle": "账号的 Token 消耗情况：按模型、按大A/小A、输入与输出",
+    "refresh": "刷新",
+    "range-days": "{{days}} 天",
+    "load-failed": "用量数据加载失败",
+    "empty-title": "暂无用量数据",
+    "empty-description": "与智能体对话产生消耗后，这里会展示统计结果",
+    "total-input": "输入 Tokens",
+    "total-output": "输出 Tokens",
+    "total-cache": "缓存 Tokens",
+    "total-calls": "调用次数",
+    "input-tokens": "输入",
+    "output-tokens": "输出",
+    "daily-trend": "每日消耗趋势",
+    "by-agent": "按智能体（大A / 小A）",
+    "by-agent-description": "主理人与各成员的消耗分布",
+    "by-model": "按模型",
+    "by-model-description": "不同模型的消耗占比与明细"
   },
   "schedule": {
     "subtitle": "为智能体设置定时或一次性的计划任务",

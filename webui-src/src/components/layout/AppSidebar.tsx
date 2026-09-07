@@ -3,6 +3,7 @@ import {
 	BotMessageSquare,
 	Cable,
 	Calendars,
+	ChartPie,
 	Compass,
 	KeyRound,
 	Languages,
@@ -112,6 +113,17 @@ export function AppSidebar() {
 									className="justify-center"
 								>
 									<KeyRound />
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							{/* 用量统计：账号消耗情况（模型 / 大A小A / 输入输出） */}
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									tooltip={{ children: t('common.usage'), hidden: false }}
+									isActive={location.pathname === '/usage'}
+									onClick={() => navigate('/usage')}
+									className="justify-center"
+								>
+									<ChartPie />
 								</SidebarMenuButton>
 							</SidebarMenuItem>
 							<SidebarMenuItem>

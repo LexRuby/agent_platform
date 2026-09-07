@@ -1288,6 +1288,50 @@ export interface ListTTSModelResponse {
 	total: number;
 }
 
+// ─── Usage（Token 用量统计） ──────────────────────────────────────────────────
+
+/** 汇总口径的四项指标：输入/输出/缓存 tokens 与调用次数。 */
+export interface UsageTotals {
+	in: number;
+	out: number;
+	cache: number;
+	calls: number;
+}
+
+/** 单日聚合（UTC 天）。 */
+export interface UsageByDate {
+	date: string;
+	in: number;
+	out: number;
+	calls: number;
+}
+
+/** 按智能体（大A=主理人 / 小A=成员）聚合。 */
+export interface UsageByAgent {
+	agent_id: string;
+	name: string;
+	in: number;
+	out: number;
+	calls: number;
+}
+
+/** 按模型聚合。 */
+export interface UsageByModel {
+	model: string;
+	in: number;
+	out: number;
+	calls: number;
+}
+
+/** `GET /usage/summary` 响应：账号消耗情况的四个维度。 */
+export interface UsageSummary {
+	days: number;
+	totals: UsageTotals;
+	by_date: UsageByDate[];
+	by_agent: UsageByAgent[];
+	by_model: UsageByModel[];
+}
+
 // ─── Health ───────────────────────────────────────────────────────────────────
 
 /** `disabled` means the deployment turned an optional feature off, not that it is down. */

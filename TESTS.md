@@ -495,6 +495,36 @@ API 层 3，FakeSessionService duck-typing）；webui_static +3
 48rem。实测：顶栏(x=329,w=721) === 输入卡(x=329,w=721)，距右栏
 驾驶舱 19px。
 
+### 32. Token 用量计量与统计（2026-09-07，消费计量 v1）
+
+> 用户需求："我要知道我这个账号的消耗情况——模型、大A/小A、
+> 输入、输出。"
+
+**后端**（`app/usage_metering.py` + `tests/test_usage_metering.py`，21 用例）：
+- 实时钩子：patch `upsert_message`，官方 `Msg.usage` 落库时按
+  `(日期, agent_id, 模型)` 聚合到 `agentforge:usage:{user}` Hash；
+  `agentforge:usage:seen` Set 对消息 id 去重——流式回复同 id 多次
+  upsert（usage 从空到终值）只计一次
+- 存量回填：启动钩子后台跑 `backfill_usage`（幂等，同靠 seen Set）。
+  **踩坑**：用户发现必须扫会话**记录键**
+  `agentscope:user:{u}:session:{sid}`（每次 upsert 必写），不能扫
+  `agent:{aid}:sessions` 索引键（仅新建时写）——只认索引会漏用户，
+  test_backfill_multiple_users_and_sessions 回归锁定
+- 查询 API `GET /usage/summary?days=N`：复用认证注入的 X-User-ID
+  多租户隔离；总计/按日期/按 agent/按模型四维度，日期倒序
+- 容错铁律：计量内部异常必须吞掉（消息落库优先），钩子 try 块
+  兜底——test_metering_failure_does_not_block_upsert
+
+**前端**（`pages/usage/`）：侧边栏 ChartPie 入口 → /usage 页面：
+总计四卡片（输入/输出/缓存/调用次数）+ 每日趋势（纯 CSS 双色条，
+无图表库依赖）+ 大A/小A 表 + 模型表（含占比条）；7/30/90 天窗口
+切换；空态/错误态/骨架齐备。静态锁 TestSrcUsagePage（7 用例）：
+路由/导航/四维度组件/状态/API 客户端/i18n/后端挂载。
+
+验证：pytest 480 项通过；浏览器 E2E 登录→导航→页面渲染→窗口
+切换全过（当时后端未重启故空态为预期）；`curl /usage/summary`
+联通。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量

@@ -42,6 +42,7 @@ from app.spa_static import SPAStaticFiles
 from app.startup_hook import StartupHook
 from app.team_archive import team_archive_router
 from app.team_preserve import patch_team_protection, team_history_router
+from app.usage_metering import backfill_usage, patch_usage_metering, usage_router
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -94,6 +95,10 @@ app.include_router(team_archive_router)
 patch_team_protection()
 app.include_router(team_history_router)
 
+# Token 用量计量：实时钩子 + 查询 API（存量回填在 startup hook）
+patch_usage_metering(storage)
+app.include_router(usage_router)
+
 # agent 版本封板：freeze/unfreeze/save-version/restore API
 app.include_router(agent_version_router)
 
@@ -109,9 +114,13 @@ app.include_router(mcp_tools_router)
 
 def _start_ark_heartbeat() -> None:
     """lifespan startup 完成后启动 ARK 模型心跳（见 app/startup_hook.py）。"""
+    import asyncio
+
     from app.ark_credential import start_heartbeat
 
     start_heartbeat()
+    # 用量存量回填（幂等，后台执行不阻塞启动）
+    asyncio.get_running_loop().create_task(backfill_usage(storage))
 
 
 def _StartupHook(inner):

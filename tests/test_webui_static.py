@@ -418,3 +418,85 @@ class TestSrcMCPToolsDrawer:
         assert "mcp-tools" in zh, "丢失 mcp-tools 文案节点"
         for key in ("itemTooltip", "toolCount", "parametersLabel"):
             assert key in zh["mcp-tools"], f"丢失 mcp-tools.{key} 文案"
+
+
+class TestSrcUsagePage:
+    """用量统计页（消费计量 v1，2026-09-07）回归锁。
+
+    用户需求："我要知道我这个账号的消耗情况——模型、大A/小A、
+    输入、输出"。后端 GET /usage/summary 四维度聚合，前端必须有：
+    路由入口（App.tsx）+ 侧边栏导航（AppSidebar.tsx）+ 页面四区块
+    （总计卡片/每日趋势/按智能体/按模型）+ API 客户端 + i18n 文案。
+    任何一环被误删，页面入口消失或维度缺失，测试立刻转红。
+    """
+
+    def test_route_registered(self):
+        """/usage 路由与页面组件必须注册（入口消失 = 功能不可达）。"""
+        app = _src("App.tsx")
+        assert "path: '/usage'" in app, "丢失 /usage 路由"
+        assert "UsagePage" in app, "丢失 UsagePage 组件引用"
+        assert "from '@/pages/usage'" in app, "丢失 UsagePage 导入"
+
+    def test_sidebar_nav_entry(self):
+        """侧边栏必须有"用量"导航（ChartPie 图标，点进 /usage）。"""
+        sidebar = _src("components/layout/AppSidebar.tsx")
+        assert "ChartPie" in sidebar, "丢失用量导航图标 ChartPie"
+        assert "navigate('/usage')" in sidebar, "丢失 /usage 导航跳转"
+        assert "isActive={location.pathname === '/usage'}" in sidebar, (
+            "丢失 /usage 激活态高亮"
+        )
+
+    def test_page_covers_all_four_dimensions(self):
+        """页面必须覆盖用户要求的全部维度：总计/日期/大A小A/模型。"""
+        page = _src("pages/usage/index.tsx")
+        assert "usageApi.summary" in page, "丢失 /usage/summary API 调用"
+        for marker in (
+            "TotalCards",       # 总计：输入/输出/缓存/调用次数
+            "DailyTrendCard",   # 每日消耗趋势
+            "AgentTableCard",   # 按智能体（大A/小A）
+            "ModelTableCard",   # 按模型
+        ):
+            assert marker in page, f"用量页丢失维度组件 {marker}"
+        # 时间窗口切换（7/30/90 天）
+        assert "RANGE_OPTIONS" in page and "90" in page, "丢失时间窗口切换"
+
+    def test_page_empty_and_error_states(self):
+        """空状态/错误态/加载骨架必须齐备（不能白屏或裸 spinner）。"""
+        page = _src("pages/usage/index.tsx")
+        assert "UsageSkeleton" in page, "丢失加载骨架"
+        assert "usage.empty-title" in page, "丢失空状态文案键"
+        assert "usage.load-failed" in page, "丢失错误态文案键"
+
+    def test_api_client_wired(self):
+        """API 层必须存在并从 index 导出（缺导出页面 import 报错）。"""
+        api = _src("api/usage.ts")
+        assert "/usage/summary" in api, "usage API 缺少端点路径"
+        index = _src("api/index.ts")
+        assert "from './usage'" in index, "api/index.ts 缺 usageApi 导出"
+        types = _src("api/types.ts")
+        for t in ("UsageSummary", "UsageTotals", "UsageByAgent", "UsageByModel", "UsageByDate"):
+            assert f"interface {t}" in types, f"丢失 {t} 类型定义"
+
+    def test_i18n_keys_present(self):
+        """中英文文案节点必须齐备（缺键页面渲染裸 key）。"""
+        for locale, title in (("zh", "用量统计"), ("en", "Usage")):
+            data = json.loads(
+                (_SRC_DIR / "i18n" / "locales" / f"{locale}.json").read_text(
+                    encoding="utf-8",
+                ),
+            )
+            assert "usage" in data, f"{locale}.json 丢失 usage 文案节点"
+            keys = ("title", "subtitle", "total-input", "total-output",
+                    "total-cache", "total-calls", "daily-trend",
+                    "by-agent", "by-model", "empty-title")
+            for k in keys:
+                assert k in data["usage"], f"{locale}.json 丢失 usage.{k}"
+            assert data["usage"]["title"] == title
+            assert "usage" in data["common"], f"{locale}.json 丢失 common.usage 导航词条"
+
+    def test_backend_metering_intact(self):
+        """后端计量模块与路由挂载必须在（前端页面对着它取数）。"""
+        svc = (_BASE_DIR / "agent_service_app.py").read_text(encoding="utf-8")
+        assert "patch_usage_metering" in svc, "服务缺实时计量钩子挂载"
+        assert "backfill_usage" in svc, "服务缺存量回填启动任务"
+        assert "usage_router" in svc, "服务缺 usage 路由注册"
