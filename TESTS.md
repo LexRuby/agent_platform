@@ -454,6 +454,29 @@ API 层 3，FakeSessionService duck-typing）；webui_static +3
 （TestSrcTeamDeleteGuard）。全量 449 项通过。真实浏览器 E2E：
 主理会话紧凑单行 + 驾驶舱完整、成员会话 hint 保持完整全过。
 
+### 30. 团队驾驶舱重复渲染修复 + 唯一性断言规则（2026-09-07）
+
+> 用户反馈：专注布局下对话区顶部仍有团队面板（应只在右栏）。
+
+**事故根因（双漏）**：
+1. 批量脚本替换 ChatViewport.tsx 时，顶部 TeamFlowPanel 一段的
+   缩进与模式串不匹配且 `str.replace` 未加 assert → 静默失败，
+   classic 门控没加上；专注布局下顶部+右栏渲染了两份驾驶舱
+2. 当时 E2E 只断言"存在性"（页面含驾驶舱文本）未断言"唯一性
+   +位置"，重复渲染漏网（与 §16"空状态误判成功"同类教训）
+
+**规则**：
+- 对可重复组件的 E2E 必须断言**数量恰为预期** + **位置正确**
+  （本例：驾驶舱 Tab「团队动态」按钮数 === 1，且专注布局 x >
+  60% 视口宽=右栏、经典布局 x < 60%=顶部）
+- 批量文本替换必须 assert 命中，未命中立即报错（不接受静默）
+- 静态锁：顶部渲染必须含 `layoutMode === 'classic' && isLeader
+  && sessionId` 门控；`<TeamFlowPanel` 挂载点恰好 2 处
+  （classic 顶部 + focused 右栏）——TestSrcNoDuplicateTeamPanel
+
+修复后 E2E 四断言全过：专注唯一右栏、顶部干净、经典回顶部、
+切换+刷新保持。全量 451 项通过。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量

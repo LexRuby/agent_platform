@@ -65,6 +65,32 @@ class TestDeployedWebui:
         assert "/@vite/client" not in html, "index.html 引用了 /@vite/client——误部署了开发构建"
 
 
+class TestSrcNoDuplicateTeamPanel:
+    """团队驾驶舱不得重复渲染（2026-09-07 顶部面板重复 bug 回归锁）。
+
+    事故：批量脚本替换 ChatViewport 时一段缩进不匹配且未加 assert，
+    静默失败——顶部 TeamFlowPanel 的 classic 门控没加上，专注布局
+    下顶部+右栏渲染了两份。当时的 E2E 只断言"存在性"（驾驶舱在页
+    面上存在）而没断言"唯一性+位置"，重复渲染漏网。规则：驾驶舱
+    必须恰好一处——专注布局在右栏、经典布局在顶部；顶部渲染点必须
+    被 layoutMode === 'classic' 门控。
+    """
+
+    def test_top_panel_gated_by_classic(self):
+        """顶部 TeamFlowPanel 必须带 classic 门控条件。"""
+        t = _src("pages/chat/ChatViewport.tsx")
+        assert "layoutMode === 'classic' && isLeader && sessionId" in t, (
+            "顶部团队面板缺 classic 门控（专注布局会重复渲染）"
+        )
+
+    def test_team_flow_panel_mount_count(self):
+        """TeamFlowPanel 挂载点恰好 2 处（classic 顶部 + focused 右栏）。"""
+        t = _src("pages/chat/ChatViewport.tsx")
+        assert t.count("<TeamFlowPanel") == 2, (
+            f"TeamFlowPanel 挂载点应恰好 2 处，实际 {t.count('<TeamFlowPanel')}"
+        )
+
+
 class TestSrcTeamDeleteGuard:
     """TeamDelete 双层防护 + 团队 hint 紧凑化（2026-09-07 培养资产保护）。
 

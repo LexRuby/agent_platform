@@ -866,10 +866,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 								</div>
 							</div>
 							<div className="flex flex-1 flex-col min-h-0 overflow-hidden">
-								{/* 主理人（大A）会话顶部的团队互动流程图：
-								无团队互动时组件自身返回 null；成员卡片可点击
-								进入该小A 的会话单独迭代。 */}
-							{isLeader && sessionId ? (
+								{/* 经典布局：团队驾驶舱在对话区顶部（专注布局只在
+								右侧栏渲染，顶部不重复出现） */}
+							{layoutMode === 'classic' && isLeader && sessionId ? (
 								<TeamFlowPanel
 									msgs={msgs}
 									leaderName={leaderName}
