@@ -797,6 +797,7 @@
 			"noEvents": "暂无团队事件",
 			"noArtifacts": "暂无成员汇报",
 			"artifactOf": "汇报内容",
+			"viewArtifact": "查看全文",
 			"viewMemberInteractions": "查看 {{name}} 的互动",
 			"edgeCountHint": "查看 {{name}} 与主理人的互动",
 			"openMemberShort": "进入会话迭代",

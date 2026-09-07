@@ -872,3 +872,27 @@ class TestTeamFlowPanelAutoScroll:
         assert "stickToBottomRef" in src
         assert "el.scrollTop = el.scrollHeight" in src, "必须显式沉底"
         assert "scrollHeight - el.scrollTop - el.clientHeight" in src
+
+
+class TestArtifactViewerDialog:
+    """产物大窗阅读（2026-09-08 用户反馈：Tab 空间太小不好看）。"""
+
+    def test_artifact_click_opens_dialog(self):
+        src = (
+            _SRC_DIR / "components" / "panel" / "TeamFlowPanel.tsx"
+        ).read_text(encoding="utf-8")
+        # 紧凑列表：点击卡片打开大窗
+        assert "setViewingArtifact(e)" in src, "产物卡片必须可点击打开大窗"
+        assert "viewingArtifact" in src
+        # 大窗：近全屏 + 全文 markdown
+        assert (
+            "flex h-[85vh] max-w-4xl flex-col sm:max-w-4xl" in src
+        ), "大窗必须给足阅读空间（sm:max-w-4xl 压过 dialog 默认 sm:max-w-sm）"
+        assert src.count("<Markdown") >= 2, "Tab 内与大窗都要渲染 markdown"
+        # i18n 键
+        zh = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "zh.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        assert zh["panel"]["teamFlow"]["viewArtifact"] == "查看全文"

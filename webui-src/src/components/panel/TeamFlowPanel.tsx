@@ -40,6 +40,12 @@ import type { Msg } from '@agentscope-ai/agentscope/message';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+	Dialog,
+	DialogContent,
+	DialogHeader,
+	DialogTitle,
+} from '@/components/ui/dialog';
 import { Markdown } from '@/components/markdown';
 
 export interface FlowEvent {
@@ -356,6 +362,8 @@ export function TeamFlowPanel({
         const [tab, setTab] = useState<Tab>('activity');
         /** 选中的成员（成员 Tab / 时间轴过滤）。 */
         const [focus, setFocus] = useState<string | null>(null);
+        /** 大窗阅读中的产物（null = 关闭）。 */
+        const [viewingArtifact, setViewingArtifact] = useState<FlowEvent | null>(null);
 
         const { events } = useMemo(() => buildTimeline(msgs), [msgs]);
 
@@ -919,19 +927,29 @@ export function TeamFlowPanel({
 									)}
 
 									{tab === 'artifacts' && (
-										<div className="space-y-3">
+										<div className="space-y-2">
 												{artifacts.map((e, i) => (
-														<div key={i} className="rounded-lg border p-2">
-																<div className="mb-1 flex items-center gap-2 text-xs">
+														<button
+																key={i}
+																type="button"
+																className="w-full rounded-lg border p-2 text-left transition-colors hover:bg-muted/50"
+																onClick={() => setViewingArtifact(e)}
+														>
+																<div className="flex items-center gap-2 text-xs">
 																		<span className="font-medium">
 																				{displayName(e.from, t)}
 																		</span>
 																		<span className="text-muted-foreground">
 																				{t('panel.teamFlow.artifactOf')} · {fmtTime(e.time)}
 																		</span>
+																		<span className="ml-auto text-[10px] text-muted-foreground">
+																				{t('panel.teamFlow.viewArtifact')} →
+																		</span>
 																</div>
-																<Markdown className="text-xs">{e.content || e.summary}</Markdown>
-														</div>
+																<div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+																		{e.summary}
+																</div>
+														</button>
 												))}
 												{artifacts.length === 0 && (
 														<div className="py-2 text-center text-xs text-muted-foreground">
@@ -944,9 +962,41 @@ export function TeamFlowPanel({
 							</motion.div>
 						)}
 					</AnimatePresence>
+
+					{/* 产物大窗阅读（2026-09-08 用户反馈：Tab 空间太小）：
+					    紧凑列表点击 → 近全屏弹窗看汇报全文 markdown */}
+					<Dialog
+						open={!!viewingArtifact}
+						onOpenChange={(v) => {
+							if (!v) setViewingArtifact(null);
+						}}
+					>
+						<DialogContent className="flex h-[85vh] max-w-4xl flex-col sm:max-w-4xl">
+							<DialogHeader>
+								<DialogTitle className="flex items-center gap-2 text-base">
+									<ClipboardList className="size-4 text-muted-foreground" />
+									{viewingArtifact
+										? `${displayName(viewingArtifact.from, t)} · ${t('panel.teamFlow.artifactOf')}`
+										: ''}
+								</DialogTitle>
+								{viewingArtifact && (
+									<p className="text-xs text-muted-foreground">
+										{fmtTime(viewingArtifact.time)}
+									</p>
+								)}
+							</DialogHeader>
+							<div className="min-h-0 flex-1 overflow-y-auto pr-2">
+								<Markdown className="text-sm">
+									{viewingArtifact?.content ||
+										viewingArtifact?.summary ||
+										''}
+								</Markdown>
+							</div>
+						</DialogContent>
+					</Dialog>
 				</div>
 		);
-}
+	}
 
 /** 时间轴行：时间 + 图标 + 事件描述 + 可展开内容。 */
 function TimelineRow({ e, leaderName }: { e: FlowEvent; leaderName: string }) {
