@@ -17,6 +17,7 @@ import {
 	FileText,
 	FileVideo2,
 	Loader2,
+	Split,
 	TriangleAlert,
 } from 'lucide-react';
 import * as mime from 'mime-types';
@@ -373,6 +374,12 @@ interface MessageBubbleProps {
 		replyId: string,
 		rules?: ToolCallBlock['suggested_rules'],
 	) => void;
+	/**
+	 * 任意位置重新对话（2026-09-08 v3）：hover 消息时显示「从这里
+	 * 重开」按钮，点击后以该消息为锚点截断（保留其及之前的消息，
+	 * 之后的归档删除）。仅在会话空闲时传入（运行中由后端 409 拒绝）。
+	 */
+	onTruncateAt?: (messageId: string) => void;
 }
 
 /**
@@ -392,7 +399,7 @@ interface MessageBubbleProps {
  * When `content` is empty and the message is still running, the bubble
  * body is omitted entirely so only the bottom status row renders.
  */
-export function ASMessageBubble({ message }: MessageBubbleProps) {
+export function ASMessageBubble({ message, onTruncateAt }: MessageBubbleProps) {
 	const isUser = message.role === 'user';
 	const { t } = useTranslation();
 
@@ -426,6 +433,24 @@ export function ASMessageBubble({ message }: MessageBubbleProps) {
 
 	return (
 		<Message align={isUser ? 'end' : 'start'} data-role={message.role}>
+			{/* 「从这里重开」：hover 消息时在气泡外侧浮现（分叉语义：
+			    保留此消息及之前，之后的归档删除）。运行中的回复不显示。 */}
+			{onTruncateAt && !isRunning && (
+				<button
+					type="button"
+					className={cn(
+						'absolute top-0 z-10 inline-flex size-6 cursor-pointer items-center justify-center',
+						'rounded-md text-muted-foreground opacity-0 transition-opacity',
+						'hover:bg-accent hover:text-foreground group-hover/message:opacity-100',
+						'focus-visible:opacity-100',
+						isUser ? 'left-0 -translate-x-full' : 'right-0 translate-x-full',
+					)}
+					title={t('messageBubble.truncateHere')}
+					onClick={() => onTruncateAt(message.id)}
+				>
+					<Split className="size-3.5" />
+				</button>
+			)}
 			<MessageContent>
 				{blocks
 					.filter((block) => block.type !== 'data')

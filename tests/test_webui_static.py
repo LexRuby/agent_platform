@@ -602,3 +602,124 @@ class TestSrcAccountPage:
                       "mode-users-label", "mode-public-label", "publish",
                       "dialog-title"):
                 assert k in data["share"], f"{locale}.json 丢失 share.{k}"
+
+
+class TestSrcSessionFlow:
+    """会话流程控制（2026-09-08 v3）：暂停/继续、任意位置重新对话、
+    流程重启的前端接线静态锁。
+
+    后端 app/session_flow.py 提供 truncate / restart / team-flow
+    pause/resume 端点；前端必须在 API 层、hook、UI 三层全部接线，
+    任何一层回退/漂移都会让功能静默失效（按钮点了没反应）。
+    """
+
+    def test_api_layer_wired(self):
+        """session API 必须暴露全部流程控制方法与类型。"""
+        api = _src("api/session.ts")
+        assert "FlowOpResponse" in api, "缺流程操作响应类型"
+        assert "FlowArchiveEntry" in api, "缺截断归档类型"
+        for method, endpoint in (
+            ("truncate", "/sessions/${sessionId}/truncate"),
+            ("restart", "/sessions/${sessionId}/restart"),
+            ("pauseTeamFlow", "/team-flow/${leaderSessionId}/pause"),
+            ("resumeFlow", "/team-flow/${sessionId}/resume"),
+            ("flowArchive", "/sessions/${sessionId}/flow-archive"),
+        ):
+            assert method in api, f"sessionApi 缺 {method}"
+            assert endpoint in api, f"{method} 端点路径漂移: {endpoint}"
+        # 类型必须从 api/index.ts 再导出（ChatViewport 等按 '@/api' 引用）
+        idx = _src("api/index.ts")
+        assert "FlowOpResponse" in idx and "FlowArchiveEntry" in idx, (
+            "api/index.ts 未再导出流程控制类型"
+        )
+
+    def test_hook_flow_methods(self):
+        """useMessages 必须暴露 truncateAt / restartFlow 并在成功后重载。"""
+        hook = _src("hooks/useMessages.ts")
+        assert "const truncateAt" in hook, "缺 truncateAt"
+        assert "const restartFlow" in hook, "缺 restartFlow"
+        assert "setReloadToken" in hook, "缺重载令牌（截断/重启后界面不刷新）"
+        # 重载令牌必须挂进生命周期 effect 依赖，否则令牌变化不触发重拉
+        assert "reloadToken, scheduleUpdate" in hook, (
+            "reloadToken 未加入生命周期 effect 依赖"
+        )
+
+    def test_bubble_truncate_button(self):
+        """消息气泡必须渲染「从这里重开」hover 按钮（分叉语义）。"""
+        bubble = _src("components/chat/ASMessageBubble.tsx")
+        assert "onTruncateAt" in bubble, "气泡缺 onTruncateAt prop"
+        assert "truncateHere" in bubble, "缺「从这里重开」tooltip 词条引用"
+        # 仅空闲消息可截断：运行中回复（无 finished_at）不显示按钮
+        assert "onTruncateAt && !isRunning" in bubble, (
+            "运行中的回复也显示截断按钮（后端 409 之外的二道防线）"
+        )
+
+    def test_chat_content_wiring(self):
+        """ChatContent 必须把 onTruncateAt 传给气泡（空闲时才传）。"""
+        content = _src("components/chat/ChatContent.tsx")
+        assert "onTruncateAt" in content, "ChatContent 缺 onTruncateAt prop"
+        assert "phase === 'idle' ? onTruncateAt : undefined" in content, (
+            "运行中未撤下截断按钮"
+        )
+        # 继续按钮：wake 语义，空闲且有历史才显示
+        assert "onResume" in content, "ChatContent 缺 onResume prop"
+        assert "msgs.length > 0" in content, "继续按钮未限定有历史会话"
+
+    def test_viewport_controls(self):
+        """ChatViewport 必须接线全部流程控制：重启按钮 + 确认对话框 +
+        团队暂停/继续 + 截断确认。"""
+        vp = _src("pages/chat/ChatViewport.tsx")
+        assert "truncateAt" in vp and "restartFlow" in vp, (
+            "ChatViewport 未从 useMessages 解构流程控制方法"
+        )
+        assert "pauseTeamFlow" in vp, "缺团队暂停调用"
+        assert "resumeFlow" in vp, "缺继续（wake）调用"
+        assert "restartTooltip" in vp, "缺重启按钮"
+        assert "restartOpen" in vp, "缺重启确认对话框状态"
+        assert "truncateTarget" in vp, "缺截断确认目标状态"
+        # 重启按钮必须空闲才可用（运行中重启撕裂状态）
+        assert "phase !== 'idle' || flowPending" in vp, (
+            "重启按钮未按运行状态禁用"
+        )
+        # 两种布局的 TeamFlowPanel 都要传团队控制
+        assert vp.count("onPauseTeam={handlePauseTeam}") == 2, (
+            "专注/经典布局的团队面板缺暂停接线"
+        )
+        assert vp.count("onResumeTeam={handleResumeFlow}") == 2, (
+            "专注/经典布局的团队面板缺继续接线"
+        )
+
+    def test_team_panel_controls(self):
+        """TeamFlowPanel 头部必须有暂停/继续按钮且受 busy 禁用。"""
+        panel = _src("components/panel/TeamFlowPanel.tsx")
+        assert "onPauseTeam" in panel and "onResumeTeam" in panel, (
+            "面板缺团队流程控制 props"
+        )
+        assert "teamBusy" in panel, "缺 busy 状态（运行中可重复点击暂停）"
+        assert "pauseTeam" in panel and "resumeTeam" in panel, (
+            "缺暂停/继续按钮文案引用"
+        )
+
+    def test_i18n_flow_keys(self):
+        """zh/en 必须包含全部流程控制文案（缺词条渲染裸键名）。"""
+        for locale in ("zh", "en"):
+            data = json.loads(
+                (_SRC_DIR / "i18n" / "locales" / f"{locale}.json").read_text(
+                    encoding="utf-8",
+                ),
+            )
+            chat_keys = (
+                "restartTooltip", "restartTitle", "restartDescription",
+                "restartConfirm", "restartDone", "truncateTitle",
+                "truncateDescription", "truncateConfirm", "truncateDone",
+                "pauseTeamDone", "resumeDone", "resume", "resumeTooltip",
+            )
+            for k in chat_keys:
+                assert k in data["chat"], f"{locale}.json 丢失 chat.{k}"
+            assert "truncateHere" in data["messageBubble"], (
+                f"{locale}.json 丢失 messageBubble.truncateHere"
+            )
+            tf = data["panel"]["teamFlow"]
+            assert "pauseTeam" in tf and "resumeTeam" in tf, (
+                f"{locale}.json 丢失 panel.teamFlow.pauseTeam/resumeTeam"
+            )

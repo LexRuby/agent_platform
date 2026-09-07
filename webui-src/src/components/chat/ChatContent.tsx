@@ -6,7 +6,7 @@ import {
 	type TextBlock,
 	type ToolCallBlock,
 } from '@agentscope-ai/agentscope/message';
-import { GitBranch, TriangleAlert } from 'lucide-react';
+import { GitBranch, Play, TriangleAlert } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { Button } from '../ui/button';
@@ -64,6 +64,16 @@ interface ChatContentProps {
 	/** Called when the user clicks the stop button. */
 	onInterrupt?: () => void;
 	/**
+	 * 任意位置重新对话（2026-09-08 v3）：以某条历史消息为锚点截断。
+	 * 仅在会话空闲（phase === 'idle'）时传入，运行中气泡不显示按钮。
+	 */
+	onTruncateAt?: (messageId: string) => void;
+	/**
+	 * 继续（wake，2026-09-08 v3）：从当前状态继续推理。空闲且有
+	 * 历史时在输入区 header 显示「继续」按钮（团队/普通会话通用）。
+	 */
+	onResume?: () => void;
+	/**
 	 * Optional content pinned at the bottom of the chat — between the
 	 * message scroll area and the text input (e.g. pending subagent HITL
 	 * cards on a team leader's view). Rendered below the conversation so
@@ -101,6 +111,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	autoComplete,
 	className,
 	onInterrupt,
+	onTruncateAt,
+	onResume,
 	footerSlot,
 	allowedInputTypes,
 	fileProcessor,
@@ -171,6 +183,10 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 											key={message.id}
 											message={message}
 											onUserConfirm={onUserConfirm}
+											/* 运行中隐藏「从这里重开」：截断必须等会话空闲 */
+											onTruncateAt={
+												phase === 'idle' ? onTruncateAt : undefined
+											}
 										/>
 									</MessageScrollerItem>
 								))}
@@ -259,12 +275,28 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						onInterrupt={onInterrupt}
 						headerSlot={
 							<div className="flex w-full items-center justify-between px-2 py-1 text-sm text-muted-foreground">
-								<WorkingDirectoryDialog
-									agentId={agentId}
-									sessionId={sessionId}
-									value={cwd}
-									onChange={onCwdChange}
-								/>
+								<div className="flex items-center gap-1">
+									<WorkingDirectoryDialog
+										agentId={agentId}
+										sessionId={sessionId}
+										value={cwd}
+										onChange={onCwdChange}
+									/>
+									{/* 继续（2026-09-08 v3）：wake 语义，从当前
+									    状态接着推理；空闲且有历史才显示 */}
+									{onResume && phase === 'idle' && msgs.length > 0 && (
+										<Button
+											variant="ghost"
+											size="sm"
+											className="h-6 gap-1 px-2 text-xs"
+											title={t('chat.resumeTooltip')}
+											onClick={onResume}
+										>
+											<Play className="size-3" />
+											{t('chat.resume')}
+										</Button>
+									)}
+								</div>
 								{git && (
 									<Button
 										className="font-mono"

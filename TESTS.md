@@ -39,7 +39,6 @@ bash scripts/smoke_agent_service.py  # 真模型 E2E 冒烟（形态 B）
 ## 用例清单
 
 ### 1. `test_auth_unit.py` — 鉴权单元（14 例）
-
 | 组 | 覆盖点 |
 |---|---|
 | TestCheckPassword | 正确/错误/不存在用户；文件尾空白 strip；**输入端不 strip（精确匹配）**；空密码文件拒绝；含内部空格密码；**中文密码**（曾发现 `compare_digest` 非 ASCII 崩溃 bug，已修）；非法用户名 11 种（路径穿越 `../`、中文、过长、带扩展名等）；合法用户名形状 5 种 |
@@ -598,6 +597,32 @@ API 层 3，FakeSessionService duck-typing）；webui_static +3
 验证：pytest 532 项通过；浏览器 E2E 全链路（发版 v1/v2 → 复制
 > "高考志愿兵-文科" → 发布"高考志愿兵-文科版"给指定账号 →
 > 发布物溯源展示）实测通过。
+
+### 37. `test_session_flow.py`（22 例）+ `TestSrcSessionFlow` 静态锁（2026-09-08 v3）
+
+> 用户需求："暂停/继续、任意位置重新对话、流程重新启动"。
+> 后端 `app/session_flow.py` 五端点：`/sessions/{sid}/truncate`
+> （归档+LTRIM 截断+context 同步）、`/sessions/{sid}/restart`
+> （上下文归零保历史）、`/team-flow/{sid}/pause|resume`（团队级
+> 停止/唤醒）、`/sessions/{sid}/flow-archive`（被删消息副本查询）。
+
+| 组 | 覆盖点 |
+|---|---|
+| TestTruncate | 5 条截到 3 条（消息 List LTRIM + state.context 同步 + summary/reply_context 重置 + 归档副本）；截最后一条（无删除不写归档）；消息不存在 404；运行中 409 零改动；会话不存在 404；未认证 401；**context 时间锚点退化**（截断点不在 context 时按 created_at 对齐，宁少删不误删）；**permission_context/tasks_context 保留**（已授权工具不必重新授权）；归档查询 API |
+| TestRestart | context/summary/reply 归零 + 消息历史完整保留；运行中 409；**团队 leader 重启先 cancel 全部成员** + leader HITL 中断 + 团队绑定保留（重启≠解散）；非团队不调 cancel/interrupt；已解散团队跳过成员；会话不存在 404 |
+| TestTeamFlow | 暂停 = leader interrupt + 全部成员 cancel；非团队会话暂停幂等；404；继续 = enqueue wake（官方 input:None 语义，唤醒 leader 自行恢复调度）；404 |
+| TestStateSemantics | 截断后新消息不复活旧消息；同截断点重复调用幂等（第二次 removed=0 不重复归档） |
+| TestSrcSessionFlow | 前端三层接线静态锁：API 层（5 方法+2 类型+再导出）、hook（truncateAt/restartFlow+reloadToken 挂进 effect 依赖）、气泡（Split 按钮+运行中隐藏）、ChatContent（空闲才传 onTruncateAt+继续按钮限定有历史）、ChatViewport（重启按钮空闲禁用+两种布局团队接线各 2 处）、TeamFlowPanel（暂停/继续+busy）、i18n 全词条（zh/en） |
+
+**测试基建要点**：fakeredis 必须 `decode_responses=True` 对齐官方
+RedisStorage（否则 `smembers` 返回 bytes，`list_teams` 拼 key 失配
+—— 真实环境冒烟发现的坑，已写进 fixture 注释）。
+
+验证：pytest 561 项通过；真实环境 API 冒烟（登录 → 新建会话 →
+Redis seed 5 条消息 → truncate 保留 3 归档 2 → flow-archive 副本
+核对 → restart 后 context 空历史保留 → pause/resume 幂等 → 清理）；
+浏览器 E2E：重启确认对话框+toast、继续按钮触发 wake、Split hover
+按钮+确认对话框、团队驾驶舱暂停/继续按钮（真实团队数据渲染）。
 
 ## 维护规则
 

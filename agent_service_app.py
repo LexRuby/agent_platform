@@ -40,6 +40,7 @@ from app.prompt_templates import (
     prompt_templates_router,
 )
 from app.spa_static import SPAStaticFiles
+from app.session_flow import session_flow_router
 from app.startup_hook import StartupHook
 from app.team_archive import team_archive_router
 from app.team_preserve import patch_team_protection, team_history_router
@@ -108,6 +109,10 @@ app.include_router(agent_version_router)
 
 # 智能体共享管理：发布/取消/我的发布列表 API（策略已注入 create_app）
 app.include_router(agent_share_router)
+
+# 会话流程控制：任意位置重新对话（truncate）/ 流程重启（restart）/
+# 团队暂停继续（team-flow pause/resume）/ 截断归档查询（2026-09-08 v3）
+app.include_router(session_flow_router)
 
 # 提示词模板：列表 API + 注入 /agent/schema/v2（前端据此渲染模板下拉）
 app.include_router(prompt_templates_router)

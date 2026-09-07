@@ -5,9 +5,11 @@ import {
 	Database,
 	PanelRight,
 	PanelRightClose,
+	RotateCw,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 
 import type {
 	ChatModelConfig,
@@ -23,6 +25,7 @@ import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
 import { ArchiveDialog } from '@/components/dialog/ArchiveDialog';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
+import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { KnowledgeBasePanel } from '@/components/panel/KnowledgeBasePanel';
 import { McpPanel } from '@/components/panel/McpPanel';
 import { PanelDock, type PanelDescriptor, type PanelKey } from '@/components/panel/PanelDock.tsx';
@@ -240,6 +243,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		onSubagentConfirm,
 		subagentHitl,
 		interrupt,
+		truncateAt,
+		restartFlow,
 	} = useMessages(agentId, sessionId, {
 		onTeamUpdated: handleTeamUpdated,
 	});
@@ -737,6 +742,86 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 		);
 	};
 
+	// ── 会话流程控制（2026-09-08 v3）────────────────────────────
+	// 暂停/继续 · 任意位置重新对话 · 流程重启
+
+	/** 重启确认对话框 */
+	const [restartOpen, setRestartOpen] = useState(false);
+	/** 截断（从这里重开）确认：待截断的锚点消息 id */
+	const [truncateTarget, setTruncateTarget] = useState<string | null>(null);
+	/** 流程操作进行中（防重复点击） */
+	const [flowPending, setFlowPending] = useState(false);
+
+	/** 任意位置重新对话：点消息旁的分叉按钮 → 确认 → 截断。 */
+	const handleTruncateAt = useCallback(
+		(messageId: string) => setTruncateTarget(messageId),
+		[],
+	);
+
+	const handleTruncateConfirm = useCallback(async () => {
+		if (!truncateTarget) return;
+		setFlowPending(true);
+		try {
+			const res = await truncateAt(truncateTarget);
+			if (res) {
+				toast.success(
+					t('chat.truncateDone', {
+						kept: res.kept,
+						archived: res.archived,
+					}),
+				);
+				setTruncateTarget(null);
+			}
+		} finally {
+			setFlowPending(false);
+		}
+	}, [truncateTarget, truncateAt, t]);
+
+	/** 流程重启：确认后上下文归零（消息历史保留）。 */
+	const handleRestartConfirm = useCallback(async () => {
+		setFlowPending(true);
+		try {
+			if (await restartFlow()) {
+				toast.success(t('chat.restartDone'));
+			}
+		} finally {
+			setFlowPending(false);
+		}
+	}, [restartFlow, t]);
+
+	/** 团队暂停：中断 leader + 取消全部成员运行（上下文保留）。 */
+	const handlePauseTeam = useCallback(async () => {
+		if (!sessionId || !agentId) return;
+		setFlowPending(true);
+		try {
+			const res = await sessionApi.pauseTeamFlow(sessionId, agentId);
+			toast.success(
+				t('chat.pauseTeamDone', { count: res.cancelled_members }),
+			);
+		} catch {
+			// client.ts 已弹错误 toast
+		} finally {
+			setFlowPending(false);
+		}
+	}, [sessionId, agentId, t]);
+
+	/**
+	 * 继续（wake）：从当前状态继续推理。团队 leader 被唤醒后自行
+	 * 恢复调度成员；普通会话即"继续上次思路"。
+	 */
+	const handleResumeFlow = useCallback(async () => {
+		if (!sessionId || !agentId) return;
+		setFlowPending(true);
+		try {
+			await sessionApi.resumeFlow(sessionId, agentId);
+			toast.success(t('chat.resumeDone'));
+		} catch {
+			// client.ts 已弹错误 toast
+		} finally {
+			setFlowPending(false);
+		}
+	}, [sessionId, agentId, t]);
+
 	return (
 		<>
 			<main className="flex size-full">
@@ -788,6 +873,20 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 											onClick={() => setArchiveOpen(true)}
 										>
 											<Archive className="size-4" />
+										</Button>
+									)}
+									{/* 流程重启（2026-09-08 v3）：上下文归零重新开始，
+									    消息历史保留；带确认（防误触清空推理状态） */}
+									{sessionId && (
+										<Button
+											variant="ghost"
+											size="sm"
+											className="gap-1 px-2"
+											title={t('chat.restartTooltip')}
+											disabled={phase !== 'idle' || flowPending}
+											onClick={() => setRestartOpen(true)}
+										>
+											<RotateCw className="size-4" />
 										</Button>
 									)}
 									{/* 布局模式一键切换（2026-09-07）：专注 ↔ 经典。
@@ -874,6 +973,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									leaderName={leaderName}
 									members={flowMembers}
 									onOpenMember={handleOpenFlowMember}
+									onPauseTeam={handlePauseTeam}
+									onResumeTeam={handleResumeFlow}
+									teamBusy={phase !== 'idle' || flowPending}
 								/>
 							) : null}
 								{/* 对话列宽度：填满中间面板（2026-09-07 用户反馈
@@ -900,6 +1002,8 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 									onSend={send}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}
+									onTruncateAt={handleTruncateAt}
+									onResume={handleResumeFlow}
 									// cwd={
 									// 	{cwd: view?.session.config.cwd, git: {
 									// 		branch: 'main',
@@ -1000,6 +1104,9 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 											leaderName={leaderName}
 											members={flowMembers}
 											onOpenMember={handleOpenFlowMember}
+											onPauseTeam={handlePauseTeam}
+											onResumeTeam={handleResumeFlow}
+											teamBusy={phase !== 'idle' || flowPending}
 										/>
 									</div>
 								) : null}
@@ -1045,6 +1152,25 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 					members={archiveMembers}
 				/>
 			) : null}
+			{/* 流程控制确认对话框（2026-09-08 v3）：重启 / 从这里重开 */}
+			<DeleteDialog
+				open={restartOpen}
+				onOpenChange={setRestartOpen}
+				title={t('chat.restartTitle')}
+				description={t('chat.restartDescription')}
+				confirmLabel={t('chat.restartConfirm')}
+				onConfirm={handleRestartConfirm}
+			/>
+			<DeleteDialog
+				open={truncateTarget !== null}
+				onOpenChange={(open) => {
+					if (!open) setTruncateTarget(null);
+				}}
+				title={t('chat.truncateTitle')}
+				description={t('chat.truncateDescription')}
+				confirmLabel={t('chat.truncateConfirm')}
+				onConfirm={handleTruncateConfirm}
+			/>
 		</>
 	);
 }

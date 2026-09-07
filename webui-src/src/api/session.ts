@@ -53,6 +53,22 @@ export interface TeamHistoryEntry {
         }[];
 }
 
+/** 会话流程操作结果（后端 app/session_flow.py FlowOpResponse）。 */
+export interface FlowOpResponse {
+	session_id: string;
+	kept_messages: number;
+	archived_messages: number;
+	cancelled_members: number;
+}
+
+/** 一次截断归档（被删消息副本，后端 flow-archive 端点）。 */
+export interface FlowArchiveEntry {
+	truncated_at: string;
+	from_message_id: string;
+	removed_count: number;
+	messages: Msg[];
+}
+
 export const sessionApi = {
      /** 主理会话的历次团队成员 session 映射（agent_id → 团队会话）。 */
      teamSessions: (leaderSessionId: string) =>
@@ -62,6 +78,61 @@ export const sessionApi = {
                      { silent: true },
              ),
 	list: (agentId: string) => client.get<SessionListResponse>('/sessions/', { agent_id: agentId }),
+
+	/**
+	 * 任意位置重新对话：归档并截断 message_id 之后的消息，上下文
+	 * 同步截断（2026-09-08 v3）。
+	 *
+	 * Backend contract:
+	 * - 200 → `FlowOpResponse`（kept/archived 数量）
+	 * - 404 → 会话或消息不存在
+	 * - 409 → 会话运行中（先暂停再截断）
+	 */
+	truncate: (
+		sessionId: string,
+		agentId: string,
+		messageId: string,
+	) =>
+		client.post<FlowOpResponse>(`/sessions/${sessionId}/truncate`, {
+			agent_id: agentId,
+			message_id: messageId,
+		}),
+
+	/**
+	 * 流程重启：上下文/摘要/回复状态归零，消息历史保留；
+	 * 团队 leader 重启时后端先取消全部成员运行。
+	 */
+	restart: (sessionId: string, agentId: string) =>
+		client.post<FlowOpResponse>(`/sessions/${sessionId}/restart`, {
+			agent_id: agentId,
+		}),
+
+	/**
+	 * 团队暂停：中断 leader（官方 interrupt 三态幂等）+ 取消全部
+	 * 成员运行，上下文完整保留。
+	 */
+	pauseTeamFlow: (leaderSessionId: string, agentId: string) =>
+		client.post<FlowOpResponse>(
+			`/team-flow/${leaderSessionId}/pause`,
+			null,
+			{ agent_id: agentId },
+		),
+
+	/**
+	 * 继续：对会话 enqueue 一个 wake 触发（官方 `input: None` 语义，
+	 * 从当前状态继续推理）。团队 leader 被唤醒后自行恢复调度。
+	 */
+	resumeFlow: (sessionId: string, agentId: string) =>
+		client.post<FlowOpResponse>(`/team-flow/${sessionId}/resume`, null, {
+			agent_id: agentId,
+		}),
+
+	/** 查询该会话的截断归档（被删消息副本，历次列表）。 */
+	flowArchive: (sessionId: string, agentId: string) =>
+		client.get<{ session_id: string; archives: FlowArchiveEntry[] }>(
+			`/sessions/${sessionId}/flow-archive`,
+			{ agent_id: agentId },
+		),
 
 	create: async (body: CreateSessionRequest) => {
 		const res = await client.post<CreateSessionResponse>('/sessions/', body);

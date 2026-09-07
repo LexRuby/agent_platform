@@ -1,7 +1,7 @@
 export * from './types';
 export { agentApi } from './agent';
 export { sessionApi, takeFreshlyCreated } from './session';
-export type { TeamHistoryEntry } from './session';
+export type { TeamHistoryEntry, FlowOpResponse, FlowArchiveEntry } from './session';
 export { credentialApi } from './credential';
 export { chatApi } from './chat';
 export { workspaceApi } from './workspace';

@@ -39,6 +39,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import type { Msg } from '@agentscope-ai/agentscope/message';
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Markdown } from '@/components/markdown';
 
 export interface FlowEvent {
@@ -80,6 +81,12 @@ interface Props {
         members?: FlowMember[];
         /** 进入成员会话单独迭代（成员 Tab 的次要入口）。 */
         onOpenMember?: (member: FlowMember) => void;
+        /** 团队暂停（2026-09-08 v3）：中断 leader + 取消全部成员运行。 */
+        onPauseTeam?: () => void;
+        /** 团队继续：唤醒 leader 从当前状态恢复调度。 */
+        onResumeTeam?: () => void;
+        /** leader 回复进行中或流程操作进行中（禁用控制按钮）。 */
+        teamBusy?: boolean;
 }
 
 type Tab = 'activity' | 'workflow' | 'members' | 'artifacts';
@@ -335,7 +342,15 @@ const KIND_ICON: Record<FlowEvent['kind'], string> = {
         team_deleted: '🗑️',
 };
 
-export function TeamFlowPanel({ msgs, leaderName, members = [], onOpenMember }: Props) {
+export function TeamFlowPanel({
+        msgs,
+        leaderName,
+        members = [],
+        onOpenMember,
+        onPauseTeam,
+        onResumeTeam,
+        teamBusy = false,
+}: Props) {
         const { t } = useTranslation();
         const [expanded, setExpanded] = useState(true);
         const [tab, setTab] = useState<Tab>('activity');
@@ -485,36 +500,86 @@ export function TeamFlowPanel({ msgs, leaderName, members = [], onOpenMember }: 
 
         return (
                 <div className="mx-auto w-full max-w-[var(--chat-content-w)] rounded-xl border bg-card shadow-sm">
-					{/* 头部：团队名 + 状态 + 任务描述（可折叠） */}
-					<button
-						type="button"
-						className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm"
-						onClick={() => setExpanded((v) => !v)}
-					>
-						<Users className="size-3.5 shrink-0 text-muted-foreground" />
-						<span className="font-medium">
-							{teamMeta.name || t('panel.teamFlow.title')}
-						</span>
-						<Badge
-							variant={running ? 'default' : 'secondary'}
-							className="gap-1 text-[10px]"
+					{/* 头部：团队名 + 状态 + 任务描述（可折叠）+ 流程控制 */}
+					<div className="flex w-full items-center gap-2 px-3 py-2 text-sm">
+						<button
+							type="button"
+							className="flex min-w-0 flex-1 items-center gap-2 text-left"
+							onClick={() => setExpanded((v) => !v)}
 						>
-							{running ? (
-								<span className="size-1.5 animate-pulse rounded-full bg-primary-foreground" />
-							) : (
-								<CheckCircle2 className="size-2.5" />
-							)}
-							{running
-								? t('panel.teamFlow.statusRunning')
-								: t('panel.teamFlow.statusEnded')}
-						</Badge>
-						<span className="flex-1" />
-						{expanded ? (
-							<ChevronUp className="size-3.5 text-muted-foreground" />
-						) : (
-							<ChevronDown className="size-3.5 text-muted-foreground" />
+							<Users className="size-3.5 shrink-0 text-muted-foreground" />
+							<span className="truncate font-medium">
+								{teamMeta.name || t('panel.teamFlow.title')}
+							</span>
+							<Badge
+								variant={running ? 'default' : 'secondary'}
+								className="gap-1 text-[10px]"
+							>
+								{running ? (
+									<span className="size-1.5 animate-pulse rounded-full bg-primary-foreground" />
+								) : (
+									<CheckCircle2 className="size-2.5" />
+								)}
+								{running
+									? t('panel.teamFlow.statusRunning')
+									: t('panel.teamFlow.statusEnded')}
+							</Badge>
+						</button>
+						{/* 团队流程控制（2026-09-08 v3）：暂停 = leader +
+						    全部成员停止（上下文保留）；继续 = 唤醒 leader
+						    从当前状态恢复调度。stopPropagation 防触发折叠。 */}
+						{(onPauseTeam || onResumeTeam) && (
+							<div className="flex shrink-0 items-center gap-1">
+								{onPauseTeam && (
+									<Button
+										variant="ghost"
+										size="sm"
+										className="h-7 gap-1 px-2 text-xs"
+										disabled={teamBusy}
+										title={t('panel.teamFlow.pauseTeam')}
+										onClick={(e) => {
+											e.stopPropagation();
+											onPauseTeam();
+										}}
+									>
+										<CircleStop className="size-3.5" />
+										<span className="hidden md:inline">
+											{t('panel.teamFlow.pauseTeam')}
+										</span>
+									</Button>
+								)}
+								{onResumeTeam && (
+									<Button
+										variant="ghost"
+										size="sm"
+										className="h-7 gap-1 px-2 text-xs"
+										disabled={teamBusy}
+										title={t('panel.teamFlow.resumeTeam')}
+										onClick={(e) => {
+											e.stopPropagation();
+											onResumeTeam();
+										}}
+									>
+										<Play className="size-3.5" />
+										<span className="hidden md:inline">
+											{t('panel.teamFlow.resumeTeam')}
+										</span>
+									</Button>
+								)}
+							</div>
 						)}
-					</button>
+						<button
+							type="button"
+							className="shrink-0 text-muted-foreground"
+							onClick={() => setExpanded((v) => !v)}
+						>
+							{expanded ? (
+								<ChevronUp className="size-3.5" />
+							) : (
+								<ChevronDown className="size-3.5" />
+							)}
+						</button>
+					</div>
 
 					<AnimatePresence initial={false}>
 						{expanded && (

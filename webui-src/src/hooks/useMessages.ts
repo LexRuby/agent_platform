@@ -133,6 +133,9 @@ export function useMessages(
 	// is still `false` for one frame — long enough to paint the empty
 	// state over a session that does have messages.
 	const [loadedKey, setLoadedKey] = useState<string | null>(null);
+	// 流程控制（截断/重启）后的重载令牌：变化即触发生命周期 effect
+	// 重新拉取历史（SSE 连接也随之重建），无需切换会话。
+	const [reloadToken, setReloadToken] = useState(0);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
 	const [error, setError] = useState<Error | null>(null);
 	// Pending subagent HITL cards projected onto this (leader) session.
@@ -342,7 +345,46 @@ export function useMessages(
 			abortRef.current = null;
 			clearInterruptTimer();
 		};
-	}, [agentId, sessionId, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
+	}, [agentId, sessionId, reloadToken, scheduleUpdate, processEvent, audioManager, clearInterruptTimer]);
+
+	/**
+	 * 任意位置重新对话（2026-09-08 v3）：调后端 truncate（归档 +
+	 * 截断消息与上下文），成功后重载历史让界面立即反映截断结果。
+	 *
+	 * @param messageId - 截断锚点：保留该消息及其之前的全部消息。
+	 * @returns 后端返回的 kept/archived 数量（调用方做 toast 提示）。
+	 */
+	const truncateAt = useCallback(
+		async (messageId: string): Promise<{ kept: number; archived: number } | null> => {
+			if (!agentId || !sessionId) return null;
+			try {
+				const res = await sessionApi.truncate(sessionId, agentId, messageId);
+				setReloadToken((n) => n + 1);
+				return { kept: res.kept_messages, archived: res.archived_messages };
+			} catch (e) {
+				setError(e as Error);
+				return null;
+			}
+		},
+		[agentId, sessionId],
+	);
+
+	/**
+	 * 流程重启（"换个思路重做"）：上下文/摘要归零，消息历史保留。
+	 * 团队 leader 会话由后端先取消全部成员运行。成功后重载历史
+	 * （重启不改消息，但 state 相关的展示需要刷新）。
+	 */
+	const restartFlow = useCallback(async (): Promise<boolean> => {
+		if (!agentId || !sessionId) return false;
+		try {
+			await sessionApi.restart(sessionId, agentId);
+			setReloadToken((n) => n + 1);
+			return true;
+		} catch (e) {
+			setError(e as Error);
+			return false;
+		}
+	}, [agentId, sessionId]);
 
 	/**
 	 * Send a user message. Appends the message to the local list
@@ -543,5 +585,7 @@ export function useMessages(
 		subagentHitl: ownsConversation ? subagentHitl : [],
 		abort,
 		interrupt,
+		truncateAt,
+		restartFlow,
 	};
 }
