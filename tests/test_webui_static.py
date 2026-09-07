@@ -454,11 +454,11 @@ class TestSrcAccountPage:
         assert "Share2" not in sidebar, "旧共享图标应并入账户入口"
 
     def test_account_page_tabs(self):
-        """账户中心双 Tab：消费概览 + 发布管理。"""
+        """账户中心双 Tab：消费概览 + 智能体管理。"""
         page = _src("pages/account/index.tsx")
         for marker in (
             "UsageOverview",     # 消费概览 Tab
-            "ShareManagement",   # 发布管理 Tab
+            "AgentManagement",   # 智能体管理 Tab（增删改查+版本+复制+发布）
         ):
             assert marker in page, f"账户中心丢失 {marker}"
         # 页头显示当前账号（authApi 链式换行，分开断言）
@@ -488,8 +488,9 @@ class TestSrcAccountPage:
         assert "usage.load-failed" in page, "丢失错误态文案键"
 
     def test_share_management_migrated(self):
-        """发布管理从旧 /share 页完整迁入（对话框 + 双区块）。"""
-        page = _src("pages/account/ShareManagement.tsx")
+        """智能体管理页：共享迁移完整 + 增删改查 + 版本 + 复制 + 发布（2026-09-08 v2）。"""
+        page = _src("pages/account/AgentManagement.tsx")
+        # 共享 v1 完整迁入（对话框 + 三种可见性 + 只读检测）
         for marker in (
             "ShareSettingDialog",
             "'private'",
@@ -499,10 +500,32 @@ class TestSrcAccountPage:
             "sharedToMe",
             "!a.editable",   # 共享给我的只读检测（官方合并链路）
         ):
-            assert marker in page, f"发布管理丢失关键实现 {marker}"
+            assert marker in page, f"智能体管理丢失关键实现 {marker}"
+        # v2 增删改查（用户诉求：管理界面不是只有发布）
+        for marker in (
+            "AgentDialog",          # 新建
+            "EditAgentDialog",      # 编辑
+            "DeleteDialog",         # 删除
+            "agentApi.list",        # 查（列表）
+            "agentApi.delete",      # 删除 API
+        ):
+            assert marker in page, f"智能体管理缺少增删改查组件 {marker}"
+        # v2 版本管理 + 复制 + 版本化发布（三条产品化链路）
+        for marker in (
+            "AgentVersionDialog",      # 版本管理入口（历史版本/发版/冻结）
+            "DuplicateDialog",         # 复制：当前配置或任意版本快照分叉
+            "agentVersionApi.duplicate",
+            "PublishDialog",           # 发布：版本快照 → 独立产品（重命名）
+            "agentShareApi.publish",
+            "agentShareApi.publications",  # 我的发布物列表（溯源）
+        ):
+            assert marker in page, f"智能体管理缺少版本化能力 {marker}"
         # 旧页面目录必须已删除（防双入口并存）
         assert not (_SRC_DIR / "pages" / "share").exists(), "旧 share 页应删除"
         assert not (_SRC_DIR / "pages" / "usage").exists(), "旧 usage 页应删除"
+        assert not (_SRC_DIR / "pages" / "account" / "ShareManagement.tsx").exists(), (
+            "旧 ShareManagement.tsx 应被 AgentManagement.tsx 取代"
+        )
 
     def test_api_client_wired(self):
         """API 层必须存在并从 index 导出（缺导出页面 import 报错）。"""
@@ -511,6 +534,13 @@ class TestSrcAccountPage:
         index = _src("api/index.ts")
         assert "from './usage'" in index, "api/index.ts 缺 usageApi 导出"
         assert "from './agentShare'" in index, "api/index.ts 缺 agentShareApi 导出"
+        assert "from './agentVersion'" in index, "api/index.ts 缺 agentVersionApi 导出（2026-09-08）"
+        # 版本化发布 + 复制的端点路径（v2 新链路）
+        share_api = _src("api/agentShare.ts")
+        assert "'/agent-share/publish'" in share_api, "缺版本化发布端点"
+        assert "'/agent-share/pubs'" in share_api, "缺发布物列表端点"
+        ver_api = _src("api/agentVersion.ts")
+        assert "`/agent/${agentId}/duplicate`" in ver_api, "缺复制智能体端点"
         client = _src("api/client.ts")
         assert "put: <T>" in client, "client 缺 PUT 方法（发布设置用）"
         types = _src("api/types.ts")
@@ -519,6 +549,7 @@ class TestSrcAccountPage:
             assert f"interface {t}" in types, f"丢失 {t} 类型定义"
         types_src = types
         assert "products: UsageProduct[]" in types_src, "UsageSummary 缺 products 字段"
+        assert "interface PublicationInfo" in types_src, "缺发布物类型定义（2026-09-08）"
 
     def test_backend_metering_and_product_aggregation(self):
         """后端计量 + 产品维度聚合 + 路由挂载必须在（前端对着它取数）。"""

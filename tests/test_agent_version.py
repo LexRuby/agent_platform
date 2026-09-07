@@ -258,6 +258,179 @@ class TestSaveVersion:
         assert detail["data"]["system_prompt"] == "迭代第二稿"
         assert detail["label"] == "v2"
 
+    def test_save_version_force_always_increments(self, stack):
+        """回归锁：显式发版（save-version）配置未变也必须新增版本。
+
+        历史 bug：add_version 静默复用旧版本号 + label 不写入 →
+        用户点「发布新版本」界面上毫无反应。
+        """
+        client, _, _ = stack
+        aid = _create_agent(client)
+        r1 = client.post(f"/agent/{aid}/save-version", headers=U, json={"label": ""})
+        assert len(r1.json()["versions"]) == 1
+        # 配置完全没变，再点一次发版
+        r2 = client.post(
+            f"/agent/{aid}/save-version", headers=U, json={"label": "重发"},
+        )
+        assert r2.json()["current_version"] == 2, "显式发版必须产生新版本号"
+        assert len(r2.json()["versions"]) == 2
+        assert r2.json()["versions"][1]["label"] == "重发", "label 必须写入"
+
+    def test_freeze_keeps_dedup_on_identical_config(self, stack):
+        """freeze 语义保留：配置未变的重复冻结不膨胀版本号。"""
+        client, vs, _ = stack
+        aid = _create_agent(client)
+        client.post(f"/agent/{aid}/freeze", headers=U)
+        client.post(f"/agent/{aid}/unfreeze", headers=U)
+        client.post(f"/agent/{aid}/freeze", headers=U)
+        assert len(vs.record(aid)["versions"]) == 1, "freeze 复用同配置版本"
+
+
+# ---------------------------------------------------------------- 复制
+
+class TestDuplicate:
+    """POST /agent/{id}/duplicate：从当前配置或版本快照分叉新个体。
+
+    用户场景：高考志愿兵 v1 基础 → v2 文科优化 → v3 理科优化；
+    复制 v1 再各自深入 = 建立第二、第三个志愿兵。
+    """
+
+    @pytest.fixture
+    def dstack(self, env, monkeypatch):
+        """复制专用最小栈：官方 CRUD + router + state.storage fake。"""
+        from tests.official_contract import (
+            agent_item,
+            list_agent_response,
+            post_agent_response,
+        )
+
+        inner = FastAPI()
+        db = {"next": 1, "agents": {}, "owners": {}, "team_ids": set()}
+
+        from app.agent_type import AgentTypeStore
+
+        type_store = AgentTypeStore(str(env / "types.json"))
+
+        @inner.post("/agent/")
+        async def create(body: dict):
+            aid = f"a{db['next']}"
+            db["next"] += 1
+            # 模拟 AgentTypeMiddleware：剥离 agent_type 存映射
+            atype = body.pop("agent_type", None)
+            db["agents"][aid] = body
+            db["owners"][aid] = "u1"  # 与 U 常量身份一致
+            if atype:
+                type_store.set(aid, atype)
+            return post_agent_response(aid)
+
+        @inner.get("/agent/")
+        async def list_():
+            return list_agent_response(
+                [agent_item(k, v) for k, v in db["agents"].items()],
+            )
+
+        @inner.patch("/agent/{aid}")
+        async def update(aid: str, body: dict):
+            db["agents"][aid].update(body)
+            return {"id": aid, "data": db["agents"][aid]}
+
+        inner.include_router(av.agent_version_router)
+
+        async def fake_call(method, path, user_id, json_body=None, params=None):
+            transport = httpx.ASGITransport(app=inner)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://t", timeout=10.0,
+            ) as c:
+                return await c.request(
+                    method, path, json=json_body, params=params,
+                    headers={"X-User-ID": user_id},
+                )
+
+        monkeypatch.setattr(av, "_call_official", fake_call)
+
+        class _Rec:
+            def __init__(self, source):
+                self.source = source
+
+        class _Storage:
+            async def get_agent(self, user_id, agent_id):
+                if db["owners"].get(agent_id) != user_id:
+                    return None
+                return _Rec(
+                    "team" if agent_id in db["team_ids"] else "user",
+                )
+
+        inner.state.storage = _Storage()
+        return TestClient(inner), db, env
+
+    def test_duplicate_current_config(self, dstack):
+        """默认复制当前配置：新个体同名副本、提示词一致、独立 id。"""
+        client, db, _ = dstack
+        aid = _create_agent(client, name="高考志愿兵", prompt="基础提示词")
+        r = client.post(f"/agent/{aid}/duplicate", headers=U, json={})
+        assert r.status_code == 200, r.text
+        new_id = r.json()["agent_id"]
+        assert new_id != aid
+        assert r.json()["name"] == "高考志愿兵 副本"
+        # 官方列表出现新个体，配置与源一致
+        agents = {a["id"]: a for a in client.get("/agent/").json()["agents"]}
+        assert agents[new_id]["data"]["system_prompt"] == "基础提示词"
+
+    def test_duplicate_from_version_snapshot(self, dstack):
+        """复制历史版本：v1 文科 → v2 理科 → 复制 v1 得到文科分叉。"""
+        client, _, _ = dstack
+        aid = _create_agent(client, prompt="文科优化版")
+        client.post(f"/agent/{aid}/save-version", headers=U)  # v1 = 文科
+        client.patch(f"/agent/{aid}", json={"system_prompt": "理科优化版"})
+        client.post(f"/agent/{aid}/save-version", headers=U)  # v2 = 理科
+
+        r = client.post(
+            f"/agent/{aid}/duplicate", headers=U,
+            json={"name": "文科志愿兵", "version": 1},
+        )
+        assert r.status_code == 200, r.text
+        new_id = r.json()["agent_id"]
+        agents = {a["id"]: a for a in client.get("/agent/").json()["agents"]}
+        assert agents[new_id]["data"]["name"] == "文科志愿兵"
+        assert agents[new_id]["data"]["system_prompt"] == "文科优化版"
+        assert r.json()["source_version"] == 1
+
+    def test_duplicate_unknown_version_404(self, dstack):
+        client, _, _ = dstack
+        aid = _create_agent(client)
+        r = client.post(
+            f"/agent/{aid}/duplicate", headers=U, json={"version": 9},
+        )
+        assert r.status_code == 404
+
+    def test_duplicate_not_owner_404(self, dstack):
+        """所有权校验走 get_agent 键控：别人的智能体（即使被共享）不可复制。"""
+        client, db, _ = dstack
+        aid = _create_agent(client)
+        db["owners"][aid] = "someone-else"  # 换主
+        r = client.post(f"/agent/{aid}/duplicate", headers=U, json={})
+        assert r.status_code == 404
+
+    def test_duplicate_team_worker_400(self, dstack):
+        """团队成员（source=team）随团队生命周期，不可复制分叉。"""
+        client, db, _ = dstack
+        aid = _create_agent(client)
+        db["team_ids"].add(aid)
+        r = client.post(f"/agent/{aid}/duplicate", headers=U, json={})
+        assert r.status_code == 400
+
+    def test_duplicate_carries_agent_type(self, dstack):
+        """类型跟随源：leader 复制出的新个体也是 leader。"""
+        from app.agent_type import AgentTypeStore
+
+        client, _, env = dstack
+        aid = _create_agent(client)
+        AgentTypeStore(str(env / "types.json")).set(aid, "leader")
+        client.post(f"/agent/{aid}/duplicate", headers=U, json={})
+        types = AgentTypeStore(str(env / "types.json")).load()
+        new_ids = [i for i in types if i != aid]
+        assert len(new_ids) == 1 and types[new_ids[0]] == "leader"
+
 
 class TestRestore:
     def test_restore_applies_old_config(self, stack):

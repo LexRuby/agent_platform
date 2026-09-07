@@ -1292,12 +1292,26 @@ export interface ListTTSModelResponse {
 
 /** 智能体共享状态（发布管理行数据）。 */
 export interface ShareInfo {
-	agent_id: string;
-	agent_name: string;
-	/** private | users | public */
-	mode: string;
-	users: string[];
-	shared_at: string;
+   agent_id: string;
+   agent_name: string;
+   /** private | users | public */
+   mode: string;
+   users: string[];
+   shared_at: string;
+}
+
+/** 发布物（对外产品）：从源智能体的版本快照复制出的独立个体。 */
+export interface PublicationInfo {
+   /** 发布物智能体 id（独立个体，可被共享账号使用）。 */
+   agent_id: string;
+   display_name: string;
+   source_agent_id: string;
+   source_agent_name: string;
+   source_version: number;
+   /** users | public */
+   mode: string;
+   users: string[];
+   published_at: string;
 }
 
 /** 汇总口径的四项指标：输入/输出/缓存 tokens 与调用次数。 */

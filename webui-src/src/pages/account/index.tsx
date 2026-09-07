@@ -6,7 +6,7 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useTranslation } from '@/i18n/useI18n';
 
-import { ShareManagement } from './ShareManagement';
+import { AgentManagement } from './AgentManagement';
 import { UsageOverview } from './UsageOverview';
 
 /**
@@ -61,7 +61,7 @@ export function AccountPage() {
 						<UsageOverview />
 					</TabsContent>
 					<TabsContent value="share" className="min-h-0 flex-1 overflow-y-auto pb-6">
-						<ShareManagement />
+						<AgentManagement />
 					</TabsContent>
 				</Tabs>
 			</main>

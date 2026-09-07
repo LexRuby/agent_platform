@@ -52,6 +52,13 @@ export const agentVersionApi = {
     /** 版本列表（不含快照正文）。 */
     list: (agentId: string) =>
         client.get<AgentVersionStatus>(`/agent/${agentId}/versions`),
+
+    /** 复制智能体（可选版本快照；从任意版本节点分叉新个体）。 */
+    duplicate: (agentId: string, name: string, version: number | null) =>
+        client.post<{ agent_id: string; name: string; source_agent_id: string; source_version: number | null }>(
+            `/agent/${agentId}/duplicate`,
+            { name, version },
+        ),
     /** 恢复到历史版本（显式授权，冻结中也可执行）。 */
     restore: (agentId: string, version: number) =>
         client.post<AgentVersionStatus>(

@@ -473,3 +473,143 @@ class TestVersionEndpointVisibility:
         assert client.get(
             "/agent/a-leader/versions/1", headers={"X-User-ID": "carol"}
         ).status_code == 404
+
+
+# ---------------------------------------------------------------- 版本化发布
+
+class TestVersionedPublish:
+    """POST /agent-share/publish：发布 = 版本快照复制 + 共享（2026-09-08）。
+
+    用户场景：高考志愿兵 v1 基础 → v2 文科 → v3 理科；
+    发布 v2（对外名"文科志愿专家"）与 v3（"理科志愿专家"）——
+    两个独立产品并存，源智能体继续迭代互不影响。
+    """
+
+    @pytest.fixture
+    def pub_env(self, storage, api_app, tmp_path, monkeypatch):
+        """stub 复制核心 + 版本存储（发布端点的两个外部依赖）。"""
+        import app.agent_version as av_mod
+
+        # 版本存储：v1/v2/v3 都存在（get_version 放行）
+        versions = tmp_path / "versions.json"
+        versions.write_text(json.dumps({
+            "a-leader": {"frozen": False, "current_version": 3, "versions": [
+                {"version": v, "created_at": "2026-09-08T00:00:00",
+                 "label": "", "data": {"name": "高考志愿兵"}}
+                for v in (1, 2, 3)
+            ]},
+        }), encoding="utf-8")
+        monkeypatch.setenv("AGENTFORGE_AGENT_VERSIONS_FILE", str(versions))
+
+        created = {"next": 1}
+
+        async def fake_dup(agent_id, user_id, name, version, stg):
+            new_id = f"pub{created['next']}"
+            created["next"] += 1
+            return {
+                "agent_id": new_id, "name": name,
+                "source_agent_id": agent_id, "source_version": version,
+            }
+
+        monkeypatch.setattr(av_mod, "duplicate_agent_core", fake_dup)
+        return storage, _client_of(api_app)
+
+    def _publish(self, client, version=2, name="文科志愿专家",
+                 mode="users", users=("bob",)):
+        return client.post(
+            "/agent-share/publish",
+            json={
+                "agent_id": "a-leader", "version": version,
+                "display_name": name, "mode": mode, "users": list(users),
+            },
+            headers={"X-User-ID": "alice"},
+        )
+
+    def test_publish_creates_independent_product(self, pub_env):
+        """发布 v2 → 独立发布物 + 共享记录 + 溯源元数据齐备。"""
+        storage, client = pub_env
+        r = self._publish(client, version=2, name="文科志愿专家")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["display_name"] == "文科志愿专家"
+        assert body["source_agent_id"] == "a-leader"
+        assert body["source_version"] == 2
+        pub_id = body["agent_id"]
+        # 被共享账号授权成立（复用 v1 共享机制）
+        assert asyncio.run(
+            storage._client.sismember("agentforge:share:to:bob", pub_id)
+        )
+        # 溯源元数据落库
+        raw = asyncio.run(
+            storage._client.get(f"agentforge:share:pubmeta:{pub_id}")
+        )
+        meta = json.loads(raw)
+        assert meta["source_agent_id"] == "a-leader"
+        assert meta["source_version"] == 2
+        assert meta["display_name"] == "文科志愿专家"
+
+    def test_publish_two_versions_coexist(self, pub_env):
+        """v2 文科 + v3 理科：两个发布物并存互不干扰。"""
+        storage, client = pub_env
+        r2 = self._publish(client, version=2, name="文科志愿专家")
+        r3 = self._publish(client, version=3, name="理科志愿专家")
+        id2, id3 = r2.json()["agent_id"], r3.json()["agent_id"]
+        assert id2 != id3
+        # pubs 列表两条，溯源版本正确
+        pubs = client.get(
+            "/agent-share/pubs", headers={"X-User-ID": "alice"},
+        ).json()["publications"]
+        by_name = {p["display_name"]: p for p in pubs}
+        assert by_name["文科志愿专家"]["source_version"] == 2
+        assert by_name["理科志愿专家"]["source_version"] == 3
+
+    def test_publish_requires_existing_version(self, pub_env):
+        _, client = pub_env
+        r = self._publish(client, version=9)
+        assert r.status_code == 404
+        assert "v9" in r.json()["detail"]
+
+    def test_publish_validation(self, pub_env):
+        _, client = pub_env
+        # mode=private 不合法（发布必共享）
+        r = self._publish(client, mode="private")
+        assert r.status_code == 422
+        # users 模式缺账号
+        r = self._publish(client, users=())
+        assert r.status_code == 422
+        # 对外名称为空
+        r = self._publish(client, name="  ")
+        assert r.status_code == 422
+        # 非法账号名
+        r = self._publish(client, users=("bad name!",))
+        assert r.status_code == 422
+
+    def test_publish_public_mode(self, pub_env):
+        storage, client = pub_env
+        r = self._publish(client, mode="public", users=[])
+        assert r.status_code == 200
+        pub_id = r.json()["agent_id"]
+        assert asyncio.run(
+            storage._client.sismember("agentforge:share:public", pub_id)
+        )
+
+    def test_pubs_lists_only_own(self, pub_env):
+        """别人的发布物不出现在我的列表。"""
+        _, client = pub_env
+        self._publish(client)
+        r = client.get(
+            "/agent-share/pubs", headers={"X-User-ID": "bob"},
+        )
+        assert r.json()["publications"] == []
+
+    def test_unauthorized_401(self, pub_env):
+        _, client = pub_env
+        # 合法 body + 无身份头 → 401
+        r = client.post(
+            "/agent-share/publish",
+            json={
+                "agent_id": "a-leader", "version": 2,
+                "display_name": "x", "mode": "public",
+            },
+        )
+        assert r.status_code == 401

@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agentscope.app.access import ResourceKind
 
@@ -120,13 +120,24 @@ class AgentVersionStore:
             None,
         )
 
-    def add_version(self, agent_id: str, data: dict, label: str = "") -> dict:
-        """追加版本快照；与最新版本内容一致时复用（冻结→解冻→再冻结
-        不产生冗余版本号）。返回版本条目。
+    def add_version(
+        self, agent_id: str, data: dict, label: str = "", *, force: bool = False,
+    ) -> dict:
+        """追加版本快照。返回版本条目。
+
+        - ``force=False``（freeze 用）：与最新版本内容一致时复用——
+          冻结→解冻→再冻结不产生冗余版本号；
+        - ``force=True``（save-version 用）：显式发版动作，**总是新增**
+          ——用户点了「发布新版本」按钮，即使配置未变也要有反馈
+          （历史 bug：静默复用导致界面上"点了没反应"）。
         """
         rec = self.record(agent_id)
         payload = {k: data[k] for k in CONFIG_FIELDS if k in data}
-        if rec["versions"] and rec["versions"][-1].get("data") == payload:
+        if (
+            not force
+            and rec["versions"]
+            and rec["versions"][-1].get("data") == payload
+        ):
             return rec["versions"][-1]
         version = (rec["versions"][-1]["version"] + 1) if rec["versions"] else 1
         entry = {
@@ -273,7 +284,10 @@ async def save_version(agent_id: str, body: FreezeRequest | None = None, request
     user_id = _require_user(request)
     data = await _fetch_agent_data(agent_id, user_id)
     store = AgentVersionStore()
-    entry = store.add_version(agent_id, data, (body.label if body else "") or "")
+    # force=True：显式发版总是新增（配置未变也产生新版本号）
+    entry = store.add_version(
+        agent_id, data, (body.label if body else "") or "", force=True,
+    )
     rec = store.record(agent_id)
     rec["current_version"] = entry["version"]
     store.save(agent_id, rec)
@@ -288,6 +302,89 @@ async def save_version(agent_id: str, body: FreezeRequest | None = None, request
 async def list_versions(agent_id: str, request: Request = None) -> AgentVersionStatus:
     await _require_agent_visible(agent_id, request)
     return _status(AgentVersionStore(), agent_id)
+
+
+# ── 复制（增删改查之"增"：从现有智能体派生新个体） ──────────────────────
+
+class DuplicateRequest(BaseModel):
+    """复制智能体：可选源版本快照（默认当前配置）。"""
+
+    name: str = Field(default="", description="新智能体名（默认「原名 副本」）")
+    version: int | None = Field(
+        default=None,
+        description="源版本号；None = 当前配置。复制历史版本可从任意节点分叉",
+    )
+
+
+async def duplicate_agent_core(
+    agent_id: str,
+    user_id: str,
+    name: str,
+    version: int | None,
+    storage,
+) -> dict:
+    """复制核心：读源配置（或版本快照）→ 官方创建新 agent。
+
+    发布（agent_share.publish）与用户手动复制共用此函数——
+    「发布 = 从版本快照复制出对外产品」。
+
+    ``storage``：官方 storage（按 owner 键控）——所有权校验必须走
+    get_agent 直查，不能用 /agent/ 列表（列表会合并被共享的他人
+    智能体，那样就能复制别人的了）。
+    """
+    record = await storage.get_agent(user_id, agent_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="智能体不存在（或不在你的账号下）")
+    if getattr(record, "source", "") == "team":
+        raise HTTPException(
+            status_code=400,
+            detail="团队成员智能体随团队生命周期管理，不支持复制",
+        )
+    data = await _fetch_agent_data(agent_id, user_id)
+    if version is not None:
+        entry = AgentVersionStore().get_version(agent_id, version)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"版本 v{version} 不存在")
+        data = {**data, **(entry.get("data") or {})}
+    new_name = (name or f"{data.get('name', '智能体')} 副本").strip()[:100] or "未命名智能体"
+    payload = {**data, "name": new_name}
+    # 类型跟随源（leader/member）——AgentTypeMiddleware 从 POST body 剥离
+    from .agent_type import AgentTypeStore  # noqa: PLC0415
+    atype = AgentTypeStore().load().get(agent_id)
+    if atype:
+        payload["agent_type"] = atype
+    r = await _call_official("POST", "/agent/", user_id, json_body=payload)
+    if r.status_code not in (200, 201):
+        raise HTTPException(
+            status_code=502,
+            detail=f"官方创建失败: HTTP {r.status_code} {r.text[:200]}",
+        )
+    new_id = (r.json() or {}).get("agent_id") or (r.json() or {}).get("id") or ""
+    if not new_id:
+        raise HTTPException(status_code=502, detail="官方创建失败：响应缺 id")
+    return {
+        "agent_id": new_id,
+        "name": new_name,
+        "source_agent_id": agent_id,
+        "source_version": version,
+    }
+
+
+@agent_version_router.post(
+    "/agent/{agent_id}/duplicate",
+    summary="复制智能体（可选版本快照；从任意版本节点分叉出新个体）",
+)
+async def duplicate_agent(
+    agent_id: str,
+    body: DuplicateRequest | None = None,
+    request: Request = None,
+) -> dict:
+    user_id = _require_user(request)
+    req = body or DuplicateRequest()
+    return await duplicate_agent_core(
+        agent_id, user_id, req.name, req.version,
+        request.app.state.storage,
+    )
 
 
 @agent_version_router.get(

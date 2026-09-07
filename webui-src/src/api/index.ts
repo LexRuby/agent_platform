@@ -16,3 +16,9 @@ export { healthApi } from './health';
 export { authApi } from './auth';
 export { usageApi } from './usage';
 export { agentShareApi } from './agentShare';
+export { agentVersionApi } from './agentVersion';
+export type {
+    AgentVersionStatus,
+    VersionBrief,
+    VersionDetail,
+} from './agentVersion';

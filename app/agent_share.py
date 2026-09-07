@@ -58,6 +58,9 @@ _AGENT_KEY = "agentforge:share:agent:{agent_id}"
 _TO_KEY = "agentforge:share:to:{user}"
 _PUBLIC_KEY = "agentforge:share:public"
 _OWNER_KEY = "agentforge:share:owner:{owner}"
+# 发布物元数据（版本化发布，2026-09-08）
+_PUBMETA_KEY = "agentforge:share:pubmeta:{published_id}"
+_PUBS_KEY = "agentforge:share:pubs:{owner}"
 
 
 def _now_iso() -> str:
@@ -123,6 +126,41 @@ class ShareVisibilityRequest(BaseModel):
         default_factory=list,
         description="mode=users 时的授权账号列表（用户名）",
     )
+
+
+class PublishRequest(BaseModel):
+    """版本化发布：从源智能体的指定版本快照复制出对外产品并共享。
+
+    用户场景：高考志愿兵 v1.0 基础 → v2.0 文科优化 → v3.0 理科优化；
+    分别发布 v2.0（对外名"文科志愿专家"）与 v3.0（"理科志愿专家"），
+    两个产品独立存在，源智能体继续迭代互不影响。
+    """
+
+    agent_id: str = Field(description="源智能体 id")
+    version: int = Field(description="要发布的版本号（快照）")
+    display_name: str = Field(description="对外名称（重命名）")
+    mode: str = Field(description="可见范围：users | public（发布必共享）")
+    users: list[str] = Field(
+        default_factory=list,
+        description="mode=users 时的授权账号列表（用户名）",
+    )
+
+
+class PublicationInfo(BaseModel):
+    """发布物（对外产品）信息。"""
+
+    agent_id: str = Field(description="发布物智能体 id（独立个体）")
+    display_name: str
+    source_agent_id: str
+    source_agent_name: str = ""
+    source_version: int
+    mode: str = "users"
+    users: list[str] = []
+    published_at: str = ""
+
+
+class MyPublicationsResponse(BaseModel):
+    publications: list[PublicationInfo]
 
 
 class ShareInfo(BaseModel):
@@ -292,12 +330,128 @@ async def unpublish_share(agent_id: str, request: Request) -> dict:
     user_id = _require_user(request)
     client = request.app.state.storage._client
     rec = await _load_share(client, agent_id)
-    if rec is None:
-        return {"ok": True}  # 幂等：本就未发布
-    if rec.get("owner") != user_id:
+    if rec is not None and rec.get("owner") != user_id:
         raise HTTPException(status_code=403, detail="只有发布者可以取消发布")
     await _write_share(
         client, user_id, agent_id,
-        rec.get("agent_name") or "", "private", [],
+        (rec or {}).get("agent_name") or "", "private", [],
     )
+    # 发布物：顺带清溯源元数据（下架后 pubs 列表不再出现）
+    await client.delete(_PUBMETA_KEY.format(published_id=agent_id))
+    await client.srem(_PUBS_KEY.format(owner=user_id), agent_id)
     return {"ok": True}
+
+
+# ── 版本化发布（v2，2026-09-08）：发布 = 版本快照复制 + 共享 ─────────────
+
+@agent_share_router.post(
+    "/agent-share/publish",
+    response_model=PublicationInfo,
+    summary="版本化发布：从指定版本快照复制出对外产品并共享",
+)
+async def publish_version(body: PublishRequest, request: Request) -> PublicationInfo:
+    from .agent_version import AgentVersionStore, duplicate_agent_core
+
+    user_id = _require_user(request)
+    mode = body.mode
+    if mode not in ("users", "public"):
+        raise HTTPException(
+            status_code=422, detail="发布模式必须是 users/public（发布必须共享）",
+        )
+    users = sorted({u.strip() for u in body.users if u.strip()})
+    if mode == "users" and not users:
+        raise HTTPException(status_code=422, detail="指定账号模式需要至少一个账号")
+    for u in users:
+        if not _valid_username(u):
+            raise HTTPException(
+                status_code=422, detail=f"账号名不合法: {u}（2-32 位字母数字_-）",
+            )
+    display_name = body.display_name.strip()[:100]
+    if not display_name:
+        raise HTTPException(status_code=422, detail="对外名称不能为空")
+
+    # 版本必须存在（发布的是快照，不是实时配置）
+    store = AgentVersionStore()
+    if store.get_version(body.agent_id, body.version) is None:
+        raise HTTPException(
+            status_code=404, detail=f"版本 v{body.version} 不存在（先在版本中心发版）",
+        )
+
+    # 核心：从版本快照复制出对外产品（独立个体）
+    dup = await duplicate_agent_core(
+        body.agent_id, user_id, display_name, body.version,
+        request.app.state.storage,
+    )
+    published_id = dup["agent_id"]
+
+    client = request.app.state.storage._client
+    # 可见性（复用 v1 共享机制）
+    await _write_share(client, user_id, published_id, display_name, mode, users)
+    # 发布物元数据（溯源：源 agent + 源版本）
+    pubmeta = {
+        "source_agent_id": body.agent_id,
+        "source_version": body.version,
+        "display_name": display_name,
+        "published_at": _now_iso(),
+    }
+    await client.set(
+        _PUBMETA_KEY.format(published_id=published_id),
+        json.dumps(pubmeta, ensure_ascii=False),
+    )
+    await client.sadd(_PUBS_KEY.format(owner=user_id), published_id)
+    return PublicationInfo(
+        agent_id=published_id,
+        display_name=display_name,
+        source_agent_id=body.agent_id,
+        source_agent_name="",
+        source_version=body.version,
+        mode=mode,
+        users=users if mode == "users" else [],
+        published_at=pubmeta["published_at"],
+    )
+
+
+@agent_share_router.get(
+    "/agent-share/pubs",
+    response_model=MyPublicationsResponse,
+    summary="我的发布物列表（对外产品 + 溯源信息）",
+)
+async def list_my_publications(request: Request) -> MyPublicationsResponse:
+    user_id = _require_user(request)
+    client = request.app.state.storage._client
+    # 源智能体名映射（溯源展示）
+    name_map: dict[str, str] = {}
+    try:
+        from agent_service_app import _official_app  # noqa: PLC0415
+
+        agents = await _official_app.state.storage.list_agents(user_id)
+        name_map = {a.id: a.data.name for a in agents}
+    except Exception:  # noqa: BLE001 — 列表失败不阻断发布物查询
+        name_map = {}
+
+    pubs: list[PublicationInfo] = []
+    for pid in await client.smembers(_PUBS_KEY.format(owner=user_id)):
+        raw = await client.get(_PUBMETA_KEY.format(published_id=pid))
+        if not raw:
+            continue  # 残留索引
+        try:
+            meta = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        share = await _load_share(client, pid)
+        pubs.append(
+            PublicationInfo(
+                agent_id=pid,
+                display_name=meta.get("display_name") or pid[:8],
+                source_agent_id=meta.get("source_agent_id") or "",
+                source_agent_name=name_map.get(
+                    meta.get("source_agent_id") or "", "",
+                ),
+                source_version=meta.get("source_version") or 0,
+                mode=(share or {}).get("mode") or "users",
+                users=(share or {}).get("users") or [],
+                published_at=meta.get("published_at") or "",
+            ),
+        )
+    pubs.sort(key=lambda p: p.published_at, reverse=True)
+    return MyPublicationsResponse(publications=pubs)
