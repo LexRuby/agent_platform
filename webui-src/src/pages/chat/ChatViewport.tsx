@@ -1101,6 +1101,7 @@ export function ChatViewport({
 									msgs={msgs}
 									leaderName={leaderName}
 									members={flowMembers}
+									teamActive={!!view?.team}
 									onOpenMember={handleOpenFlowMember}
 									onForkNode={handleForkNode}
 									onRerunNode={handleRerunNode}
@@ -1234,6 +1235,7 @@ export function ChatViewport({
 											msgs={msgs}
 											leaderName={leaderName}
 											members={flowMembers}
+											teamActive={!!view?.team}
 											onOpenMember={handleOpenFlowMember}
 											onForkNode={handleForkNode}
 											onRerunNode={handleRerunNode}

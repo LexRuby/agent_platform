@@ -18,7 +18,7 @@
  * - Tab：团队动态（时间轴）/ 工作流（阶段）/ 成员（卡片+互动）/ 产物（汇报全文）
  */
 import {
-        Bot,
+        AlertTriangle,
         CheckCircle2,
         ChevronDown,
         ChevronUp,
@@ -30,7 +30,6 @@ import {
         MessageSquare,
         Play,
         RotateCw,
-        Send,
         Users,
         Wrench,
 } from 'lucide-react';
@@ -89,6 +88,10 @@ interface Props {
         leaderName: string;
         /** 团队在册成员（view.team.members），可为空数组。 */
         members?: FlowMember[];
+        /** 是否有在册团队（view.team 存在）。false = 已解散/未组队：
+         *  成员列表是历史/预置回退名单（2026-09-09 用户反馈"团队没了
+         *  右侧还显示团队"——此前静默回退无任何标注）。 */
+        teamActive?: boolean;
         /** 进入成员会话单独迭代（成员 Tab 的次要入口）。 */
         onOpenMember?: (member: FlowMember) => void;
         /** 节点级 fork（2026-09-08）：从该节点新建分支重跑后续链路。 */
@@ -379,6 +382,7 @@ export function TeamFlowPanel({
         msgs,
         leaderName,
         members = [],
+        teamActive,
         onOpenMember,
         onForkNode,
         onRerunNode,
@@ -439,12 +443,32 @@ export function TeamFlowPanel({
                 };
         }, [events]);
 
-        const running = useMemo(
+        // 运行中判定：在册团队（teamActive）优先——无在册团队时即使
+        // 消息流里有组队事件（已解散/回看历史），也不显示"运行中"
+        // （2026-09-09 用户反馈：团队没了右侧还显示团队）
+        const hasTeamEvents = useMemo(
                 () =>
                         events.some(
-                                (e) => e.kind === 'team_created' || e.kind === 'member_joined',
-                        ) && !events.some((e) => e.kind === 'team_deleted'),
+                                (e) =>
+                                        e.kind === 'team_created' ||
+                                        e.kind === 'member_joined' ||
+                                        e.kind === 'team_deleted',
+                        ),
                 [events],
+        );
+        const teamDeleted = useMemo(
+                () => events.some((e) => e.kind === 'team_deleted'),
+                [events],
+        );
+        const running = useMemo(
+                () =>
+                        (teamActive ??
+                                events.some(
+                                        (e) =>
+                                                e.kind === 'team_created' ||
+                                                e.kind === 'member_joined',
+                                )) && !teamDeleted,
+                [teamActive, events, teamDeleted],
         );
 
         // 图上成员：在册成员优先，再补充事件中出现但已不在册的
@@ -585,12 +609,16 @@ export function TeamFlowPanel({
 							>
 								{running ? (
 									<span className="size-1.5 animate-pulse rounded-full bg-primary-foreground" />
+								) : teamDeleted ? (
+									<AlertTriangle className="size-2.5" />
 								) : (
 									<CheckCircle2 className="size-2.5" />
 								)}
 								{running
 									? t('panel.teamFlow.statusRunning')
-									: t('panel.teamFlow.statusEnded')}
+									: teamDeleted
+										? t('panel.teamFlow.statusDissolved')
+										: t('panel.teamFlow.statusEnded')}
 							</Badge>
 						</button>
 						{/* 团队流程控制（2026-09-08 v3）：暂停 = leader +
@@ -893,7 +921,7 @@ export function TeamFlowPanel({
 									)}
 
 									{tab === 'workflow' && (
-										<WorkflowView
+										<PipelineView
 											events={events}
 											leaderName={leaderName}
 											onSelectReport={(e) => {
@@ -914,6 +942,24 @@ export function TeamFlowPanel({
 
 									{tab === 'members' && (
 										<div className="space-y-2">
+												{/* 无在册团队时的明确标注（2026-09-09）：
+												    成员列表是历史/预置回退名单，不是在册团队 */}
+												{teamActive === false && hasTeamEvents && (
+													<div className="flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700">
+														<AlertTriangle className="mt-0.5 size-3 shrink-0" />
+														<span>
+															{t('panel.teamFlow.teamDissolvedBanner')}
+														</span>
+													</div>
+												)}
+												{teamActive === false && !hasTeamEvents && (
+													<div className="flex items-start gap-1.5 rounded-md border border-muted bg-muted/50 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+														<Users className="mt-0.5 size-3 shrink-0" />
+														<span>
+															{t('panel.teamFlow.teamNotFormedBanner')}
+														</span>
+													</div>
+												)}
 												{chartMembers.map((m, i) => {
 														const st = memberStatus(m.name);
 														const color = colorOf(i);
@@ -1256,10 +1302,15 @@ function TimelineRow({ e, leaderName }: { e: FlowEvent; leaderName: string }) {
 }
 
 /**
- * 工作流 Tab：按阶段结构化展示（组建 → 分派 → 执行 → 汇报 → 汇总）。
- * 汇报节点可点击（2026-09-08）：弹出该节点产出 + 分支/覆盖重跑入口。
+ * 工作流 Tab：从上至下的执行流水线（2026-09-09 用户需求重做）。
+ *
+ * 用户任务 → 组队 → 分派 → 汇报/中断 → … → 最终交付，严格按时序
+ * 竖排；每个分派节点带执行状态（进行中/已完成/被中断——由其后同
+ * 成员的下一个汇报/中断事件推导）。任务节点（用户任务/分派/汇报/
+ * 被中断）均可点击：查看详情 + 从该节点新建分支重跑（分支对比
+ * 培育的核心入口，任意节点皆可重开）。
  */
-function WorkflowView({
+function PipelineView({
         events,
         leaderName,
         onSelectReport,
@@ -1269,162 +1320,200 @@ function WorkflowView({
         onSelectReport?: (e: FlowEvent) => void;
 }) {
         const { t } = useTranslation();
-        const joined = events.filter((e) => e.kind === 'member_joined');
-        const dispatches = events.filter((e) => e.kind === 'dispatch');
-        const reports = events.filter((e) => e.kind === 'member_report');
-        const interrupted = events.filter((e) => e.kind === 'member_interrupted');
-        const final = events.find((e) => e.kind === 'final');
-        const created = events.find((e) => e.kind === 'team_created');
-        const deleted = events.find((e) => e.kind === 'team_deleted');
+        const dn = (raw: string) => displayName(raw, t);
 
-        const phases: {
-                icon: React.ComponentType<{ className?: string }>;
-                title: string;
-                done: boolean;
-                items: { name: string; detail: string }[];
-                /** 汇报阶段专用：可点击节点的事件引用（汇报 + 被中断，
-                 *  与 items 索引一一对应——2026-09-08 用户反馈"被中断
-                 *  的也应能点击重跑"）。 */
-                clickableEvents?: FlowEvent[];
-        }[] = [
-                {
-                        icon: Play,
-                        title: t('panel.teamFlow.phaseCreate'),
-                        done: !!created,
-                        items: created
-                                ? [
-                                                {
-                                                        name: created.summary || '-',
-                                                        detail: created.content?.slice(0, 100) ?? '',
-                                                },
-                                        ]
-                                : [],
-                },
-                {
-                        icon: Users,
-                        title: t('panel.teamFlow.phaseDispatch'),
-                        done: joined.length > 0 || dispatches.length > 0,
-                        items: [
-                                ...joined.map((e) => ({
-                                        name: displayName(e.to, t),
-                                        detail: e.summary,
-                                })),
-                                ...dispatches.map((e) => ({
-                                        name: `${leaderName} → ${displayName(e.to, t)}`,
-                                        detail: e.summary,
-                                })),
-                        ],
-                },
-                {
-                        icon: Bot,
-                        title: t('panel.teamFlow.phaseExecute'),
-                        done: true,
-                        items: chartStatusItems(
-                                [...new Set(joined.map((e) => displayName(e.to, t)))],
-                                reports.map((e) => displayName(e.from, t)),
-                                interrupted.map((e) => displayName(e.from, t)),
-                                t,
-                        ),
-                },
-                {
-                        icon: Send,
-                        title: t('panel.teamFlow.phaseReport'),
-                        done: reports.length > 0,
-                        // 汇报 + 被中断节点都可点击（节点级重跑入口）——
-                        // 渲染时按索引对应 clickableEvents
-                        items: [
-                                ...reports.map((e) => ({
-                                        name: displayName(e.from, t),
-                                        detail: e.summary,
-                                })),
-                                ...interrupted.map((e) => ({
-                                        name: displayName(e.from, t),
-                                        detail: t('panel.teamFlow.stInterrupted'),
-                                })),
-                        ],
-                        clickableEvents: [...reports, ...interrupted],
-                },
-                {
-                        icon: CircleStop,
-                        title: t('panel.teamFlow.phaseSummary'),
-                        done: !!deleted,
-                        items: final
-                                ? [{ name: leaderName, detail: final.summary }]
-                                : deleted
-                                        ? [{ name: leaderName, detail: t('panel.teamFlow.teamDeleted') }]
-                                        : [],
-                },
-        ];
+        /** 分派节点的执行状态：向后扫描同成员的下一个汇报/中断
+         *  （在下一次同成员分派之前）——都无即"进行中"。 */
+        const statusOf = (
+                ev: FlowEvent,
+                idx: number,
+        ): 'working' | 'done' | 'interrupted' => {
+                const member = dn(ev.to);
+                for (let j = idx + 1; j < events.length; j++) {
+                        const e = events[j];
+                        if (e.kind === 'dispatch' && dn(e.to) === member) break;
+                        if (e.kind === 'member_report' && dn(e.from) === member)
+                                return 'done';
+                        if (e.kind === 'member_interrupted' && dn(e.from) === member)
+                                return 'interrupted';
+                }
+                return 'working';
+        };
+
+        type NodeStatus =
+                | 'working'
+                | 'done'
+                | 'interrupted'
+                | 'final'
+                | 'deleted'
+                | 'minor';
+        const nodes: { ev: FlowEvent; label: string; status: NodeStatus }[] = [];
+        events.forEach((e, i) => {
+                switch (e.kind) {
+                        case 'user_task':
+                                nodes.push({
+                                        ev: e,
+                                        label: t('panel.teamFlow.pipeUserTask'),
+                                        status: 'done',
+                                });
+                                break;
+                        case 'team_created':
+                                nodes.push({
+                                        ev: e,
+                                        label: t('panel.teamFlow.pipeTeamCreated'),
+                                        status: 'minor',
+                                });
+                                break;
+                        case 'member_joined':
+                                nodes.push({
+                                        ev: e,
+                                        label: t('panel.teamFlow.pipeMemberJoined', {
+                                                name: dn(e.to),
+                                        }),
+                                        status: 'minor',
+                                });
+                                break;
+                        case 'dispatch':
+                                nodes.push({
+                                        ev: e,
+                                        label: t('panel.teamFlow.pipeDispatch', {
+                                                name: dn(e.to),
+                                        }),
+                                        status: statusOf(e, i),
+                                });
+                                break;
+                        case 'member_report':
+                                nodes.push({
+                                        ev: e,
+                                        label: t('panel.teamFlow.pipeReport', {
+                                                name: dn(e.from),
+                                        }),
+                                        status: 'done',
+                                });
+                                break;
+                        case 'member_interrupted':
+                                nodes.push({
+                                        ev: e,
+                                        label: t('panel.teamFlow.pipeInterrupted', {
+                                                name: dn(e.from),
+                                        }),
+                                        status: 'interrupted',
+                                });
+                                break;
+                        case 'final':
+                                nodes.push({
+                                        ev: e,
+                                        label: t('panel.teamFlow.pipeFinal', {
+                                                name: leaderName,
+                                        }),
+                                        status: 'final',
+                                });
+                                break;
+                        case 'team_deleted':
+                                nodes.push({
+                                        ev: e,
+                                        label: t('panel.teamFlow.pipeTeamDeleted'),
+                                        status: 'deleted',
+                                });
+                                break;
+                }
+        });
+
+        if (nodes.length === 0) {
+                return (
+                        <div className="py-2 text-center text-xs text-muted-foreground">
+                                {t('panel.teamFlow.noEvents')}
+                        </div>
+                );
+        }
+
+        // 状态 → 圆点样式（进行中脉冲动画）
+        const DOT_STYLE: Record<NodeStatus, string> = {
+                working: 'bg-blue-500 animate-pulse',
+                done: 'bg-emerald-500',
+                interrupted: 'bg-amber-500',
+                final: 'bg-primary',
+                deleted: 'bg-muted-foreground/50',
+                minor: 'bg-muted-foreground/40',
+        };
+        const ST_LABEL: Record<NodeStatus, string> = {
+                working: t('panel.teamFlow.stWorking'),
+                done: t('panel.teamFlow.stDone'),
+                interrupted: t('panel.teamFlow.stInterrupted'),
+                final: t('panel.teamFlow.stFinal'),
+                deleted: '',
+                minor: '',
+        };
+
+        // 可点击节点：任务流节点（用户任务/分派/汇报/被中断）——
+        // 任意节点皆可重开分支
+        const clickable = (kind: FlowEvent['kind']) =>
+                kind === 'dispatch' ||
+                kind === 'member_report' ||
+                kind === 'member_interrupted' ||
+                kind === 'user_task';
 
         return (
-                <div className="space-y-1">
-                        {phases.map((p, i) => (
-                                <div key={i} className="flex gap-2">
-                                        <div className="flex flex-col items-center pt-0.5">
-                                                <p.icon
+                <div>
+                        {nodes.map((n, i) => {
+                                const canClick = clickable(n.ev.kind) && !!onSelectReport;
+                                const body = (
+                                        <>
+                                                <span
                                                         className={
-                                                                'size-3.5 ' +
-                                                                (p.done ? 'text-primary' : 'text-muted-foreground/40')
+                                                                'inline-block size-2 shrink-0 rounded-full ' +
+                                                                DOT_STYLE[n.status]
                                                         }
                                                 />
-                                                {i < phases.length - 1 && (
-                                                        <span className="my-0.5 w-px flex-1 bg-border" />
+                                                <span className="shrink-0 text-[10px] text-muted-foreground">
+                                                        {fmtTime(n.ev.time)}
+                                                </span>
+                                                <span className="shrink-0 text-xs font-medium">
+                                                        {n.label}
+                                                </span>
+                                                {ST_LABEL[n.status] && (
+                                                        <span
+                                                                className={
+                                                                        'shrink-0 rounded px-1 text-[10px] ' +
+                                                                        (n.status === 'working'
+                                                                                ? 'bg-blue-100 text-blue-700'
+                                                                                : n.status === 'done'
+                                                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                                                        : n.status === 'interrupted'
+                                                                                                ? 'bg-amber-100 text-amber-700'
+                                                                                                : 'bg-muted text-muted-foreground')
+                                                                }
+                                                        >
+                                                                {ST_LABEL[n.status]}
+                                                        </span>
+                                                )}
+                                                <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+                                                        {n.ev.summary}
+                                                </span>
+                                                {canClick && (
+                                                        <span className="shrink-0 text-primary">↻</span>
+                                                )}
+                                        </>
+                                );
+                                return (
+                                        <div key={i} className="flex items-center gap-1.5 py-0.5">
+                                                {canClick ? (
+                                                        <button
+                                                                type="button"
+                                                                className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:bg-muted/50"
+                                                                onClick={() => onSelectReport?.(n.ev)}
+                                                                title={t('panel.teamFlow.nodeRerunHint')}
+                                                        >
+                                                                {body}
+                                                        </button>
+                                                ) : (
+                                                        <div className="flex min-w-0 flex-1 items-center gap-1.5 px-1 py-0.5">
+                                                                {body}
+                                                        </div>
                                                 )}
                                         </div>
-                                        <div className="min-w-0 flex-1 pb-2">
-                                                <div
-                                                        className={
-                                                                'text-xs font-medium ' +
-                                                                (p.done ? '' : 'text-muted-foreground/50')
-                                                        }
-                                                >
-                                                       	{p.title}
-                                                        </div>
-	{p.items.map((it, j) => {
-															const nodeEv = p.clickableEvents?.[j];
-															if (nodeEv && onSelectReport) {
-																// 汇报/中断节点：可点击查看产出 + 重跑（分支/覆盖）
-																return (
-																	<button
-																		key={j}
-																		type="button"
-																		className="block w-full truncate rounded text-left text-[11px] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-																		onClick={() => onSelectReport(nodeEv)}
-																		title={t('panel.teamFlow.nodeRerunHint')}
-																	>
-																		· <b className="font-medium text-foreground/80">{it.name}</b>
-																		{it.detail ? ` — ${it.detail}` : ''}
-																		<span className="ml-1 text-primary">↻</span>
-																	</button>
-																);
-															}
-															return (
-																<div key={j} className="truncate text-[11px] text-muted-foreground">
-																	· <b className="font-medium text-foreground/80">{it.name}</b>
-																	{it.detail ? ` — ${it.detail}` : ''}
-																</div>
-															);
-														})}
-										</div>
-								</div>
-						))}
-				</div>
-		);
-}
-
-/** 执行阶段的成员状态条目。 */
-function chartStatusItems(
-        joined: string[],
-        reported: string[],
-        interrupted: string[],
-        t: (k: string, o?: Record<string, unknown>) => string,
-): { name: string; detail: string }[] {
-        return joined.map((name) => ({
-                name,
-                detail: reported.includes(name)
-                        ? t('panel.teamFlow.stReported')
-                        : interrupted.includes(name)
-                                ? t('panel.teamFlow.stInterrupted')
-                                : t('panel.teamFlow.stWorking'),
-        }));
+                                );
+                        })}
+                </div>
+        );
 }

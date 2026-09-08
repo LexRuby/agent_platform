@@ -905,10 +905,11 @@ class TestWorkflowNodeRerun:
         # 事件带宿主消息 id（重跑锚点）
         assert "msgId?: string;" in panel
         assert "const push = (e: FlowEvent) => events.push({ ...e, msgId });" in panel
-        # 汇报 + 被中断节点都可点击（2026-09-08 用户反馈补充）
+        # 任务节点（用户任务/分派/汇报/被中断）都可点击——任意节点
+        # 可重开分支（2026-09-09 流水线重做；被中断可点为 2026-09-08 补充）
         assert "onSelectReport" in panel
         assert "setRerunNode" in panel
-        assert "clickableEvents: [...reports, ...interrupted]" in panel
+        assert "const clickable = (kind: FlowEvent['kind']) =>" in panel
         # 中断节点弹窗说明（无产出时的引导文案）
         assert "member_interrupted" in panel
         assert "interruptedNodeDesc" in panel
@@ -1105,6 +1106,78 @@ class TestWorkflowNodeRerun:
         assert "input.prompt" in panel
         # AgentCreate 的 prompt 是任务分派（非成员职责描述）
         assert "首次任务分派" in panel
+
+    def test_workflow_pipeline_topdown(self):
+        """工作流 Tab 为从上至下执行流水线（2026-09-09 用户需求重做）。
+
+        用户明确要求："我要的工作流就是从上至下的，所以我可以
+        在任意节点重新开始工作流建立分支。"此前是阶段分组图
+        （所有分派/汇报各堆一堆），看不出时序依赖。
+        """
+        panel = (
+            _SRC_DIR / "components" / "panel" / "TeamFlowPanel.tsx"
+        ).read_text(encoding="utf-8")
+        # PipelineView 替换阶段分组图（WorkflowView 已删）
+        assert "function PipelineView" in panel
+        assert "function WorkflowView" not in panel
+        assert "chartStatusItems" not in panel
+        # 调用处使用 PipelineView
+        assert "<PipelineView" in panel
+        # 分派节点执行状态推导：向后扫描同成员汇报/中断
+        assert "statusOf" in panel
+        # 任意任务节点可点击重开（用户任务/分派/汇报/被中断）
+        assert "kind === 'user_task'" in panel
+
+    def test_team_active_dissolved_banner(self):
+        """无在册团队时的明确标注（2026-09-09 用户反馈：
+        "团队没了，右侧团队里面我还能看到团队"）。
+
+        此前 flowMembers 无在册团队时静默回退到预置名单，Badge
+        仍显示"运行中"——用户误以为团队还在。
+        """
+        panel = (
+            _SRC_DIR / "components" / "panel" / "TeamFlowPanel.tsx"
+        ).read_text(encoding="utf-8")
+        # teamActive prop：在册团队判定
+        assert "teamActive?: boolean" in panel
+        # 运行中判定以 teamActive 优先（无在册 → 不显示运行中）
+        assert "teamActive ??" in panel
+        # 成员 Tab：已解散/未组队横幅
+        assert "teamDissolvedBanner" in panel
+        assert "teamNotFormedBanner" in panel
+        # 头部 Badge：已解散状态（AlertTriangle）
+        assert "statusDissolved" in panel
+
+        # ChatViewport 传参（两处布局）
+        viewport = (
+            _SRC_DIR / "pages" / "chat" / "ChatViewport.tsx"
+        ).read_text(encoding="utf-8")
+        assert viewport.count("teamActive={!!view?.team}") == 2
+
+        # i18n 文案（zh + en）
+        zh = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "zh.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        tf = zh["panel"]["teamFlow"]
+        assert tf["statusDissolved"] == "已解散"
+        assert "已解散" in tf["teamDissolvedBanner"]
+        assert "历史成员名单" in tf["teamDissolvedBanner"]
+        assert "预置" in tf["teamNotFormedBanner"]
+        # 流水线节点文案
+        assert tf["pipeUserTask"] == "用户任务"
+        assert "{{name}}" in tf["pipeDispatch"]
+        assert tf["stDone"] == "已完成"
+        en = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "en.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        ef = en["panel"]["teamFlow"]
+        assert ef["statusDissolved"] == "Dissolved"
+        assert "dissolved" in ef["teamDissolvedBanner"]
+        assert ef["pipeUserTask"] == "User task"
 
     def test_api_team_fork_defined(self):
         api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
