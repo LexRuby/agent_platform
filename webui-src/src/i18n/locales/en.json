@@ -175,6 +175,8 @@
 		"switchToFocused": "Switch to focused layout (full-width chat, team & resources on the right)",
 		"classicLayout": "Classic",
 		"focusedLayout": "Focused",
+		"backToLeader": "Back to leader",
+		"backToLeaderTooltip": "Return to the leader's team session",
 		"restartTooltip": "Restart flow: reset context, keep history",
 		"restartTitle": "Restart this flow?",
 		"restartDescription": "The model's context will be cleared and reasoning starts fresh; message history stays readable. For team sessions, all member runs are stopped first.",

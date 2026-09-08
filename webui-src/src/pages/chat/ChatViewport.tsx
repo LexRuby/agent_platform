@@ -1,5 +1,6 @@
 import {
 	Archive,
+	ArrowLeft,
 	BookText,
 	ChevronDown,
 	Database,
@@ -73,6 +74,13 @@ interface ChatViewportProps {
 	 * workspace drive every control rendered here.
 	 */
 	sessionId: string | null;
+	/**
+	 * Leader navigation target — non-null while the viewport is drilled
+	 * into a team member via the URL's ``:memberId`` slot. Renders a
+	 * prominent "back to leader" button so the user can always return
+	 * to the leader's session (2026-09-08 用户反馈：进入成员迭代后无法返回).
+	 */
+	leaderNav?: { agentId: string; sessionId: string } | null;
 	/**
 	 * Optional hook invoked when a team membership change arrives on
 	 * this viewport's SSE stream. The outer page owns the session list
@@ -184,7 +192,12 @@ function closePanelInLayout(layout: PanelKey[][], key: PanelKey): PanelKey[][] {
  *   session is selected yet.
  * @returns The right-side main JSX of the chat page.
  */
-export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewportProps) {
+export function ChatViewport({
+	agentId,
+	sessionId,
+	leaderNav,
+	onTeamUpdated,
+}: ChatViewportProps) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
@@ -848,6 +861,22 @@ export function ChatViewport({ agentId, sessionId, onTeamUpdated }: ChatViewport
 							<div className="flex flex-row gap-x-2 justify-between">
 								<div className="flex flex-row items-center gap-x-1">
 									<SidebarTrigger className="md:hidden" />
+									{/* 成员迭代模式的返回入口（2026-09-08 用户反馈：
+									    进入会话迭代后没有返回主理人的路径） */}
+									{leaderNav && (
+										<Button
+											variant="outline"
+											size="sm"
+											className="gap-1 px-2 text-xs"
+											title={t('chat.backToLeaderTooltip')}
+											onClick={() =>
+												navigate(`/chat/${leaderNav.agentId}/${leaderNav.sessionId}`)
+											}
+										>
+											<ArrowLeft className="size-3.5" />
+											<span>{t('chat.backToLeader')}</span>
+										</Button>
+									)}
 								</div>
 								<div className="flex flex-row gap-x-1">
 									<LlmSelect

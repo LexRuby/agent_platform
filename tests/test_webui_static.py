@@ -874,6 +874,42 @@ class TestTeamFlowPanelAutoScroll:
         assert "scrollHeight - el.scrollTop - el.clientHeight" in src
 
 
+class TestMemberIterationBackToLeader:
+    """成员迭代返回入口（2026-09-08 用户反馈：进入会话迭代后无法返回）。
+
+    URL 三段式 /chat/:agentId/:sessionId/:memberId 聚焦成员会话时，
+    ChatViewport 必须渲染"返回主理人"按钮并导航回两段式主理人会话。
+    """
+
+    def test_back_button_renders_and_navigates(self):
+        viewport = (
+            _SRC_DIR / "pages" / "chat" / "ChatViewport.tsx"
+        ).read_text(encoding="utf-8")
+        index = (_SRC_DIR / "pages" / "chat" / "index.tsx").read_text(
+            encoding="utf-8",
+        )
+        # Props 与解构：leaderNav 由外层传入
+        assert "leaderNav?: { agentId: string; sessionId: string } | null;" in viewport
+        assert "leaderNav," in viewport
+        # 仅成员聚焦（leaderNav 非空）时渲染按钮，点击回到两段式 URL
+        assert "{leaderNav && (" in viewport, "返回按钮必须只在成员聚焦时出现"
+        assert (
+            "navigate(`/chat/${leaderNav.agentId}/${leaderNav.sessionId}`)" in viewport
+        ), "点击必须导航回主理人会话（两段式 URL）"
+        # 外层计算：三段 URL 齐全才生成 leaderNav
+        assert "const leaderNav =" in index
+        assert "leaderNav={leaderNav}" in index, "index.tsx 必须把 leaderNav 传给 ChatViewport"
+        # i18n
+        zh = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "zh.json").read_text(encoding="utf-8"),
+        )
+        assert zh["chat"]["backToLeader"] == "返回主理人"
+        en = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "en.json").read_text(encoding="utf-8"),
+        )
+        assert en["chat"]["backToLeader"] == "Back to leader"
+
+
 class TestArtifactViewerDialog:
     """产物大窗阅读（2026-09-08 用户反馈：Tab 空间太小不好看）。"""
 

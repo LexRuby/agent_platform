@@ -148,6 +148,13 @@ const ChatPageInner = () => {
 				? (urlSessionId ?? null)
 				: null;
 
+	// 成员聚焦时给 ChatViewport 一个"返回主理人"的导航目标
+	// （2026-09-08 用户反馈：进入会话迭代后找不到返回入口）。
+	const leaderNav =
+		focusedMember && urlAgentId && urlSessionId
+			? { agentId: urlAgentId, sessionId: urlSessionId }
+			: null;
+
 	// Redirect: URL is missing an agent → pick the first one and rewrite
 	// the URL in-place (replace so we don't pollute history).
 	useEffect(() => {
@@ -530,6 +537,7 @@ const ChatPageInner = () => {
 				<ChatViewport
 					agentId={effectiveAgentId}
 					sessionId={effectiveSessionId}
+					leaderNav={leaderNav}
 					onTeamUpdated={refetchSessions}
 				/>
 			</div>

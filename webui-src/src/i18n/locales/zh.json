@@ -175,6 +175,8 @@
 		"switchToFocused": "切换为专注布局（完整对话，右侧为团队与资源栏）",
 		"classicLayout": "经典布局",
 		"focusedLayout": "专注布局",
+		"backToLeader": "返回主理人",
+		"backToLeaderTooltip": "返回主理人（大A）的团队会话",
 		"restartTooltip": "流程重启：上下文归零，消息历史保留",
 		"restartTitle": "重启流程？",
 		"restartDescription": "模型的上下文将清零，从零开始重新推理；消息历史保留可回看。团队会话将同时停止全部成员的运行。",
