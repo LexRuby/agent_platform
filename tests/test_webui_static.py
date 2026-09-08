@@ -938,6 +938,41 @@ class TestWorkflowNodeRerun:
         assert viewport.count("onForkNode={handleForkNode}") == 2
         assert viewport.count("onRerunNode={handleRerunNode}") == 2
 
+    def test_fork_navigation_not_redirected_away(self):
+        """fork 跳转不被 chat 页重定向 effect 改写（2026-09-08 修复）。
+
+        根因：handleForkConfirm navigate 到新分支会话，但会话列表
+        尚未 refetch（不含新分支），index.tsx 的"sessionId 不在列表
+        → 跳到列表第一个"effect 立即把 URL 改写回旧会话——用户看到
+        "点了创建分支界面没反应"。修复：freshlyForked 标记放行。
+        """
+        api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
+        # teamFork 成功后登记新分支 id
+        assert "const freshlyForked = new Set<string>();" in api
+        assert "freshlyForked.add(res.session_id);" in api
+        # 查询/清除 API
+        assert "export function isFreshlyForked(" in api
+        assert "export function clearFreshlyForked(" in api
+
+        index = (
+            _SRC_DIR / "pages" / "chat" / "index.tsx"
+        ).read_text(encoding="utf-8")
+        # 重定向 effect 放行刚 fork 的分支；列表确认包含后清标记
+        assert "import { clearFreshlyForked, isFreshlyForked }" in index
+        assert "if (urlSessionId && isFreshlyForked(urlSessionId)) return;" in index
+        assert "clearFreshlyForked(urlSessionId)" in index
+
+        viewport = (
+            _SRC_DIR / "pages" / "chat" / "ChatViewport.tsx"
+        ).read_text(encoding="utf-8")
+        # navigate 后立即刷新会话列表（新分支尽快出现在侧栏）
+        assert "navigate(`/chat/${agentId}/${res.session_id}`);" in viewport
+        # onTeamUpdated 触发列表刷新，且依赖数组包含它
+        idx = viewport.index("navigate(`/chat/${agentId}/${res.session_id}`);")
+        tail = viewport[idx:idx + 400]
+        assert "onTeamUpdated?.();" in tail
+        assert "[forkTarget, agentId, sessionId, navigate, t, onTeamUpdated]" in viewport
+
     def test_api_team_fork_defined(self):
         api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
         assert "TeamForkResponse" in api

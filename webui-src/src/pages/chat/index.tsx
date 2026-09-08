@@ -18,6 +18,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 
 import { ChatViewport } from './ChatViewport';
 import type { SessionRecord, SessionSource } from '@/api';
+import { clearFreshlyForked, isFreshlyForked } from '@/api/session';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
 import { AgentVersionDialog } from '@/components/dialog/AgentVersionDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
@@ -165,10 +166,18 @@ const ChatPageInner = () => {
 
 	// Redirect: URL has an agent but no session, or its sessionId no
 	// longer exists for this agent → pick the first available session.
+	// 例外：刚 fork 的工作流分支（本 tab 创建、列表尚未 refetch 到）
+	// 放行等待刷新落地；列表确认包含后清标记恢复正常语义
+	// （2026-09-08 修复：fork 跳转被立刻改写回列表第一个会话，
+	// 表现为"点了创建分支界面没反应"）。
 	useEffect(() => {
 		if (!urlAgentId || sessions.length === 0) return;
 		const matches = urlSessionId && sessions.some((v) => v.session.id === urlSessionId);
-		if (matches) return;
+		if (matches) {
+			if (urlSessionId) clearFreshlyForked(urlSessionId);
+			return;
+		}
+		if (urlSessionId && isFreshlyForked(urlSessionId)) return;
 		navigate(`/chat/${urlAgentId}/${sessions[0].session.id}`, { replace: true });
 	}, [urlAgentId, urlSessionId, sessions, navigate]);
 

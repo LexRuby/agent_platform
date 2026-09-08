@@ -833,11 +833,14 @@ export function ChatViewport({
 								setForkTarget(null);
 								// 跳转新分支会话（团队调度权已移交）
 								navigate(`/chat/${agentId}/${res.session_id}`);
+								// 立即刷新会话列表：新分支尽快出现在侧栏；刷新落地前
+								// chat 页重定向 effect 依赖 freshlyForked 标记放行该 id
+								onTeamUpdated?.();
 						}
 				} finally {
 						setFlowPending(false);
 				}
-		}, [forkTarget, agentId, sessionId, navigate, t]);
+		}, [forkTarget, agentId, sessionId, navigate, t, onTeamUpdated]);
 
 		/** 工作流节点 → fork 入口（TeamFlowPanel 回调，带引导语）。 */
 		const handleForkNode = useCallback(

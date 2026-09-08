@@ -40,6 +40,36 @@ export function takeFreshlyCreated(sessionId: string): boolean {
 	return freshlyCreated.delete(sessionId);
 }
 
+/**
+ * Sessions this tab forked (workflow branch rerun) whose id the session
+ * list has not re-fetched yet.
+ *
+ * The chat page redirects a URL session that is missing from the loaded
+ * list back to the first list entry. A freshly forked branch is by
+ * definition not in the stale list, so the redirect effect must let it
+ * through until the refetch lands (2026-09-08: fork navigation was
+ * silently rewritten back to the old first session, looking like
+ * "nothing happened" after clicking 创建分支).
+ */
+const freshlyForked = new Set<string>();
+
+/**
+ * Whether `sessionId` is a branch this tab forked and the list has not
+ * confirmed yet. Non-consuming: the redirect effect polls it on every
+ * render until the list contains the session.
+ */
+export function isFreshlyForked(sessionId: string): boolean {
+	return freshlyForked.has(sessionId);
+}
+
+/**
+ * Drop the fork marker once the session list contains the branch (or the
+ * user navigated away from it), so normal redirect semantics resume.
+ */
+export function clearFreshlyForked(sessionId: string): void {
+	freshlyForked.delete(sessionId);
+}
+
 /** 团队历史：主理会话 → 历次团队成员 session 映射（含已解散）。 */
 export interface TeamHistoryEntry {
         team_id: string;
@@ -119,20 +149,24 @@ export const sessionApi = {
 	 * - 404 → 会话或消息不存在
 	 * - 409 → 会话运行中（先暂停再 fork）
 	 */
-	teamFork: (
+	teamFork: async (
 		sessionId: string,
 		agentId: string,
 		messageId: string,
 		initialPrompt?: string,
-	) =>
-		client.post<TeamForkResponse>(
+	) => {
+		const res = await client.post<TeamForkResponse>(
 			`/sessions/${sessionId}/team-fork`,
 			{
 				agent_id: agentId,
 				message_id: messageId,
 				initial_prompt: initialPrompt || undefined,
 			},
-		),
+		);
+		// 登记新分支：列表 refetch 落地前，chat 页重定向 effect 放行该 id
+		freshlyForked.add(res.session_id);
+		return res;
+	},
 
 	/**
 	 * 流程重启：上下文/摘要/回复状态归零，消息历史保留；
