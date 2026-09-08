@@ -75,6 +75,8 @@ export interface TeamForkResponse {
 	parent_session_id: string;
 	kept_messages: number;
 	team_taken_over: boolean;
+	/** 引导语是否已自动触发 chat run（initial_prompt 非空时）。 */
+	auto_started?: boolean;
 }
 
 export const sessionApi = {
@@ -109,7 +111,8 @@ export const sessionApi = {
 	/**
 	 * 工作流节点级 fork：保留当前会话不动，新建分支会话（消息
 	 * 截断到锚点、context 同步、共享工作区与团队），团队调度权
-	 * 移交新分支（2026-09-08 分支对比培育）。
+	 * 移交新分支（2026-09-08 分支对比培育）。可选 initial_prompt：
+	 * 引导语，fork 完成后作为新分支第一条用户消息自动触发重跑。
 	 *
 	 * Backend contract:
 	 * - 201 → `TeamForkResponse`（新分支 session_id 等）
@@ -120,10 +123,15 @@ export const sessionApi = {
 		sessionId: string,
 		agentId: string,
 		messageId: string,
+		initialPrompt?: string,
 	) =>
 		client.post<TeamForkResponse>(
 			`/sessions/${sessionId}/team-fork`,
-			{ agent_id: agentId, message_id: messageId },
+			{
+				agent_id: agentId,
+				message_id: messageId,
+				initial_prompt: initialPrompt || undefined,
+			},
 		),
 
 	/**

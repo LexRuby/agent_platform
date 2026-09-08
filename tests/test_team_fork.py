@@ -138,6 +138,157 @@ def stack():
     )
 
 
+# ================================================================ 引导语
+# 2026-09-08 二次确认：fork 请求可携带 initial_prompt，fork 完成后
+# 作为新分支第一条用户消息自动触发 chat run（培育语义：对结果不满
+# 意 → 写改进意见 → 分支带着引导重跑）。
+# 测试用 mock chat_service / registry 注入 app.state，验证：
+# - 带 prompt：spawn 以 (fork_sid, 引导语 Msg) 被调用，auto_started=True
+# - 不带 prompt：不触发 spawn，auto_started=False
+# - 空白 prompt：等价不带（strip 后不触发）
+# - registry 拒绝（RuntimeError）：不 500，auto_started=False
+
+
+class _FakeRegistry:
+    """记录 spawn 调用的 registry 桩。"""
+
+    def __init__(self, *, reject: bool = False) -> None:
+        self.calls: list[tuple[str, object]] = []
+        self.reject = reject
+
+    def spawn(self, coro, session_id: str) -> None:
+        self.calls.append((session_id, coro))
+        coro.close()  # 不真正执行 run，避免碰 LLM
+        if self.reject:
+            raise RuntimeError("run already in flight")
+
+
+class _FakeChatService:
+    """记录 run 参数并返回可关闭协程的 chat_service 桩。"""
+
+    def __init__(self) -> None:
+        self.runs: list[dict] = []
+
+    def run(self, *, user_id, session_id, agent_id, input_msg):
+        self.runs.append({
+            "user_id": user_id,
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "input_msg": input_msg,
+        })
+
+        async def _noop() -> None:
+            return None
+
+        return _noop()
+
+
+class TestForkInitialPrompt:
+    """initial_prompt：fork 后引导语自动触发 chat run。"""
+
+    def test_prompt_triggers_run(self, stack):
+        """带引导语：spawn(fork_sid) 调用一次，run 收到引导语 Msg。"""
+        svc, reg = _FakeChatService(), _FakeRegistry()
+        stack.client.app.state.chat_service = svc
+        stack.client.app.state.chat_run_registry = reg
+
+        _seed_session(stack.fake, stack.storage)
+        _seed_messages(
+            stack.fake, stack.storage, [_msg("m1"), _msg("m2")],
+        )
+
+        r = stack.client.post(
+            f"/sessions/{SID}/team-fork",
+            json={
+                "agent_id": AGENT,
+                "message_id": "m1",
+                "initial_prompt": "结果未考虑非线性效应，请重新分析",
+            },
+            headers=U,
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["auto_started"] is True
+        fork_sid = body["session_id"]
+
+        # run 以新分支会话为目标，输入是引导语用户消息
+        assert len(svc.runs) == 1
+        assert svc.runs[0]["session_id"] == fork_sid
+        assert svc.runs[0]["agent_id"] == AGENT
+        assert svc.runs[0]["user_id"] == "u1"
+        msg = svc.runs[0]["input_msg"]
+        assert msg.role == "user"
+        assert "非线性效应" in msg.get_text_content()
+
+        # registry 收到 spawn（session_id = 新分支）
+        assert [sid for sid, _ in reg.calls] == [fork_sid]
+
+    def test_no_prompt_no_run(self, stack):
+        """不带引导语：不触发 run（保持"用户自己决定何时输入"）。"""
+        svc, reg = _FakeChatService(), _FakeRegistry()
+        stack.client.app.state.chat_service = svc
+        stack.client.app.state.chat_run_registry = reg
+
+        _seed_session(stack.fake, stack.storage)
+        _seed_messages(stack.fake, stack.storage, [_msg("m1")])
+
+        r = stack.client.post(
+            f"/sessions/{SID}/team-fork",
+            json={"agent_id": AGENT, "message_id": "m1"},
+            headers=U,
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["auto_started"] is False
+        assert svc.runs == []
+        assert reg.calls == []
+
+    def test_blank_prompt_treated_as_absent(self, stack):
+        """纯空白引导语等价不带（strip 后不触发）。"""
+        svc, reg = _FakeChatService(), _FakeRegistry()
+        stack.client.app.state.chat_service = svc
+        stack.client.app.state.chat_run_registry = reg
+
+        _seed_session(stack.fake, stack.storage)
+        _seed_messages(stack.fake, stack.storage, [_msg("m1")])
+
+        r = stack.client.post(
+            f"/sessions/{SID}/team-fork",
+            json={
+                "agent_id": AGENT,
+                "message_id": "m1",
+                "initial_prompt": "   \n  ",
+            },
+            headers=U,
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["auto_started"] is False
+        assert svc.runs == []
+
+    def test_registry_rejection_does_not_500(self, stack):
+        """registry 拒绝 spawn（单 run 防重）：fork 仍成功，防御降级。"""
+        svc = _FakeChatService()
+        reg = _FakeRegistry(reject=True)
+        stack.client.app.state.chat_service = svc
+        stack.client.app.state.chat_run_registry = reg
+
+        _seed_session(stack.fake, stack.storage)
+        _seed_messages(stack.fake, stack.storage, [_msg("m1")])
+
+        r = stack.client.post(
+            f"/sessions/{SID}/team-fork",
+            json={
+                "agent_id": AGENT,
+                "message_id": "m1",
+                "initial_prompt": "请重跑",
+            },
+            headers=U,
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["auto_started"] is False  # 降级：分支已建，run 未起
+        # 分支本身创建成功
+        assert r.json()["kept_messages"] == 1
+
+
 # ================================================================ fork 基础
 
 

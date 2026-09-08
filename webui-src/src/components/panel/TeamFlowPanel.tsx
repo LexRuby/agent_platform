@@ -92,9 +92,9 @@ interface Props {
         /** 进入成员会话单独迭代（成员 Tab 的次要入口）。 */
         onOpenMember?: (member: FlowMember) => void;
         /** 节点级 fork（2026-09-08）：从该节点新建分支重跑后续链路。 */
-        onForkNode?: (e: FlowEvent) => void;
+        onForkNode?: (e: FlowEvent, prompt: string) => void;
         /** 节点级覆盖重跑：截断该节点之后重新处理（复用 truncate）。 */
-        onRerunNode?: (e: FlowEvent) => void;
+        onRerunNode?: (e: FlowEvent, prompt: string) => void;
         /** 团队暂停（2026-09-08 v3）：中断 leader + 取消全部成员运行。 */
         onPauseTeam?: () => void;
         /** 团队继续：唤醒 leader 从当前状态恢复调度。 */
@@ -380,6 +380,8 @@ export function TeamFlowPanel({
         const [viewingArtifact, setViewingArtifact] = useState<FlowEvent | null>(null);
         /** 重跑弹窗中的节点（null = 关闭）。 */
         const [rerunNode, setRerunNode] = useState<FlowEvent | null>(null);
+        /** 重跑引导语：对结果不满意的改进意见（随重跑自动发送）。 */
+        const [rerunPrompt, setRerunPrompt] = useState('');
 
         const { events } = useMemo(() => buildTimeline(msgs), [msgs]);
 
@@ -1016,11 +1018,16 @@ export function TeamFlowPanel({
 				</Dialog>
 
 				{/* 节点级重跑弹窗（2026-09-08 用户需求：
-				    点击工作流节点 → 看产出 → 分支/覆盖重跑） */}
+				    点击工作流节点 → 看产出 → 分支/覆盖重跑；
+				    二次确认补充：引导语输入（对结果不满意的改进
+				    意见，作为新分支/截断后的第一条消息自动发送） */}
 				<Dialog
 					open={!!rerunNode}
 					onOpenChange={(v) => {
-						if (!v) setRerunNode(null);
+						if (!v) {
+							setRerunNode(null);
+							setRerunPrompt('');
+						}
 					}}
 				>
 					<DialogContent className="flex h-[85vh] max-w-4xl flex-col sm:max-w-4xl">
@@ -1036,29 +1043,55 @@ export function TeamFlowPanel({
 							</p>
 						</DialogHeader>
 						<div className="min-h-0 flex-1 overflow-y-auto pr-2">
-							<Markdown className="text-sm">
-								{rerunNode?.content ||
-									rerunNode?.summary ||
-									''}
-							</Markdown>
+							{rerunNode?.kind === 'member_interrupted' ? (
+								<p className="rounded-md border border-amber-300/60 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-300">
+									{t('panel.teamFlow.interruptedNodeDesc', {
+										name: displayName(rerunNode.from, t),
+									})}
+								</p>
+							) : (
+								<Markdown className="text-sm">
+									{rerunNode?.content ||
+										rerunNode?.summary ||
+										''}
+								</Markdown>
+							)}
+						</div>
+						{/* 引导语：培育语义——告诉主理人如何改进 */}
+						<div className="mt-2 space-y-1">
+							<label
+								htmlFor="rerun-prompt"
+								className="text-xs font-medium text-foreground"
+							>
+								{t('panel.teamFlow.rerunGuideLabel')}
+							</label>
+							<textarea
+								id="rerun-prompt"
+								className="min-h-[64px] w-full resize-y rounded-md border bg-background px-2 py-1.5 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+								placeholder={t('panel.teamFlow.rerunGuidePlaceholder')}
+								value={rerunPrompt}
+								onChange={(e) => setRerunPrompt(e.target.value)}
+							/>
 						</div>
 						<div className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:justify-end">
 							<Button
 								variant="outline"
-								disabled={!rerunNode?.msgId}
+								disabled={!rerunNode?.msgId || teamBusy}
 								onClick={() => {
-									if (rerunNode) onRerunNode?.(rerunNode);
+									if (rerunNode) onRerunNode?.(rerunNode, rerunPrompt.trim());
 									setRerunNode(null);
+									setRerunPrompt('');
 								}}
 							>
 								<RotateCw className="size-4" />
 								{t('panel.teamFlow.rerunOverwrite')}
 							</Button>
 							<Button
-								disabled={!rerunNode?.msgId}
+								disabled={!rerunNode?.msgId || teamBusy}
 								onClick={() => {
-									if (rerunNode) onForkNode?.(rerunNode);
+									if (rerunNode) onForkNode?.(rerunNode, rerunPrompt.trim());
 									setRerunNode(null);
+									setRerunPrompt('');
 								}}
 							>
 								<GitBranch className="size-4" />
@@ -1222,8 +1255,10 @@ function WorkflowView({
                 title: string;
                 done: boolean;
                 items: { name: string; detail: string }[];
-                /** 汇报阶段专用：节点级重跑的事件引用。 */
-                reportEvents?: FlowEvent[];
+                /** 汇报阶段专用：可点击节点的事件引用（汇报 + 被中断，
+                 *  与 items 索引一一对应——2026-09-08 用户反馈"被中断
+                 *  的也应能点击重跑"）。 */
+                clickableEvents?: FlowEvent[];
         }[] = [
                 {
                         icon: Play,
@@ -1268,8 +1303,8 @@ function WorkflowView({
                         icon: Send,
                         title: t('panel.teamFlow.phaseReport'),
                         done: reports.length > 0,
-                        // 汇报节点可点击（节点级重跑入口）——由下方
-                        // phases 渲染时对 report 类特殊处理
+                        // 汇报 + 被中断节点都可点击（节点级重跑入口）——
+                        // 渲染时按索引对应 clickableEvents
                         items: [
                                 ...reports.map((e) => ({
                                         name: displayName(e.from, t),
@@ -1280,7 +1315,7 @@ function WorkflowView({
                                         detail: t('panel.teamFlow.stInterrupted'),
                                 })),
                         ],
-                        reportEvents: reports,
+                        clickableEvents: [...reports, ...interrupted],
                 },
                 {
                         icon: CircleStop,
@@ -1319,15 +1354,15 @@ function WorkflowView({
                                                        	{p.title}
                                                         </div>
 	{p.items.map((it, j) => {
-															const reportEv = p.reportEvents?.[j];
-															if (reportEv && onSelectReport) {
-																// 汇报节点：可点击查看产出 + 重跑（分支/覆盖）
+															const nodeEv = p.clickableEvents?.[j];
+															if (nodeEv && onSelectReport) {
+																// 汇报/中断节点：可点击查看产出 + 重跑（分支/覆盖）
 																return (
 																	<button
 																		key={j}
 																		type="button"
 																		className="block w-full truncate rounded text-left text-[11px] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-																		onClick={() => onSelectReport(reportEv)}
+																		onClick={() => onSelectReport(nodeEv)}
 																		title={t('panel.teamFlow.nodeRerunHint')}
 																	>
 																		· <b className="font-medium text-foreground/80">{it.name}</b>

@@ -781,6 +781,7 @@ export function ChatViewport({
 		const [forkTarget, setForkTarget] = useState<{
 			msgId: string;
 			name: string;
+			prompt?: string;
 		} | null>(null);
 	/** 流程操作进行中（防重复点击） */
 	const [flowPending, setFlowPending] = useState(false);
@@ -810,7 +811,8 @@ export function ChatViewport({
 		}
 	}, [truncateTarget, truncateAt, t]);
 
-		/** 节点级 fork 确认：调后端新建分支会话 → 跳转新分支。 */
+		/** 节点级 fork 确认：调后端新建分支（引导语由后端作为新分支
+		 *  第一条用户消息自动触发重跑）→ 跳转新分支。 */
 		const handleForkConfirm = useCallback(async () => {
 				if (!forkTarget || !agentId || !sessionId) return;
 				setFlowPending(true);
@@ -819,11 +821,15 @@ export function ChatViewport({
 								sessionId,
 								agentId,
 								forkTarget.msgId,
+								forkTarget.prompt,
 						);
 						if (res) {
 								toast.success(
 										t('chat.forkDone', { name: forkTarget.name }),
 								);
+								if (res.auto_started) {
+										toast.success(t('chat.forkAutoStarted'));
+								}
 								setForkTarget(null);
 								// 跳转新分支会话（团队调度权已移交）
 								navigate(`/chat/${agentId}/${res.session_id}`);
@@ -833,21 +839,48 @@ export function ChatViewport({
 				}
 		}, [forkTarget, agentId, sessionId, navigate, t]);
 
-		/** 工作流节点 → fork 入口（TeamFlowPanel 回调）。 */
+		/** 工作流节点 → fork 入口（TeamFlowPanel 回调，带引导语）。 */
 		const handleForkNode = useCallback(
-				(e: { msgId?: string; from: string }) => {
-						if (e.msgId) setForkTarget({ msgId: e.msgId, name: e.from });
+				(e: { msgId?: string; from: string }, prompt?: string) => {
+						if (e.msgId)
+								setForkTarget({ msgId: e.msgId, name: e.from, prompt: prompt });
 				},
 				[],
 		);
 
-		/** 工作流节点 → 覆盖重跑入口：复用消息截断（同"从这里重开"）。 */
+		/** 工作流节点 → 覆盖重跑入口：复用消息截断（同"从这里重开"）；
+		 *  引导语暂存 sessionStorage，截断重载完成后自动发送。 */
 		const handleRerunNode = useCallback(
-				(e: { msgId?: string }) => {
-						if (e.msgId) setTruncateTarget(e.msgId);
+				(e: { msgId?: string }, prompt?: string) => {
+						if (!e.msgId || !agentId || !sessionId) return;
+						if (prompt) {
+								sessionStorage.setItem(
+										`agentforge:auto-prompt:${agentId}:${sessionId}`,
+										prompt,
+								);
+						}
+						setTruncateTarget(e.msgId);
 				},
-				[],
+				[agentId, sessionId],
 		);
+
+	// 待发引导语：覆盖重跑截断重载完成后自动发送（与 fork 跳转共用
+	// sessionStorage 键控机制；先读后删保证只发一次）。
+	useEffect(() => {
+		if (!agentId || !sessionId || messagesLoading) return;
+		const key = `agentforge:auto-prompt:${agentId}:${sessionId}`;
+		const raw = sessionStorage.getItem(key);
+		if (!raw) return;
+		sessionStorage.removeItem(key);
+		void send([
+			{
+				id: uuid(),
+				type: 'text' as const,
+				text: raw,
+				created_at: new Date().toISOString(),
+			},
+		]);
+	}, [agentId, sessionId, messagesLoading, send]);
 
 	/** 流程重启：确认后上下文归零（消息历史保留）。 */
 	const handleRestartConfirm = useCallback(async () => {

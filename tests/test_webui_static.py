@@ -893,6 +893,10 @@ class TestWorkflowNodeRerun:
         assert "team.session_id = fork_sid" in backend
         # context 截断复用 session_flow 的锚点语义
         assert "_truncate_context_at" in backend
+        # 引导语：fork 后作为新分支第一条用户消息自动触发 chat run
+        assert "initial_prompt" in backend
+        assert "chat_run_registry" in backend
+        assert "auto_started" in backend
 
     def test_frontend_node_click_and_dialog(self):
         panel = (
@@ -901,23 +905,35 @@ class TestWorkflowNodeRerun:
         # 事件带宿主消息 id（重跑锚点）
         assert "msgId?: string;" in panel
         assert "const push = (e: FlowEvent) => events.push({ ...e, msgId });" in panel
-        # 汇报节点可点击
+        # 汇报 + 被中断节点都可点击（2026-09-08 用户反馈补充）
         assert "onSelectReport" in panel
         assert "setRerunNode" in panel
-        # 弹窗两个动作：fork + 覆盖（复用 truncate）
-        assert "onForkNode?.(rerunNode)" in panel
-        assert "onRerunNode?.(rerunNode)" in panel
-        assert "disabled={!rerunNode?.msgId}" in panel
+        assert "clickableEvents: [...reports, ...interrupted]" in panel
+        # 中断节点弹窗说明（无产出时的引导文案）
+        assert "member_interrupted" in panel
+        assert "interruptedNodeDesc" in panel
+        # 弹窗两个动作：fork + 覆盖（复用 truncate），均带引导语
+        assert "onForkNode?.(rerunNode, rerunPrompt.trim())" in panel
+        assert "onRerunNode?.(rerunNode, rerunPrompt.trim())" in panel
+        assert "disabled={!rerunNode?.msgId || teamBusy}" in panel
+        # 引导语输入框（培育语义：对结果不满意的改进意见）
+        assert "setRerunPrompt" in panel
+        assert "rerunGuideLabel" in panel
+        assert "rerunGuidePlaceholder" in panel
 
     def test_chatviewport_fork_flow(self):
         viewport = (
             _SRC_DIR / "pages" / "chat" / "ChatViewport.tsx"
         ).read_text(encoding="utf-8")
-        # fork 确认 → 调 API → 跳转新分支
+        # fork 确认 → 调 API（带引导语）→ 跳转新分支
         assert "sessionApi.teamFork(" in viewport
+        assert "forkTarget.prompt" in viewport
+        assert "res.auto_started" in viewport
         assert "navigate(`/chat/${agentId}/${res.session_id}`)" in viewport
-        # 覆盖重跑 = 复用消息截断（同「从这里重开」）
+        # 覆盖重跑 = 复用消息截断 + 引导语 sessionStorage 自动发送
         assert "setTruncateTarget(e.msgId)" in viewport
+        assert "agentforge:auto-prompt:" in viewport
+        assert "sessionStorage.removeItem(key)" in viewport
         # 两处 TeamFlowPanel（专注/经典布局）都接线
         assert viewport.count("onForkNode={handleForkNode}") == 2
         assert viewport.count("onRerunNode={handleRerunNode}") == 2
@@ -926,6 +942,9 @@ class TestWorkflowNodeRerun:
         api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
         assert "TeamForkResponse" in api
         assert "`/sessions/${sessionId}/team-fork`" in api
+        # 引导语参数透传
+        assert "initialPrompt?: string" in api
+        assert "initial_prompt: initialPrompt || undefined" in api
 
     def test_i18n_keys(self):
         zh = json.loads(
@@ -936,14 +955,21 @@ class TestWorkflowNodeRerun:
         tf = zh["panel"]["teamFlow"]
         assert tf["rerunFork"] == "新建分支重跑"
         assert tf["rerunOverwrite"] == "覆盖重跑"
+        # 引导语（2026-09-08 二次确认）与中断节点说明
+        assert "引导语" in tf["rerunGuideLabel"]
+        assert "slosh-modeler" in tf["rerunGuidePlaceholder"]
+        assert "被中断" in tf["interruptedNodeDesc"]
         assert zh["chat"]["forkConfirm"] == "创建分支"
+        assert zh["chat"]["forkAutoStarted"] == "引导语已发送，新分支开始重跑"
         en = json.loads(
             (_SRC_DIR / "i18n" / "locales" / "en.json").read_text(
                 encoding="utf-8",
             ),
         )
         assert en["panel"]["teamFlow"]["rerunFork"] == "Fork branch & rerun"
+        assert "interruptedNodeDesc" in en["panel"]["teamFlow"]
         assert en["chat"]["forkConfirm"] == "Create branch"
+        assert "forkAutoStarted" in en["chat"]
 
 
 class TestMemberIterationBackToLeader:

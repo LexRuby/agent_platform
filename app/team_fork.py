@@ -25,6 +25,11 @@ fork 的关键技术决策：
 - **state 截断语义与 session_flow 一致**：summary 清空、
   reply_context 重置、middle_context 清空；permission / tasks
   context 保留（已授权工具不必重新授权）。
+- **引导语（initial_prompt，2026-09-08 二次确认）**：用户对节点
+  结果不满意才 fork——fork 请求可携带一条引导语，fork 完成后立即
+  作为新分支的第一条用户消息触发 chat run（主理人据此重新调度
+  后续链路）。事件经 replay log 回放，前端跳转后 SSE 不丢开头。
+  前端「覆盖重跑」同语义：截断后引导语自动发送（前端实现）。
 
 端点（team_fork_router，tag: agentforge）：
 - ``POST /sessions/{sid}/team-fork``   节点级 fork 新分支
@@ -36,6 +41,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from agentscope.message import Msg, TextBlock
 from agentscope.state import AgentState, ReplyContext
 
 from app.session_flow import (
@@ -63,6 +69,11 @@ class TeamForkRequest(BaseModel):
         default=None,
         description="新分支会话名（默认自动生成「分支 · …」）",
     )
+    initial_prompt: str | None = Field(
+        default=None,
+        description="引导语：fork 完成后作为新分支第一条用户消息"
+        "自动触发 chat run（对结果不满意的改进意见）",
+    )
 
 
 class TeamForkResponse(BaseModel):
@@ -72,6 +83,10 @@ class TeamForkResponse(BaseModel):
     parent_session_id: str = Field(description="原会话 id")
     kept_messages: int = Field(description="复制到新分支的消息数")
     team_taken_over: bool = Field(description="团队调度权是否移交新分支")
+    auto_started: bool = Field(
+        default=False,
+        description="引导语是否已自动触发 chat run",
+    )
 
 
 def _branch_name(orig_name: str, node_label: str) -> str:
@@ -191,9 +206,45 @@ async def fork_team_session(
         user_id, session_id, fork_sid, body.message_id,
         idx + 1, taken_over,
     )
+
+    # 5. 引导语自动触发：fork 完成即作为新分支第一条用户消息启动
+    #    chat run（与官方 /chat/ 同路径：直接 spawn，registry 负责
+    #    单 run 防重）。事件进 replay log，前端 SSE 后连也不丢开头。
+    auto_started = False
+    prompt = (body.initial_prompt or "").strip()
+    if prompt:
+        chat_service = getattr(request.app.state, "chat_service", None)
+        registry = getattr(request.app.state, "chat_run_registry", None)
+        if chat_service is None or registry is None:
+            raise HTTPException(
+                status_code=500,
+                detail="服务未就绪：chat_service / chat_run_registry 缺失",
+            )
+        try:
+            registry.spawn(
+                chat_service.run(
+                    user_id=user_id,
+                    session_id=fork_sid,
+                    agent_id=body.agent_id,
+                    input_msg=Msg(
+                        name="user",
+                        role="user",
+                        content=[TextBlock(type="text", text=prompt)],
+                    ),
+                ),
+                session_id=fork_sid,
+            )
+            auto_started = True
+        except RuntimeError as e:  # 单 run 防重（刚 fork 不应发生，防御）
+            _logger.warning(
+                "fork 引导语触发被拒（会话已有 run）: fork=%s err=%s",
+                fork_sid, e,
+            )
+
     return TeamForkResponse(
         session_id=fork_sid,
         parent_session_id=session_id,
         kept_messages=idx + 1,
         team_taken_over=taken_over,
+        auto_started=auto_started,
     )
