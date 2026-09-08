@@ -1219,6 +1219,44 @@ class TestWorkflowNodeRerun:
         assert ef["leaderArtifactBadge"] == "Leader"
         assert ef["finalArtifactBadge"] == "Final delivery"
 
+    def test_permission_mode_select_chinese_effect_labels(self):
+        """权限模式选择器：中文效果导向命名 + 说明直接展示。
+
+        2026-09-09 用户反馈："不是选择权限模式了吗，为什么还一直
+        问执行权限？"——选了 accept_edits 仍被 pip install 等执行类
+        命令询问。根因：accept_edits 官方语义只自动放行工作目录内
+        文件操作，执行类命令不覆盖；而原选择器 label 全英文
+        （Accept Edits），语义说明藏 hover，用户无从知晓边界。
+        """
+        sel = (
+            _SRC_DIR / "components" / "select" / "PermissionModeSelect.tsx"
+        ).read_text(encoding="utf-8")
+        # label 不再硬编码英文，走 i18n
+        assert "label: 'Default'" not in sel
+        assert "t(`permission-mode.${value}-label`)" in sel
+        assert "t(`permission-mode.${mode}-label`)" in sel
+        # 效果说明直接展示在下拉项里（不藏 hover）
+        assert "t(`permission-mode.${mode}-tooltip`)" in sel
+        assert "text-[11px]" in sel
+
+        # i18n：中文效果导向命名（明确边界，避免误解）
+        zh = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "zh.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        pm = zh["permission-mode"]
+        assert pm["accept_edits-label"] == "自动接受编辑（仅文件操作）"
+        assert pm["bypass-label"] == "完全信任（不再询问）"
+        assert "仅文件" in pm["accept_edits-label"]  # 边界写进名字
+        en = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "en.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        epm = en["permission-mode"]
+        assert "files only" in epm["accept_edits-label"]
+
     def test_api_team_fork_defined(self):
         api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
         assert "TeamForkResponse" in api

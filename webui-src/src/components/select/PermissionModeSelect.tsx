@@ -14,12 +14,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useTranslation } from '@/i18n/useI18n.ts';
 import { cn } from '@/lib/utils.ts';
 
-const PERMISSION_MODES: { value: PermissionMode; label: string }[] = [
-	{ value: 'default', label: 'Default' },
-	{ value: 'accept_edits', label: 'Accept Edits' },
-	{ value: 'explore', label: 'Explore' },
-	{ value: 'bypass', label: 'Bypass' },
-	{ value: 'dont_ask', label: "Don't Ask" },
+const PERMISSION_MODES: PermissionMode[] = [
+	'default',
+	'accept_edits',
+	'explore',
+	'bypass',
+	'dont_ask',
 ];
 
 interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onChange' | 'value'> {
@@ -33,7 +33,7 @@ export function PermissionModeSelect({ className, value, disabled, onChange, ...
 	const { t } = useTranslation();
 
 	const displayLabel = value
-		? (PERMISSION_MODES.find((m) => m.value === value)?.label ?? value)
+		? t(`permission-mode.${value}-label`)
 		: t('permission-mode.placeholder');
 
 	return (
@@ -54,18 +54,27 @@ export function PermissionModeSelect({ className, value, disabled, onChange, ...
 					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" className="min-w-48">
+			<DropdownMenuContent align="start" className="min-w-64">
 				<DropdownMenuGroup>
 					<DropdownMenuLabel>{t('permission-mode.label')}</DropdownMenuLabel>
 					{PERMISSION_MODES.map((mode) => (
-						<Tooltip key={mode.value}>
+						<Tooltip key={mode}>
 							<TooltipTrigger asChild>
-								<DropdownMenuItem onSelect={() => onChange?.(mode.value)}>
-									{mode.label}
+								{/* 名称 + 效果说明直接展示（不藏 hover）——
+								    2026-09-09 用户反馈：选了 accept_edits 仍被
+								    pip install 等执行类命令反复询问，"仅文件
+								    操作"的语义边界在选择时完全不可见 */}
+								<DropdownMenuItem onSelect={() => onChange?.(mode)}>
+									<div className="flex flex-col items-start gap-0.5">
+										<span>{t(`permission-mode.${mode}-label`)}</span>
+										<span className="text-[11px] leading-tight text-muted-foreground">
+											{t(`permission-mode.${mode}-tooltip`)}
+										</span>
+									</div>
 								</DropdownMenuItem>
 							</TooltipTrigger>
 							<TooltipContent side="right">
-								{t(`permission-mode.${mode.value}-tooltip`)}
+								{t(`permission-mode.${mode}-tooltip`)}
 							</TooltipContent>
 						</Tooltip>
 					))}
