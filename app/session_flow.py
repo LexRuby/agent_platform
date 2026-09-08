@@ -419,6 +419,14 @@ async def pause_team_flow(
         storage, user_id, agent_id, leader_session_id,
     )
 
+    # 无在册团队（已解散/未组队）→ 409：不存在"暂停一个不存在的
+    # 团队"，且避免给 leader 误设暂停标志阻止后续正常对话
+    # （2026-09-09 用户反馈：设计语言一致性）
+    if not record.team_id:
+        raise HTTPException(
+            status_code=409,
+            detail="该会话没有在册团队（已解散或尚未组队），无法执行团队暂停",
+        )
     members = await _leader_members(storage, user_id, leader_session_id)
     cancelled = await _cancel_members(session_service, members)
 

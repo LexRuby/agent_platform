@@ -637,8 +637,11 @@ export function TeamFlowPanel({
 						</button>
 						{/* 团队流程控制（2026-09-08 v3）：暂停 = leader +
 						    全部成员停止（上下文保留）；继续 = 唤醒 leader
-						    从当前状态恢复调度。stopPropagation 防触发折叠。 */}
-						{(onPauseTeam || onResumeTeam) && (
+						    从当前状态恢复调度。stopPropagation 防触发折叠。
+						    前置条件：有在册团队（teamActive）——已解散/未组队
+						    时按钮隐藏，不存在"暂停一个不存在的团队"
+						    （2026-09-09 用户反馈：设计语言一致性）。 */}
+						{teamActive !== false && (onPauseTeam || onResumeTeam) && (
 							<div className="flex shrink-0 items-center gap-1">
 								{onPauseTeam && (
 									<Button

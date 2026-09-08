@@ -587,15 +587,22 @@ class TestTeamFlow:
         assert not stack.fake.get(PAUSED_KEY.format(user_id="u1", session_id="s-m2"))
 
     def test_pause_standalone_leader(self, stack):
-        """非团队会话暂停 = 仅中断该会话（幂等，idle 也可调）。"""
+        """非团队会话（无在册团队）暂停 → 409（2026-09-09 语义更新）。
+
+        原语义"仅中断该会话"已废弃：团队已解散/未组队时不存在
+        "暂停团队"，且静默 200 会给 leader 误设暂停标志、阻止后续
+        正常对话（用户反馈：设计语言一致性——按钮与状态必须对齐）。
+        """
         _seed_session(stack.fake, stack.storage)
         r = stack.client.post(
             f"/team-flow/{SID}/pause",
             params={"agent_id": AGENT},
             headers=U,
         )
-        assert r.status_code == 200
-        assert stack.chat.interrupts == [("u1", SID, AGENT)]
+        assert r.status_code == 409
+        assert "没有在册团队" in r.json()["detail"]
+        # 不设置任何暂停标志、不中断
+        assert stack.chat.interrupts == []
         assert stack.session_svc.cancelled == []
 
     def test_pause_session_not_found(self, stack):

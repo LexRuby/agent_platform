@@ -1147,6 +1147,9 @@ class TestWorkflowNodeRerun:
         assert "teamNotFormedBanner" in panel
         # 头部 Badge：已解散状态（AlertTriangle）
         assert "statusDissolved" in panel
+        # 暂停/继续团队按钮：无在册团队时隐藏——不存在"暂停一个
+        # 不存在的团队"（2026-09-09 用户反馈：设计语言一致性）
+        assert "teamActive !== false && (onPauseTeam || onResumeTeam)" in panel
 
         # ChatViewport 传参（两处布局）
         viewport = (
