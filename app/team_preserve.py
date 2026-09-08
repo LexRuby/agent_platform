@@ -22,11 +22,23 @@ bypass-immune 的 ASK——DEFAULT / ACCEPT_EDITS 模式下必然弹出用户
 团队工具随之失效）→ 成员 agent / 成员团队 session / team 记录
 **全部保留**（培养资产：上下文、产出、介入对话能力）。
 
+**第三层：会话删除守卫（2026-09-08 事故修复）**。patch
+``RedisStorage.delete_session``——用户删除"持有团队调度权的会话"
+（team.session_id 指向它：原生 leader 或 fork 移交后的分支）时，
+官方 storage 级联会判定"删 leader → 解散团队"并**物理删除全部
+created 成员 agent + 成员会话 + team 记录**——绕过第二层（第二层
+只拦 TeamDelete 工具的 service 路径）。事故时间线：fork 分支持有
+调度权 → 用户清理该分支 → 团队全灭（5 个专家 agent 不可逆丢失）。
+守卫语义：删除前把调度权移交给同团队其他存活会话（最早创建优先，
+主会话/最早 fork 源）；无其他会话才解除绑定（team 与成员资产仍
+保留，软解散语义）。移交/解绑后官方级联条件（team.session_id ==
+被删 id）不成立，自然跳过全灭路径。
+
 注意：此前版本 patch 的是 ``RedisStorage.delete_team``——但
 ``SessionService.delete_team`` 在调 storage 之前就先对每个成员执行
 ``delete_agent`` / ``delete_session``（物理删除），storage 层 patch
 拦得太晚。本版改为 patch service 层（TeamDelete 工具的唯一执行
-路径），storage 层级联（用户删 leader 会话时的连带清理）不受影响。
+路径）；storage 层级联由第三层守卫接管。
 """
 
 import logging
@@ -40,9 +52,11 @@ team_history_router = APIRouter(tags=["agentforge"])
 
 
 def patch_team_protection() -> None:
-    """挂载双层防护：TeamDelete 强制确认 + delete_team 软解散。"""
+    """挂载三层防护：TeamDelete 强制确认 + delete_team 软解散
+    + 会话删除守卫（调度权移交，防 fork 分支删除引发团队全灭）。"""
     _patch_team_delete_permission()
     _patch_delete_team_service()
+    _patch_delete_session_guard()
 
 
 def _patch_team_delete_permission() -> None:
@@ -113,6 +127,87 @@ def _patch_delete_team_service() -> None:
 
     SessionService.delete_team = soft_delete_team  # type: ignore[method-assign]
     _logger.info("已 patch SessionService.delete_team → 软解散（保留培养资产）")
+
+
+# 官方原始 delete_session / 守卫实现（模块级引用：测试 monkeypatch 用）
+_delete_session_orig = None
+_delete_session_guarded = None
+
+
+def _patch_delete_session_guard() -> None:
+    """RedisStorage.delete_session → 删除前调度权移交守卫。
+
+    官方 storage 级联：删会话时若 ``team.session_id == 被删 id``
+    （该会话持有调度权）→ ``delete_team`` 全灭级联（成员 agent、
+    成员会话、team 记录物理删除）。fork（team_fork.py）把调度权
+    移交给分支后，删除任一分支都会命中该级联。
+
+    守卫：删除前检查——
+    - 有其他同团队会话（fork 源/兄弟分支，team_id 相同）→
+      调度权移交给最早创建的那个，团队照常存活；
+    - 无其他会话 → 解除被删会话的 team_id 绑定，团队与成员
+      资产保留（软解散语义，dissolved 由悬空的 team.session_id
+      判定兜底）。
+    两分支都让官方级联条件失效，只删会话本身。
+    """
+    from agentscope.app.storage._redis_storage import RedisStorage
+
+    # 幂等：重复挂载（测试 fixture + app 启动）不嵌套
+    if getattr(RedisStorage.delete_session, "_agentforge_delete_guard", False):
+        return
+    global _delete_session_orig, _delete_session_guarded
+    if _delete_session_orig is None:
+        _delete_session_orig = RedisStorage.delete_session
+
+    async def guarded_delete_session(
+        self: Any,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+    ) -> bool:
+        try:
+            record = await self.get_session(user_id, agent_id, session_id)
+        except Exception:  # noqa: BLE001 — 记录读不出交给官方路径
+            _logger.exception(
+                "删除守卫: 读会话失败，走官方路径 session=%s", session_id,
+            )
+            return await _delete_session_orig(self, user_id, agent_id, session_id)
+        if record is None:
+            return await _delete_session_orig(self, user_id, agent_id, session_id)
+
+        team_id = getattr(record, "team_id", None)
+        if team_id:
+            team = await self.get_team(user_id, team_id)
+            if team is not None and team.session_id == session_id:
+                # 被删会话持有调度权 → 移交而非全灭
+                others = [
+                    s for s in await self.list_sessions(user_id, agent_id)
+                    if s.id != session_id and s.team_id == team_id
+                ]
+                if others:
+                    # list_sessions 按 created_at 倒序 → 最后一个最早
+                    target = others[-1]
+                    team.session_id = target.id
+                    await self.upsert_team(user_id, team)
+                    _logger.info(
+                        "删除守卫: 调度权会话 %s 被删，调度权移交 %s"
+                        "（团队与成员保留）",
+                        session_id, target.id,
+                    )
+                else:
+                    # 无其他分支 → 解绑（防官方级联），资产保留
+                    await self.set_session_team_id(user_id, session_id, None)
+                    _logger.info(
+                        "删除守卫: 调度权会话 %s 被删且无其他分支，"
+                        "解除绑定（团队与成员资产保留）",
+                        session_id,
+                    )
+        return await _delete_session_orig(self, user_id, agent_id, session_id)
+
+    guarded_delete_session._agentforge_delete_guard = True  # type: ignore[attr-defined]
+    _delete_session_guarded = guarded_delete_session
+    RedisStorage.delete_session = guarded_delete_session  # type: ignore[method-assign]
+    _logger.info("已 patch RedisStorage.delete_session → 调度权移交守卫")
 
 
 @team_history_router.get("/team-sessions/{leader_session_id}")

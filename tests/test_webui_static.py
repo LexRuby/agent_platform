@@ -973,6 +973,77 @@ class TestWorkflowNodeRerun:
         assert "onTeamUpdated?.();" in tail
         assert "[forkTarget, agentId, sessionId, navigate, t, onTeamUpdated]" in viewport
 
+    def test_interrupted_node_default_prompt(self):
+        """被中断节点 fork：预填默认引导语（2026-09-08 用户反馈修复）。
+
+        用户 fork 被中断节点后无人执行该成员——fork 后 auto_started
+        为 False，用户点"继续"只是空唤醒，主理人认为项目已完成直接
+        收尾。修复：被中断节点打开弹窗时预填引导语，fork 即自动触发
+        重跑。
+        """
+        panel = (
+            _SRC_DIR / "components" / "panel" / "TeamFlowPanel.tsx"
+        ).read_text(encoding="utf-8")
+        # 点击节点时按 kind 预填（member_interrupted → 默认引导语）
+        assert "e.kind === 'member_interrupted'" in panel
+        assert "defaultInterruptedPrompt" in panel
+        assert "setRerunPrompt(" in panel
+
+        # i18n 键（zh + en）
+        zh = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "zh.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        en = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "en.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+
+        def find_key(obj, key):
+            if isinstance(obj, dict):
+                if key in obj:
+                    return obj[key]
+                for v in obj.values():
+                    r = find_key(v, key)
+                    if r is not None:
+                        return r
+            if isinstance(obj, list):
+                for v in obj:
+                    r = find_key(v, key)
+                    if r is not None:
+                        return r
+            return None
+
+        zh_text = find_key(zh, "defaultInterruptedPrompt")
+        en_text = find_key(en, "defaultInterruptedPrompt")
+        assert zh_text and "{{name}}" in zh_text and "被中断" in zh_text
+        assert en_text and "{{name}}" in en_text and "interrupted" in en_text
+
+    def test_backend_delete_guard_for_fork_sessions(self):
+        """后端删除守卫（2026-09-08 事故修复）：删 fork 分支不解散团队。
+
+        事故链：fork 移交调度权（team.session_id = 分支 id）→ 用户
+        删除该分支 → 官方 storage 级联判定"删 leader"→ 全灭式解散
+        （成员 agent 物理删除）。守卫：调度权移交最早存活会话。
+        """
+        backend = (
+            _BASE_DIR / "app" / "team_preserve.py"
+        ).read_text(encoding="utf-8")
+        # 第三层守卫：storage 层 delete_session patch
+        assert "_patch_delete_session_guard" in backend
+        assert "RedisStorage.delete_session" in backend
+        # 调度权移交语义
+        assert "team.session_id = target.id" in backend
+        assert "others[-1]" in backend  # created_at 最早优先
+        # 无其他分支 → 解绑防级联（软解散语义）
+        assert 'set_session_team_id(user_id, session_id, None)' in backend
+
+        fork = (_BASE_DIR / "app" / "team_fork.py").read_text(encoding="utf-8")
+        # fork 自愈：团队记录缺失时清死引用
+        assert "fork 自愈" in fork
+
     def test_api_team_fork_defined(self):
         api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
         assert "TeamForkResponse" in api

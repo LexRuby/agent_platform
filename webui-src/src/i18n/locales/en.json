@@ -837,7 +837,8 @@
 			"stInterrupted": "Interrupted",
 			"stWorking": "Working",
 			"pauseTeam": "Pause team",
-			"resumeTeam": "Resume team"
+			"resumeTeam": "Resume team",
+			"defaultInterruptedPrompt": "\"{{name}}\" was interrupted last time and produced no result. Please re-assign the task to this member (improving on existing work if any) and continue the remaining pipeline."
 		},
 		"team": {
 			"membersHeading": "Members",

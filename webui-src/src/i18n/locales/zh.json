@@ -179,10 +179,10 @@
 		"backToLeaderTooltip": "返回主理人（大A）的团队会话",
 		"restartTooltip": "流程重启：上下文归零，消息历史保留",
 		"forkTitle": "从「{{name}}」节点新建分支？",
-           "forkDescription": "当前会话全部保留；将新建分支会话从该节点重新处理后续工作，团队调度权移交新分支，可在多个分支间对比结果。",
-           "forkConfirm": "创建分支",
-           "forkDone": "分支已创建（{{name}}），正在跳转…",
-           "forkAutoStarted": "引导语已发送，新分支开始重跑",
+		"forkDescription": "当前会话全部保留；将新建分支会话从该节点重新处理后续工作，团队调度权移交新分支，可在多个分支间对比结果。",
+		"forkConfirm": "创建分支",
+		"forkDone": "分支已创建（{{name}}），正在跳转…",
+		"forkAutoStarted": "引导语已发送，新分支开始重跑",
 		"restartTitle": "重启流程？",
 		"restartDescription": "模型的上下文将清零，从零开始重新推理；消息历史保留可回看。团队会话将同时停止全部成员的运行。",
 		"restartConfirm": "重启",
@@ -837,7 +837,8 @@
 			"stInterrupted": "被中断",
 			"stWorking": "执行中",
 			"pauseTeam": "暂停团队",
-			"resumeTeam": "继续团队"
+			"resumeTeam": "继续团队",
+			"defaultInterruptedPrompt": "「{{name}}」上次执行被中断、未产出结果。请重新给该成员分派任务（可基于已有成果改进），并继续后续链路。"
 		},
 		"team": {
 			"membersHeading": "成员",

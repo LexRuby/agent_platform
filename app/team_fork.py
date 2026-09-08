@@ -200,6 +200,15 @@ async def fork_team_session(
                 "fork 时团队记录缺失，分支不接管: user=%s team=%s",
                 user_id, team_id,
             )
+            # 自愈（2026-09-08 事故）：源会话上的 team_id 是指向已亡
+            # 团队的死引用（历史解散级联未清理），顺手清掉——
+            # 否则每次 fork 都走缺失分支，且会话一直带着死 team_id
+            try:
+                await storage.set_session_team_id(user_id, session_id, None)
+            except Exception:  # noqa: BLE001 — 清理失败不影响 fork 主流程
+                _logger.exception(
+                    "fork 自愈: 清理死 team_id 失败 session=%s", session_id,
+                )
 
     _logger.info(
         "工作流节点 fork: user=%s parent=%s fork=%s 锚点=%s 保留=%d 接管=%s",

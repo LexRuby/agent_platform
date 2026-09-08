@@ -156,6 +156,169 @@ def _bind_soft_delete():
     return SessionService.__dict__["delete_team"]
 
 
+# ---------------------------------------------------------------- 会话删除守卫
+class FakeGuardStorage(FakeStorage):
+    """守卫测试专用：list_sessions / upsert_team + 原始删除记录。"""
+
+    def __init__(self):
+        super().__init__()
+        self.created: dict[str, str] = {}  # session_id -> created_at
+        self.upserted_teams: list[str] = []
+        self.deleted: list[str] = []
+
+    async def list_sessions(self, user_id, agent_id):  # noqa: ARG002
+        out = []
+        for (u, sid), s in self.sessions.items():
+            if u == user_id:
+                s.created_at = self.created.get(sid, "2026-09-08T00:00:00")
+                out.append(s)
+        # 官方语义：created_at 倒序（最早在最后）
+        out.sort(key=lambda s: s.created_at, reverse=True)
+        return out
+
+    async def upsert_team(self, user_id, team):
+        self.upserted_teams.append(team.id)
+        self.teams[(user_id, team.id)] = team
+
+
+@pytest.fixture
+def guard_env(monkeypatch):
+    """守卫测试环境：fake storage + 记录型原始 delete_session。
+
+    直接调模块级 guarded 函数（不走类属性），_orig 换成记录型
+    fake——不依赖真实 Redis。
+    """
+    import app.team_preserve as tp
+
+    async def fake_orig(self, user_id, agent_id, session_id):  # noqa: ARG001
+        self.deleted.append(session_id)
+        return True
+
+    monkeypatch.setattr(tp, "_delete_session_orig", fake_orig)
+    # 确保 guarded 已生成（app 未启动的测试进程）
+    if tp._delete_session_guarded is None:
+        tp.patch_team_protection()
+    return tp._delete_session_guarded
+
+
+class TestDeleteSessionGuard:
+    """第三层：删除调度权会话 → 移交而非全灭（2026-09-08 事故）。"""
+
+    def _seed_fork_family(self, st: FakeGuardStorage):
+        """主会话 + 两分支同属一团队，分支 B 持有调度权。"""
+        main_sid, brA_sid, brB_sid = "M" * 32, "a" * 32, "b" * 32
+        team_id = "G" * 32
+        st.sessions[("tester", main_sid)] = _Session(main_sid, team_id)
+        st.sessions[("tester", brA_sid)] = _Session(brA_sid, team_id)
+        st.sessions[("tester", brB_sid)] = _Session(brB_sid, team_id)
+        # created_at：主会话最早（09-07），分支 a/b 次之
+        st.created[main_sid] = "2026-09-07T10:00:00"
+        st.created[brA_sid] = "2026-09-08T16:57:00"
+        st.created[brB_sid] = "2026-09-08T18:11:00"
+        st.teams[("tester", team_id)] = _Team(
+            team_id, brB_sid, "leader-agent-0001", _TeamData("fork 家族"),
+        )
+        return main_sid, brA_sid, brB_sid, team_id
+
+    @pytest.mark.asyncio
+    async def test_delete_leading_branch_transfers_to_earliest(
+        self, guard_env,
+    ):
+        """删持有调度权的分支 → 移交给最早会话（主会话），团队保留。"""
+        st = FakeGuardStorage()
+        main_sid, _brA, brB_sid, team_id = self._seed_fork_family(st)
+
+        ok = await guard_env(st, "tester", "leader-agent-0001", brB_sid)
+
+        assert ok is True
+        team = st.teams[("tester", team_id)]
+        # 调度权移交主会话（created_at 最早）
+        assert team.session_id == main_sid
+        assert team_id in st.upserted_teams
+        # 原始删除只删了被删会话本身（无全灭级联入口）
+        assert st.deleted == [brB_sid]
+        # 团队记录仍在（成员资产保留的前提）
+        assert ("tester", team_id) in st.teams
+
+    @pytest.mark.asyncio
+    async def test_delete_last_leading_session_unbinds(self, guard_env):
+        """调度权会话被删且无其他分支 → 解绑（防级联），团队资产保留。"""
+        st = FakeGuardStorage()
+        only_sid = "O" * 32
+        team_id = "L" * 32
+        st.sessions[("tester", only_sid)] = _Session(only_sid, team_id)
+        st.teams[("tester", team_id)] = _Team(
+            team_id, only_sid, "leader-agent-0001", _TeamData("孤儿团队"),
+        )
+
+        ok = await guard_env(st, "tester", "leader-agent-0001", only_sid)
+
+        assert ok is True
+        # 解绑被调用（官方级联条件 team.session_id == sid 因此失效）
+        assert ("tester", only_sid, None) in st.set_team_id_calls
+        # 团队记录保留（软解散语义）
+        assert ("tester", team_id) in st.teams
+        assert st.deleted == [only_sid]
+
+    @pytest.mark.asyncio
+    async def test_delete_non_leading_branch_passthrough(self, guard_env):
+        """删普通分支（不持有调度权）→ 无移交无解绑，直接原路径。"""
+        st = FakeGuardStorage()
+        main_sid, brA_sid, brB_sid, team_id = self._seed_fork_family(st)
+
+        await guard_env(st, "tester", "leader-agent-0001", brA_sid)
+
+        # 调度权不变（仍是 brB）
+        assert st.teams[("tester", team_id)].session_id == brB_sid
+        assert st.upserted_teams == []
+        assert st.set_team_id_calls == []
+        assert st.deleted == [brA_sid]
+
+    @pytest.mark.asyncio
+    async def test_session_without_team_passthrough(self, guard_env):
+        """无团队会话 → 完全透传。"""
+        st = FakeGuardStorage()
+        sid = "P" * 32
+        st.sessions[("tester", sid)] = _Session(sid)
+
+        ok = await guard_env(st, "tester", "leader-agent-0001", sid)
+
+        assert ok is True
+        assert st.deleted == [sid]
+        assert st.set_team_id_calls == []
+        assert st.upserted_teams == []
+
+    @pytest.mark.asyncio
+    async def test_missing_session_passthrough(self, guard_env):
+        """会话不存在 → 透传（官方返回 False）。"""
+        st = FakeGuardStorage()
+
+        async def fake_orig_none(self, user_id, agent_id, session_id):  # noqa: ARG001
+            self.deleted.append(session_id)
+            return False
+
+        import app.team_preserve as tp
+        tp._delete_session_orig = fake_orig_none
+
+        ok = await guard_env(st, "tester", "leader-agent-0001", "X" * 32)
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_dead_team_reference_ignored(self, guard_env):
+        """team_id 指向已亡团队（历史残留）→ 不炸、透传删除。"""
+        st = FakeGuardStorage()
+        sid = "D" * 32
+        dead_team = "dead-team-0001"
+        st.sessions[("tester", sid)] = _Session(sid, dead_team)
+        # 注意：不写 st.teams —— 团队记录缺失
+
+        ok = await guard_env(st, "tester", "leader-agent-0001", sid)
+
+        assert ok is True
+        assert st.deleted == [sid]
+        assert st.set_team_id_calls == []  # get_team None → 不动
+
+
 # ---------------------------------------------------------------- 权限层
 class TestTeamDeletePermission:
     """第一层：TeamDelete 必须用户确认（bypass-immune ASK）。"""

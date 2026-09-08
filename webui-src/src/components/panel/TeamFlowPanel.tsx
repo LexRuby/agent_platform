@@ -881,7 +881,19 @@ export function TeamFlowPanel({
 										<WorkflowView
 											events={events}
 											leaderName={leaderName}
-											onSelectReport={(e) => setRerunNode(e)}
+											onSelectReport={(e) => {
+                                                                                        // 被中断节点：预填默认引导语——fork 后
+                                                                                        // auto_started 直接重跑该成员（2026-09-08
+                                                                                        // 用户反馈：fork 后没人执行被中断节点）
+                                                                                        setRerunNode(e);
+                                                                                        setRerunPrompt(
+                                                                                                e.kind === 'member_interrupted'
+                                                                                                        ? t('panel.teamFlow.defaultInterruptedPrompt', {
+                                                                                                                  name: displayName(e.from, t),
+                                                                                                          })
+                                                                                                        : '',
+                                                                                        );
+                                                                                }}
 										/>
 									)}
 
