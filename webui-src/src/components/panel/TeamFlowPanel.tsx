@@ -532,8 +532,22 @@ export function TeamFlowPanel({
         }, [events]);
 
         // 产物：成员汇报全文（时间正序）
+        // 产物 = 成员汇报 + 主理人交付（2026-09-09 用户反馈"产物只有
+        // 5 个 agent 的产出，主理人的呢？最终产物呢？"——产物 Tab
+        // 此前只收 member_report，主理人整合的最终报告（报告级长文）
+        // 在对话框里却不在产物里，中间对话与右侧面板割裂）。
+        // 规则：成员汇报全收；主理人的报告级输出（≥500 字，如最终
+        // 答案/交付清单）与解散后的收尾说明（final）也收——按时序
+        // 排列，主理人的最终交付天然排在成员产物之后（链条完整）。
         const artifacts = useMemo(
-                () => events.filter((e) => e.kind === 'member_report'),
+                () =>
+                        events.filter(
+                                (e) =>
+                                        e.kind === 'member_report' ||
+                                        e.kind === 'final' ||
+                                        (e.kind === 'leader_say' &&
+                                                (e.content?.length ?? 0) >= 500),
+                        ),
                 [events],
         );
 
@@ -1023,17 +1037,39 @@ export function TeamFlowPanel({
 
 									{tab === 'artifacts' && (
 										<div className="space-y-2">
-												{artifacts.map((e, i) => (
+												{artifacts.map((e, i) => {
+														// 主理人产出（报告级长文/final）：显示"主理人"标签；
+														// 列表中最后一条主理人产物 = 最终交付，金色高亮
+														const isLeader = e.kind !== 'member_report';
+														const leaderArts = artifacts.filter(
+																(a) => a.kind !== 'member_report',
+														);
+														const isFinal =
+																isLeader && e === leaderArts[leaderArts.length - 1];
+														return (
 														<button
 																key={i}
 																type="button"
-																className="w-full rounded-lg border p-2 text-left transition-colors hover:bg-muted/50"
+																className={
+																		'w-full rounded-lg border p-2 text-left transition-colors hover:bg-muted/50 ' +
+																		(isFinal ? 'border-amber-300 bg-amber-50/60' : '')
+																}
 																onClick={() => setViewingArtifact(e)}
 														>
 																<div className="flex items-center gap-2 text-xs">
 																		<span className="font-medium">
 																				{displayName(e.from, t)}
 																		</span>
+																		{isLeader && (
+																				<span className="rounded bg-primary/10 px-1 text-[10px] font-medium text-primary">
+																						{t('panel.teamFlow.leaderArtifactBadge')}
+																				</span>
+																		)}
+																		{isFinal && (
+																				<span className="rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-700">
+																						{t('panel.teamFlow.finalArtifactBadge')}
+																				</span>
+																		)}
 																		<span className="text-muted-foreground">
 																				{t('panel.teamFlow.artifactOf')} · {fmtTime(e.time)}
 																		</span>
@@ -1045,10 +1081,11 @@ export function TeamFlowPanel({
 																		{e.summary}
 																</div>
 														</button>
-												))}
+														);
+												})}
 												{artifacts.length === 0 && (
 														<div className="py-2 text-center text-xs text-muted-foreground">
-																{t('panel.teamFlow.noArtifacts')}
+																{t('panel.teamFlow.noArtifactsV2')}
 														</div>
 												)}
 										</div>

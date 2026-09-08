@@ -1179,6 +1179,43 @@ class TestWorkflowNodeRerun:
         assert "dissolved" in ef["teamDissolvedBanner"]
         assert ef["pipeUserTask"] == "User task"
 
+    def test_artifacts_include_leader_delivery(self):
+        """产物 Tab 包含主理人交付（2026-09-09 用户反馈：
+        "产物里面只有 5 个 agent 的产出，主理人的呢？最终产物呢？"）。
+
+        此前产物只收 member_report——主理人整合的最终报告（报告级
+        长文）在对话框里却不在产物里，中间对话与右侧面板割裂。
+        """
+        panel = (
+            _SRC_DIR / "components" / "panel" / "TeamFlowPanel.tsx"
+        ).read_text(encoding="utf-8")
+        # 产物 = 成员汇报 + 主理人报告级输出（≥500字）+ final
+        assert "e.kind === 'member_report'" in panel
+        assert "e.kind === 'final'" in panel
+        assert "(e.content?.length ?? 0) >= 500" in panel
+        # 主理人产物标签 + 最终交付高亮
+        assert "leaderArtifactBadge" in panel
+        assert "finalArtifactBadge" in panel
+
+        # i18n 文案（zh + en）
+        zh = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "zh.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        tf = zh["panel"]["teamFlow"]
+        assert tf["leaderArtifactBadge"] == "主理人"
+        assert tf["finalArtifactBadge"] == "最终交付"
+        assert "主理人交付" in tf["noArtifactsV2"]
+        en = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "en.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        ef = en["panel"]["teamFlow"]
+        assert ef["leaderArtifactBadge"] == "Leader"
+        assert ef["finalArtifactBadge"] == "Final delivery"
+
     def test_api_team_fork_defined(self):
         api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
         assert "TeamForkResponse" in api
