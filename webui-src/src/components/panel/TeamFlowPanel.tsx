@@ -248,6 +248,21 @@ export function buildTimeline(
                                                                 : undefined,
                                                 time,
                                         });
+                                        // AgentCreate 的 prompt 即成员的首次任务分派
+                                        // （主理人重建团队时的任务下发方式）。2026-09-08
+                                        // 用户反馈"任务都下发了，工作流没变化"——此前
+                                        // 只有 TeamSay 才产生 dispatch 节点，AgentCreate
+                                        // 的任务分派在链路上不可见
+                                        if (typeof input.prompt === 'string' && input.prompt.trim()) {
+                                                push({
+                                                        kind: 'dispatch',
+                                                        from: m.name || leader,
+                                                        to: memberName,
+                                                        summary: summarize(input.prompt),
+                                                        content: input.prompt,
+                                                        time,
+                                                });
+                                        }
                                         break;
                                 }
                                 case 'TeamSay': {

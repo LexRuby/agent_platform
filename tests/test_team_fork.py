@@ -478,10 +478,104 @@ class TestForkTeamTakeover:
         assert r.status_code == 201, r.text
         body = r.json()
         assert body["team_taken_over"] is False
+        assert body["team_missing"] is True
         fork_record = _get_session(
             stack.fake, stack.storage, body["session_id"],
         )
         assert fork_record.team_id is None
+
+
+# ================================================================ 团队缺失
+
+
+class TestForkTeamMissing:
+    """团队缺失（已解散/无绑定）时的显式降级（2026-09-08 用户困惑修复）。
+
+    事故链：主路径会话的团队已解散（team_id=None）→ 工作流图来自
+    消息历史（旧节点仍显示）→ 用户点击节点 fork → 分支静默退化为
+    普通会话 → 主理人收到"请重新给该成员分派任务"后发现无团队，
+    只能重建。用户误以为"团队还在、系统丢了状态"。
+    修复：响应显式 ``team_missing`` + 引导语附加系统注。
+    """
+
+    def test_fork_no_team_binding_flags_missing(self, stack):
+        """源会话无团队绑定（曾解散）→ team_missing=True。"""
+        svc, reg = _FakeChatService(), _FakeRegistry()
+        stack.client.app.state.chat_service = svc
+        stack.client.app.state.chat_run_registry = reg
+
+        _seed_session(stack.fake, stack.storage)  # 无 team_id
+        _seed_messages(stack.fake, stack.storage, [_msg("m1")])
+
+        r = stack.client.post(
+            f"/sessions/{SID}/team-fork",
+            json={
+                "agent_id": AGENT,
+                "message_id": "m1",
+                "initial_prompt": "「robot-dynamics」上次被中断，请重新分派",
+            },
+            headers=U,
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["team_taken_over"] is False
+        assert body["team_missing"] is True
+
+        # 引导语附加系统注：主理人被明确告知需重建团队
+        assert len(svc.runs) == 1
+        text = svc.runs[0]["input_msg"].get_text_content()
+        assert "robot-dynamics" in text
+        assert "没有在册团队" in text
+        assert "重建团队" in text
+
+    def test_fork_with_team_no_missing_flag(self, stack):
+        """正常接管团队：team_missing=False，引导语原样（不附加）。"""
+        svc, reg = _FakeChatService(), _FakeRegistry()
+        stack.client.app.state.chat_service = svc
+        stack.client.app.state.chat_run_registry = reg
+
+        _seed_session(stack.fake, stack.storage, team_id="t-1")
+        _seed_messages(stack.fake, stack.storage, [_msg("m1")])
+        _seed_team(stack.fake, stack.storage)
+
+        r = stack.client.post(
+            f"/sessions/{SID}/team-fork",
+            json={
+                "agent_id": AGENT,
+                "message_id": "m1",
+                "initial_prompt": "请基于已有成果改进",
+            },
+            headers=U,
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["team_taken_over"] is True
+        assert body["team_missing"] is False
+
+        # 引导语不含系统注（团队在册，无需重建提示）
+        text = svc.runs[0]["input_msg"].get_text_content()
+        assert "没有在册团队" not in text
+        assert "请基于已有成果改进" in text
+
+    def test_fork_missing_team_without_prompt_no_annotation(self, stack):
+        """团队缺失但无引导语：不触发 run（无附加载体），team_missing 仍上报。"""
+        svc, reg = _FakeChatService(), _FakeRegistry()
+        stack.client.app.state.chat_service = svc
+        stack.client.app.state.chat_run_registry = reg
+
+        _seed_session(stack.fake, stack.storage)
+        _seed_messages(stack.fake, stack.storage, [_msg("m1")])
+
+        r = stack.client.post(
+            f"/sessions/{SID}/team-fork",
+            json={"agent_id": AGENT, "message_id": "m1"},
+            headers=U,
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["team_missing"] is True
+        assert body["auto_started"] is False
+        assert svc.runs == []
 
 
 # ================================================================ 错误路径

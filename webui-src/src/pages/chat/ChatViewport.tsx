@@ -812,35 +812,40 @@ export function ChatViewport({
 	}, [truncateTarget, truncateAt, t]);
 
 		/** 节点级 fork 确认：调后端新建分支（引导语由后端作为新分支
-		 *  第一条用户消息自动触发重跑）→ 跳转新分支。 */
-		const handleForkConfirm = useCallback(async () => {
-				if (!forkTarget || !agentId || !sessionId) return;
-				setFlowPending(true);
-				try {
-						const res = await sessionApi.teamFork(
-								sessionId,
-								agentId,
-								forkTarget.msgId,
-								forkTarget.prompt,
-						);
-						if (res) {
-								toast.success(
-										t('chat.forkDone', { name: forkTarget.name }),
-								);
-								if (res.auto_started) {
-										toast.success(t('chat.forkAutoStarted'));
-								}
-								setForkTarget(null);
-								// 跳转新分支会话（团队调度权已移交）
-								navigate(`/chat/${agentId}/${res.session_id}`);
-								// 立即刷新会话列表：新分支尽快出现在侧栏；刷新落地前
-								// chat 页重定向 effect 依赖 freshlyForked 标记放行该 id
-								onTeamUpdated?.();
-						}
-				} finally {
-						setFlowPending(false);
-				}
-		}, [forkTarget, agentId, sessionId, navigate, t, onTeamUpdated]);
+			 *  第一条用户消息自动触发重跑）→ 跳转新分支。
+			 *  源会话无在册团队时（已解散）分支退化为普通会话——
+			 *  明确警告（2026-09-08 用户困惑："为什么要重新组建团队"）。 */
+			const handleForkConfirm = useCallback(async () => {
+					if (!forkTarget || !agentId || !sessionId) return;
+					setFlowPending(true);
+					try {
+							const res = await sessionApi.teamFork(
+									sessionId,
+									agentId,
+									forkTarget.msgId,
+									forkTarget.prompt,
+							);
+							if (res) {
+									toast.success(
+											t('chat.forkDone', { name: forkTarget.name }),
+									);
+									if (res.auto_started) {
+											toast.success(t('chat.forkAutoStarted'));
+									}
+									if (res.team_missing) {
+											toast.warning(t('chat.forkTeamMissing'));
+									}
+									setForkTarget(null);
+									// 跳转新分支会话（团队调度权已移交）
+									navigate(`/chat/${agentId}/${res.session_id}`);
+									// 立即刷新会话列表：新分支尽快出现在侧栏；刷新落地前
+									// chat 页重定向 effect 依赖 freshlyForked 标记放行该 id
+									onTeamUpdated?.();
+							}
+					} finally {
+							setFlowPending(false);
+					}
+			}, [forkTarget, agentId, sessionId, navigate, t, onTeamUpdated]);
 
 		/** 工作流节点 → fork 入口（TeamFlowPanel 回调，带引导语）。 */
 		const handleForkNode = useCallback(
@@ -1295,7 +1300,14 @@ export function ChatViewport({
 					if (!open) setForkTarget(null);
 				}}
 				title={t('chat.forkTitle', { name: forkTarget?.name ?? '' })}
-				description={t('chat.forkDescription')}
+				// 源会话无在册团队（已解散）时替换为警告文案——工作流图
+				// 来自消息历史（旧节点仍显示），但团队实际不在册，用户
+				// 应在确认前知道分支将退化为普通会话（2026-09-08）
+				description={
+					view?.team
+						? t('chat.forkDescription')
+						: t('chat.forkNoTeamDescription')
+				}
 				confirmLabel={t('chat.forkConfirm')}
 				onConfirm={handleForkConfirm}
 			/>

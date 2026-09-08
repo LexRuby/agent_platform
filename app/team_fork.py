@@ -87,6 +87,11 @@ class TeamForkResponse(BaseModel):
         default=False,
         description="引导语是否已自动触发 chat run",
     )
+    team_missing: bool = Field(
+        default=False,
+        description="源会话无在册团队（已解散/记录缺失）——分支退化为"
+        "普通会话，主理人需重建团队才能分派成员任务",
+    )
 
 
 def _branch_name(orig_name: str, node_label: str) -> str:
@@ -185,6 +190,7 @@ async def fork_team_session(
 
     # 4. 团队接管：分支绑定原团队，活跃 leader 指针移交
     taken_over = False
+    team_missing = False
     team_id: Any = getattr(record, "team_id", None)
     if team_id:
         team = await storage.get_team(user_id, team_id)
@@ -196,6 +202,7 @@ async def fork_team_session(
             await storage.upsert_team(user_id, team)
             taken_over = True
         else:  # 团队记录已缺失（软解散残留）——分支退化为普通会话
+            team_missing = True
             _logger.warning(
                 "fork 时团队记录缺失，分支不接管: user=%s team=%s",
                 user_id, team_id,
@@ -209,18 +216,37 @@ async def fork_team_session(
                 _logger.exception(
                     "fork 自愈: 清理死 team_id 失败 session=%s", session_id,
                 )
+    else:
+        # 源会话无团队绑定（曾解散/普通会话）——工作流图来自消息
+        # 历史（旧事件仍显示），但团队已不在册。此前静默降级导致
+        # 用户误以为"团队还在、只是重跑节点"，主理人收到引导语后
+        # 只能重建团队（2026-09-08 用户困惑："为什么要重新组建团队"）
+        team_missing = True
 
     _logger.info(
-        "工作流节点 fork: user=%s parent=%s fork=%s 锚点=%s 保留=%d 接管=%s",
+        "工作流节点 fork: user=%s parent=%s fork=%s 锚点=%s 保留=%d "
+        "接管=%s 团队缺失=%s",
         user_id, session_id, fork_sid, body.message_id,
-        idx + 1, taken_over,
+        idx + 1, taken_over, team_missing,
     )
+
+    # 4.5 团队缺失时的引导语增强：明确告知主理人当前无在册团队、
+    #     需先重建——否则"请重新给该成员分派任务"会让主理人困惑地
+    #     自行探索（或让用户误以为系统丢失了团队状态）。附加说明
+    #     与引导语同一条用户消息发送，用户在会话中可见完整上下文。
+    prompt = (body.initial_prompt or "").strip()
+    if prompt and team_missing:
+        prompt = (
+            f"{prompt}\n\n"
+            "（系统注：本会话当前没有在册团队——原团队已解散或不存在。"
+            "请先重建团队（沿用既有工作成果），再给上述成员分派任务。）"
+        )
 
     # 5. 引导语自动触发：fork 完成即作为新分支第一条用户消息启动
     #    chat run（与官方 /chat/ 同路径：直接 spawn，registry 负责
     #    单 run 防重）。事件进 replay log，前端 SSE 后连也不丢开头。
+    #    （prompt 已在 4.5 完成团队缺失增强，此处直接使用）
     auto_started = False
-    prompt = (body.initial_prompt or "").strip()
     if prompt:
         chat_service = getattr(request.app.state, "chat_service", None)
         registry = getattr(request.app.state, "chat_run_registry", None)
@@ -256,4 +282,5 @@ async def fork_team_session(
         kept_messages=idx + 1,
         team_taken_over=taken_over,
         auto_started=auto_started,
+        team_missing=team_missing,
     )

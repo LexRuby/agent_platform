@@ -107,6 +107,9 @@ export interface TeamForkResponse {
 	team_taken_over: boolean;
 	/** 引导语是否已自动触发 chat run（initial_prompt 非空时）。 */
 	auto_started?: boolean;
+	/** 源会话无在册团队（已解散/记录缺失）——分支未接管团队，
+	 * 主理人需重建团队才能分派成员任务。 */
+	team_missing?: boolean;
 }
 
 export const sessionApi = {

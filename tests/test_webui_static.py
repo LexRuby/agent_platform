@@ -1044,6 +1044,68 @@ class TestWorkflowNodeRerun:
         # fork 自愈：团队记录缺失时清死引用
         assert "fork 自愈" in fork
 
+    def test_fork_team_missing_explicit(self):
+        """fork 团队缺失显式化（2026-09-08 用户困惑："为什么要重新组建团队"）。
+
+        事故链：主路径团队已解散（team_id=None）→ 工作流图来自消息
+        历史（旧节点仍显示）→ fork 静默退化为普通会话 → 主理人收
+        引导语后只能重建团队，用户误以为系统丢了团队状态。
+        修复三件套：响应 team_missing 标志 + 引导语附加系统注 +
+        前端弹窗警告/toast。
+        """
+        fork = (_BASE_DIR / "app" / "team_fork.py").read_text(encoding="utf-8")
+        # 1. 响应显式 team_missing 字段
+        assert "team_missing: bool" in fork
+        assert 'team_missing=team_missing' in fork
+        # 2. 无 team_id 也标记缺失（此前静默降级）
+        assert "team_missing = True" in fork
+        # 3. 引导语附加系统注（主理人被明确告知需重建团队）
+        assert "没有在册团队" in fork
+        assert "重建团队" in fork
+
+        # 前端：类型 + 弹窗警告 + toast
+        api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
+        assert "team_missing?: boolean" in api
+        viewport = (
+            _SRC_DIR / "pages" / "chat" / "ChatViewport.tsx"
+        ).read_text(encoding="utf-8")
+        assert "res.team_missing" in viewport
+        assert "forkNoTeamDescription" in viewport
+        assert "forkTeamMissing" in viewport
+
+        # i18n 文案（zh + en）
+        zh = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "zh.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        assert "已解散" in zh["chat"]["forkNoTeamDescription"]
+        assert "重建团队" in zh["chat"]["forkNoTeamDescription"]
+        assert zh["chat"]["forkTeamMissing"]
+        en = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "en.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        assert "dissolved" in en["chat"]["forkNoTeamDescription"]
+        assert en["chat"]["forkTeamMissing"]
+
+    def test_agent_create_dispatch_event(self):
+        """AgentCreate 的 prompt 产生 dispatch 节点（2026-09-08 用户反馈：
+        "任务都下发了，工作流没变化"）。
+
+        主理人重建团队时用 AgentCreate 分派任务（prompt 即首次任务），
+        此前只有 TeamSay 才产生 dispatch 事件——任务下发在工作流
+        链路上不可见。
+        """
+        panel = (
+            _SRC_DIR / "components" / "panel" / "TeamFlowPanel.tsx"
+        ).read_text(encoding="utf-8")
+        # AgentCreate 分支内追加 dispatch 事件
+        assert "input.prompt" in panel
+        # AgentCreate 的 prompt 是任务分派（非成员职责描述）
+        assert "首次任务分派" in panel
+
     def test_api_team_fork_defined(self):
         api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
         assert "TeamForkResponse" in api
