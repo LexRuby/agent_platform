@@ -24,10 +24,12 @@ import {
         ChevronUp,
         CircleStop,
         ClipboardList,
+        GitBranch,
         Clock,
         ExternalLink,
         MessageSquare,
         Play,
+        RotateCw,
         Send,
         Users,
         Wrench,
@@ -68,6 +70,8 @@ export interface FlowEvent {
         content?: string;
         /** 事件时间（块 created_at，ISO 字符串）。 */
         time?: string;
+        /** 宿主消息 id（节点级重跑的截断/fork 锚点）。 */
+        msgId?: string;
 }
 
 /** 成员档案：来自团队在册名单，供名字映射与点击跳转。 */
@@ -87,6 +91,10 @@ interface Props {
         members?: FlowMember[];
         /** 进入成员会话单独迭代（成员 Tab 的次要入口）。 */
         onOpenMember?: (member: FlowMember) => void;
+        /** 节点级 fork（2026-09-08）：从该节点新建分支重跑后续链路。 */
+        onForkNode?: (e: FlowEvent) => void;
+        /** 节点级覆盖重跑：截断该节点之后重新处理（复用 truncate）。 */
+        onRerunNode?: (e: FlowEvent) => void;
         /** 团队暂停（2026-09-08 v3）：中断 leader + 取消全部成员运行。 */
         onPauseTeam?: () => void;
         /** 团队继续：唤醒 leader 从当前状态恢复调度。 */
@@ -150,6 +158,10 @@ export function buildTimeline(
 	};
 
         for (const m of msgs) {
+                const msgId = typeof m.id === 'string' ? m.id : undefined;
+                // 事件统一携带宿主消息 id（节点级重跑的锚点）
+                const push = (e: FlowEvent) => events.push({ ...e, msgId });
+
                 // TeamDelete 后主理人的说明 = 最终方案（同一消息内标志传递）
                 let teamDeletedSeen = events.some((e) => e.kind === 'team_deleted');
 
@@ -160,7 +172,7 @@ export function buildTimeline(
 
                         if (blk.type === 'text' && typeof blk.text === 'string' && blk.text.trim()) {
                                 if (m.role === 'user') {
-                                        events.push({
+                                        push({
                                                 kind: 'user_task',
                                                 from: 'user',
                                                 to: leader,
@@ -169,7 +181,7 @@ export function buildTimeline(
                                                 time,
                                         });
                                 } else {
-                                        events.push({
+                                        push({
                                                 kind: teamDeletedSeen ? 'final' : 'leader_say',
                                                 from: m.name || leader,
                                                 to: 'user',
@@ -186,7 +198,7 @@ export function buildTimeline(
                         const input = parseInput(blk.input);
                         switch (name) {
                                 case 'TeamCreate':
-                                        events.push({
+                                        push({
                                                 kind: 'team_created',
                                                 from: m.name || leader,
                                                 to: '',
@@ -204,7 +216,7 @@ export function buildTimeline(
                                         const target = String(input.target ?? input.name ?? '');
                                         const memberName = target.split('@')[0] || '成员';
                                         if (target) memberKeys.add(target);
-                                        events.push({
+                                        push({
                                                 kind: 'member_joined',
                                                 from: m.name || leader,
                                                 to: target || memberName,
@@ -225,7 +237,7 @@ export function buildTimeline(
                                 case 'AgentCreate': {
                                         const memberName = String(input.name ?? '') || '成员';
                                         memberKeys.add(memberName);
-                                        events.push({
+                                        push({
                                                 kind: 'member_joined',
                                                 from: m.name || leader,
                                                 to: memberName,
@@ -241,7 +253,7 @@ export function buildTimeline(
                                 case 'TeamSay': {
                                         const to = String(input.to ?? input.target ?? '') || 'broadcast';
                                         if (to !== 'broadcast') memberKeys.add(to);
-                                        events.push({
+                                        push({
                                                 kind: 'dispatch',
                                                 from: m.name || leader,
                                                 to,
@@ -255,7 +267,7 @@ export function buildTimeline(
                                         break;
                                 }
                                 case 'TeamDelete':
-                                        events.push({
+                                        push({
                                                 kind: 'team_deleted',
                                                 from: m.name || leader,
                                                 to: '',
@@ -266,7 +278,7 @@ export function buildTimeline(
                                         break;
                                 default:
                                         // 其他工具调用（MCP 检索等）计入工具统计
-                                        events.push({
+                                        push({
                                                 kind: 'tool',
                                                 from: m.name || leader,
                                                 to: '',
@@ -302,7 +314,7 @@ export function buildTimeline(
                                         .replace(/<\/?team-message[^>]*>/g, '')
                                         .trim();
                                 if (text) {
-                                        events.push({
+                                        push({
                                                 kind: 'member_report',
                                                 from: sender,
                                                 to: leader,
@@ -318,7 +330,7 @@ export function buildTimeline(
                                 );
                                 if (im) {
                                         memberKeys.add(im[1]);
-                                        events.push({
+                                        push({
                                                 kind: 'member_interrupted',
                                                 from: im[1],
                                                 to: leader,
@@ -353,6 +365,8 @@ export function TeamFlowPanel({
         leaderName,
         members = [],
         onOpenMember,
+        onForkNode,
+        onRerunNode,
         onPauseTeam,
         onResumeTeam,
         teamBusy = false,
@@ -364,6 +378,8 @@ export function TeamFlowPanel({
         const [focus, setFocus] = useState<string | null>(null);
         /** 大窗阅读中的产物（null = 关闭）。 */
         const [viewingArtifact, setViewingArtifact] = useState<FlowEvent | null>(null);
+        /** 重跑弹窗中的节点（null = 关闭）。 */
+        const [rerunNode, setRerunNode] = useState<FlowEvent | null>(null);
 
         const { events } = useMemo(() => buildTimeline(msgs), [msgs]);
 
@@ -860,7 +876,11 @@ export function TeamFlowPanel({
 									)}
 
 									{tab === 'workflow' && (
-										<WorkflowView events={events} leaderName={leaderName} />
+										<WorkflowView
+											events={events}
+											leaderName={leaderName}
+											onSelectReport={(e) => setRerunNode(e)}
+										/>
 									)}
 
 									{tab === 'members' && (
@@ -993,7 +1013,60 @@ export function TeamFlowPanel({
 								</Markdown>
 							</div>
 						</DialogContent>
-					</Dialog>
+				</Dialog>
+
+				{/* 节点级重跑弹窗（2026-09-08 用户需求：
+				    点击工作流节点 → 看产出 → 分支/覆盖重跑） */}
+				<Dialog
+					open={!!rerunNode}
+					onOpenChange={(v) => {
+						if (!v) setRerunNode(null);
+					}}
+				>
+					<DialogContent className="flex h-[85vh] max-w-4xl flex-col sm:max-w-4xl">
+						<DialogHeader>
+							<DialogTitle className="flex items-center gap-2 text-base">
+								<RotateCw className="size-4 text-muted-foreground" />
+								{rerunNode
+									? `${displayName(rerunNode.from, t)} · ${t('panel.teamFlow.nodeRerunTitle')}`
+								: ''}
+							</DialogTitle>
+							<p className="text-xs text-muted-foreground">
+								{t('panel.teamFlow.nodeRerunDesc')}
+							</p>
+						</DialogHeader>
+						<div className="min-h-0 flex-1 overflow-y-auto pr-2">
+							<Markdown className="text-sm">
+								{rerunNode?.content ||
+									rerunNode?.summary ||
+									''}
+							</Markdown>
+						</div>
+						<div className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+							<Button
+								variant="outline"
+								disabled={!rerunNode?.msgId}
+								onClick={() => {
+									if (rerunNode) onRerunNode?.(rerunNode);
+									setRerunNode(null);
+								}}
+							>
+								<RotateCw className="size-4" />
+								{t('panel.teamFlow.rerunOverwrite')}
+							</Button>
+							<Button
+								disabled={!rerunNode?.msgId}
+								onClick={() => {
+									if (rerunNode) onForkNode?.(rerunNode);
+									setRerunNode(null);
+								}}
+							>
+								<GitBranch className="size-4" />
+								{t('panel.teamFlow.rerunFork')}
+							</Button>
+						</div>
+					</DialogContent>
+				</Dialog>
 				</div>
 		);
 	}
@@ -1122,8 +1195,19 @@ function TimelineRow({ e, leaderName }: { e: FlowEvent; leaderName: string }) {
         );
 }
 
-/** 工作流 Tab：按阶段结构化展示（组建 → 分派 → 执行 → 汇报 → 汇总）。 */
-function WorkflowView({ events, leaderName }: { events: FlowEvent[]; leaderName: string }) {
+/**
+ * 工作流 Tab：按阶段结构化展示（组建 → 分派 → 执行 → 汇报 → 汇总）。
+ * 汇报节点可点击（2026-09-08）：弹出该节点产出 + 分支/覆盖重跑入口。
+ */
+function WorkflowView({
+        events,
+        leaderName,
+        onSelectReport,
+}: {
+        events: FlowEvent[];
+        leaderName: string;
+        onSelectReport?: (e: FlowEvent) => void;
+}) {
         const { t } = useTranslation();
         const joined = events.filter((e) => e.kind === 'member_joined');
         const dispatches = events.filter((e) => e.kind === 'dispatch');
@@ -1138,6 +1222,8 @@ function WorkflowView({ events, leaderName }: { events: FlowEvent[]; leaderName:
                 title: string;
                 done: boolean;
                 items: { name: string; detail: string }[];
+                /** 汇报阶段专用：节点级重跑的事件引用。 */
+                reportEvents?: FlowEvent[];
         }[] = [
                 {
                         icon: Play,
@@ -1182,6 +1268,8 @@ function WorkflowView({ events, leaderName }: { events: FlowEvent[]; leaderName:
                         icon: Send,
                         title: t('panel.teamFlow.phaseReport'),
                         done: reports.length > 0,
+                        // 汇报节点可点击（节点级重跑入口）——由下方
+                        // phases 渲染时对 report 类特殊处理
                         items: [
                                 ...reports.map((e) => ({
                                         name: displayName(e.from, t),
@@ -1192,6 +1280,7 @@ function WorkflowView({ events, leaderName }: { events: FlowEvent[]; leaderName:
                                         detail: t('panel.teamFlow.stInterrupted'),
                                 })),
                         ],
+                        reportEvents: reports,
                 },
                 {
                         icon: CircleStop,
@@ -1229,12 +1318,31 @@ function WorkflowView({ events, leaderName }: { events: FlowEvent[]; leaderName:
                                                 >
                                                        	{p.title}
                                                         </div>
-                                                       	{p.items.map((it, j) => (
-																<div key={j} className="truncate text-[11px] text-muted-foreground">
+	{p.items.map((it, j) => {
+															const reportEv = p.reportEvents?.[j];
+															if (reportEv && onSelectReport) {
+																// 汇报节点：可点击查看产出 + 重跑（分支/覆盖）
+																return (
+																	<button
+																		key={j}
+																		type="button"
+																		className="block w-full truncate rounded text-left text-[11px] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+																		onClick={() => onSelectReport(reportEv)}
+																		title={t('panel.teamFlow.nodeRerunHint')}
+																	>
 																		· <b className="font-medium text-foreground/80">{it.name}</b>
 																		{it.detail ? ` — ${it.detail}` : ''}
+																		<span className="ml-1 text-primary">↻</span>
+																	</button>
+																);
+															}
+															return (
+																<div key={j} className="truncate text-[11px] text-muted-foreground">
+																	· <b className="font-medium text-foreground/80">{it.name}</b>
+																	{it.detail ? ` — ${it.detail}` : ''}
 																</div>
-														))}
+															);
+														})}
 										</div>
 								</div>
 						))}

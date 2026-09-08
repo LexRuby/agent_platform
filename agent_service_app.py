@@ -45,6 +45,7 @@ from app.prompt_templates import (
 )
 from app.spa_static import SPAStaticFiles
 from app.session_flow import session_flow_router
+from app.team_fork import team_fork_router
 from app.startup_hook import StartupHook
 from app.team_archive import team_archive_router
 from app.team_preserve import patch_team_protection, team_history_router
@@ -117,6 +118,9 @@ app.include_router(agent_share_router)
 # 会话流程控制：任意位置重新对话（truncate）/ 流程重启（restart）/
 # 团队暂停继续（team-flow pause/resume）/ 截断归档查询（2026-09-08 v3）
 app.include_router(session_flow_router)
+
+# 工作流节点级分支：fork 新会话保留旧结果、团队调度权移交（2026-09-08）
+app.include_router(team_fork_router)
 
 # 会话运行安全补丁（2026-09-07 团队实测三缺陷）：迟到确认炸 reply、
 # 同 id 消息重复追加、团队暂停被自动唤醒穿透

@@ -69,6 +69,14 @@ export interface FlowArchiveEntry {
 	messages: Msg[];
 }
 
+/** 工作流节点级 fork 响应（2026-09-08 分支对比培育）。 */
+export interface TeamForkResponse {
+	session_id: string;
+	parent_session_id: string;
+	kept_messages: number;
+	team_taken_over: boolean;
+}
+
 export const sessionApi = {
      /** 主理会话的历次团队成员 session 映射（agent_id → 团队会话）。 */
      teamSessions: (leaderSessionId: string) =>
@@ -97,6 +105,26 @@ export const sessionApi = {
 			agent_id: agentId,
 			message_id: messageId,
 		}),
+
+	/**
+	 * 工作流节点级 fork：保留当前会话不动，新建分支会话（消息
+	 * 截断到锚点、context 同步、共享工作区与团队），团队调度权
+	 * 移交新分支（2026-09-08 分支对比培育）。
+	 *
+	 * Backend contract:
+	 * - 201 → `TeamForkResponse`（新分支 session_id 等）
+	 * - 404 → 会话或消息不存在
+	 * - 409 → 会话运行中（先暂停再 fork）
+	 */
+	teamFork: (
+		sessionId: string,
+		agentId: string,
+		messageId: string,
+	) =>
+		client.post<TeamForkResponse>(
+			`/sessions/${sessionId}/team-fork`,
+			{ agent_id: agentId, message_id: messageId },
+		),
 
 	/**
 	 * 流程重启：上下文/摘要/回复状态归零，消息历史保留；

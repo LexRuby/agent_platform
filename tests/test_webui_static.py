@@ -874,6 +874,78 @@ class TestTeamFlowPanelAutoScroll:
         assert "scrollHeight - el.scrollTop - el.clientHeight" in src
 
 
+class TestWorkflowNodeRerun:
+    """工作流节点级重跑（2026-09-08 用户需求：分支对比培育）。
+
+    点击工作流汇报节点 → 弹窗看产出 → 「新建分支重跑」（fork 保留
+    旧结果）或「覆盖重跑」（truncate 直接重做）。
+    """
+
+    def test_backend_fork_endpoint(self):
+        backend = (
+            _BASE_DIR / "app" / "team_fork.py"
+        ).read_text(encoding="utf-8")
+        assert "/sessions/{session_id}/team-fork" in backend
+        # upsert_session(session_id=None) 必新建：绕过官方三元组去重
+        assert "state=AgentState()" in backend
+        # 团队接管：set_session_team_id + team.session_id 移交
+        assert "set_session_team_id" in backend
+        assert "team.session_id = fork_sid" in backend
+        # context 截断复用 session_flow 的锚点语义
+        assert "_truncate_context_at" in backend
+
+    def test_frontend_node_click_and_dialog(self):
+        panel = (
+            _SRC_DIR / "components" / "panel" / "TeamFlowPanel.tsx"
+        ).read_text(encoding="utf-8")
+        # 事件带宿主消息 id（重跑锚点）
+        assert "msgId?: string;" in panel
+        assert "const push = (e: FlowEvent) => events.push({ ...e, msgId });" in panel
+        # 汇报节点可点击
+        assert "onSelectReport" in panel
+        assert "setRerunNode" in panel
+        # 弹窗两个动作：fork + 覆盖（复用 truncate）
+        assert "onForkNode?.(rerunNode)" in panel
+        assert "onRerunNode?.(rerunNode)" in panel
+        assert "disabled={!rerunNode?.msgId}" in panel
+
+    def test_chatviewport_fork_flow(self):
+        viewport = (
+            _SRC_DIR / "pages" / "chat" / "ChatViewport.tsx"
+        ).read_text(encoding="utf-8")
+        # fork 确认 → 调 API → 跳转新分支
+        assert "sessionApi.teamFork(" in viewport
+        assert "navigate(`/chat/${agentId}/${res.session_id}`)" in viewport
+        # 覆盖重跑 = 复用消息截断（同「从这里重开」）
+        assert "setTruncateTarget(e.msgId)" in viewport
+        # 两处 TeamFlowPanel（专注/经典布局）都接线
+        assert viewport.count("onForkNode={handleForkNode}") == 2
+        assert viewport.count("onRerunNode={handleRerunNode}") == 2
+
+    def test_api_team_fork_defined(self):
+        api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
+        assert "TeamForkResponse" in api
+        assert "`/sessions/${sessionId}/team-fork`" in api
+
+    def test_i18n_keys(self):
+        zh = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "zh.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        tf = zh["panel"]["teamFlow"]
+        assert tf["rerunFork"] == "新建分支重跑"
+        assert tf["rerunOverwrite"] == "覆盖重跑"
+        assert zh["chat"]["forkConfirm"] == "创建分支"
+        en = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "en.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        assert en["panel"]["teamFlow"]["rerunFork"] == "Fork branch & rerun"
+        assert en["chat"]["forkConfirm"] == "Create branch"
+
+
 class TestMemberIterationBackToLeader:
     """成员迭代返回入口（2026-09-08 用户反馈：进入会话迭代后无法返回）。
 

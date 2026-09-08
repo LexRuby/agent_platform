@@ -776,6 +776,12 @@ export function ChatViewport({
 	const [restartOpen, setRestartOpen] = useState(false);
 	/** 截断（从这里重开）确认：待截断的锚点消息 id */
 	const [truncateTarget, setTruncateTarget] = useState<string | null>(null);
+
+		/** 节点级 fork 目标（2026-09-08 分支对比培育）。 */
+		const [forkTarget, setForkTarget] = useState<{
+			msgId: string;
+			name: string;
+		} | null>(null);
 	/** 流程操作进行中（防重复点击） */
 	const [flowPending, setFlowPending] = useState(false);
 
@@ -803,6 +809,45 @@ export function ChatViewport({
 			setFlowPending(false);
 		}
 	}, [truncateTarget, truncateAt, t]);
+
+		/** 节点级 fork 确认：调后端新建分支会话 → 跳转新分支。 */
+		const handleForkConfirm = useCallback(async () => {
+				if (!forkTarget || !agentId || !sessionId) return;
+				setFlowPending(true);
+				try {
+						const res = await sessionApi.teamFork(
+								sessionId,
+								agentId,
+								forkTarget.msgId,
+						);
+						if (res) {
+								toast.success(
+										t('chat.forkDone', { name: forkTarget.name }),
+								);
+								setForkTarget(null);
+								// 跳转新分支会话（团队调度权已移交）
+								navigate(`/chat/${agentId}/${res.session_id}`);
+						}
+				} finally {
+						setFlowPending(false);
+				}
+		}, [forkTarget, agentId, sessionId, navigate, t]);
+
+		/** 工作流节点 → fork 入口（TeamFlowPanel 回调）。 */
+		const handleForkNode = useCallback(
+				(e: { msgId?: string; from: string }) => {
+						if (e.msgId) setForkTarget({ msgId: e.msgId, name: e.from });
+				},
+				[],
+		);
+
+		/** 工作流节点 → 覆盖重跑入口：复用消息截断（同"从这里重开"）。 */
+		const handleRerunNode = useCallback(
+				(e: { msgId?: string }) => {
+						if (e.msgId) setTruncateTarget(e.msgId);
+				},
+				[],
+		);
 
 	/** 流程重启：确认后上下文归零（消息历史保留）。 */
 	const handleRestartConfirm = useCallback(async () => {
@@ -1016,6 +1061,8 @@ export function ChatViewport({
 									leaderName={leaderName}
 									members={flowMembers}
 									onOpenMember={handleOpenFlowMember}
+									onForkNode={handleForkNode}
+									onRerunNode={handleRerunNode}
 									onPauseTeam={handlePauseTeam}
 									onResumeTeam={handleResumeFlow}
 									teamBusy={phase !== 'idle' || flowPending}
@@ -1147,6 +1194,8 @@ export function ChatViewport({
 											leaderName={leaderName}
 											members={flowMembers}
 											onOpenMember={handleOpenFlowMember}
+											onForkNode={handleForkNode}
+											onRerunNode={handleRerunNode}
 											onPauseTeam={handlePauseTeam}
 											onResumeTeam={handleResumeFlow}
 											teamBusy={phase !== 'idle' || flowPending}
@@ -1203,6 +1252,16 @@ export function ChatViewport({
 				description={t('chat.restartDescription')}
 				confirmLabel={t('chat.restartConfirm')}
 				onConfirm={handleRestartConfirm}
+			/>
+			<DeleteDialog
+				open={forkTarget !== null}
+				onOpenChange={(open) => {
+					if (!open) setForkTarget(null);
+				}}
+				title={t('chat.forkTitle', { name: forkTarget?.name ?? '' })}
+				description={t('chat.forkDescription')}
+				confirmLabel={t('chat.forkConfirm')}
+				onConfirm={handleForkConfirm}
 			/>
 			<DeleteDialog
 				open={truncateTarget !== null}
