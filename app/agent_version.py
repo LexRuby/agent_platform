@@ -505,11 +505,12 @@ async def duplicate_agent_core(
             (payload.get("system_prompt") or "").rstrip()
             + "\n" + _blueprint_prompt_section(blueprint)
         )
-    # 类型跟随源（leader/member）——AgentTypeMiddleware 从 POST body 剥离
+    # 类型跟随源（leader/member）。_call_official 走未包装官方 app，
+    # AgentTypeMiddleware 不在链上——body 里的 agent_type 无人剥离存映射
+    # （2026-09-09 bug：发布产品全被标默认小A → 无组队能力，方案A
+    # 注入的团队图纸无法兑现）。正确做法：创建成功后直写类型表。
     from .agent_type import AgentTypeStore  # noqa: PLC0415
     atype = AgentTypeStore().load().get(agent_id)
-    if atype:
-        payload["agent_type"] = atype
     r = await _call_official("POST", "/agent/", user_id, json_body=payload)
     if r.status_code not in (200, 201):
         raise HTTPException(
@@ -519,6 +520,8 @@ async def duplicate_agent_core(
     new_id = (r.json() or {}).get("agent_id") or (r.json() or {}).get("id") or ""
     if not new_id:
         raise HTTPException(status_code=502, detail="官方创建失败：响应缺 id")
+    if atype:
+        AgentTypeStore().set(new_id, atype)
     return {
         "agent_id": new_id,
         "name": new_name,

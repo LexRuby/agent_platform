@@ -425,16 +425,27 @@ class TestDuplicate:
         assert r.status_code == 400
 
     def test_duplicate_carries_agent_type(self, dstack):
-        """类型跟随源：leader 复制出的新个体也是 leader。"""
+        """类型跟随源：leader 复制出的新个体也是 leader。
+
+        2026-09-09 回归锁：_call_official 绕过 AgentTypeMiddleware，
+        body 带类型无人剥离（发布产品全被标默认小A → 无组队能力，
+        图纸无法兑现）——必须创建成功后直写类型表，且 body 不带
+        agent_type（官方 AgentData 无此字段）。
+        """
         from app.agent_type import AgentTypeStore
 
-        client, _, env = dstack
+        client, db, env = dstack
         aid = _create_agent(client)
         AgentTypeStore(str(env / "types.json")).set(aid, "leader")
         client.post(f"/agent/{aid}/duplicate", headers=U, json={})
         types = AgentTypeStore(str(env / "types.json")).load()
         new_ids = [i for i in types if i != aid]
         assert len(new_ids) == 1 and types[new_ids[0]] == "leader"
+        # body 不携带 agent_type（官方无此字段，靠直写类型表）
+        for stored in db["agents"].values():
+            assert "agent_type" not in stored, (
+                "POST body 仍带 agent_type——官方链路无人剥离，应直写类型表"
+            )
 
 
 class TestRestore:
