@@ -470,6 +470,7 @@ async def duplicate_agent_core(
     name: str,
     version: int | None,
     storage,
+    team_mode: str = "blueprint",
 ) -> dict:
     """复制核心：读源配置（或版本快照）→ 官方创建新 agent。
 
@@ -479,6 +480,12 @@ async def duplicate_agent_core(
     ``storage``：官方 storage（按 owner 键控）——所有权校验必须走
     get_agent 直查，不能用 /agent/ 列表（列表会合并被共享的他人
     智能体，那样就能复制别人的了）。
+
+    ``team_mode``（2026-09-09 发布形态）：
+    - ``blueprint``（默认）：固定团队——快照图纸注入产品提示词，
+      组队时按定义原样重建成员（培育成果随版本走）；
+    - ``auto``：自动组建——不注入名单，产品保留 leader 组队能力
+      （AgentCreate），按任务即兴组队。发布"不带团队的主理人"用此模式。
     """
     record = await storage.get_agent(user_id, agent_id)
     if record is None:
@@ -497,10 +504,11 @@ async def duplicate_agent_core(
     # 方案 A（2026-09-09）：快照带团队图纸 → 注入产品提示词。
     # 图纸字段本身必须剥离（官方 AgentData 无此字段，带着会被
     # pydantic 拒掉）；发布的产品按图纸重建团队成员。
+    # team_mode=auto：不注入名单（自动组建形态）。
     blueprint = data.pop("team_blueprint", None)
     new_name = (name or f"{data.get('name', '智能体')} 副本").strip()[:100] or "未命名智能体"
     payload = {**data, "name": new_name}
-    if blueprint and blueprint.get("members"):
+    if team_mode != "auto" and blueprint and blueprint.get("members"):
         payload["system_prompt"] = (
             (payload.get("system_prompt") or "").rstrip()
             + "\n" + _blueprint_prompt_section(blueprint)

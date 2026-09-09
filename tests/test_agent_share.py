@@ -503,7 +503,8 @@ class TestVersionedPublish:
 
         created = {"next": 1}
 
-        async def fake_dup(agent_id, user_id, name, version, stg):
+        async def fake_dup(agent_id, user_id, name, version, stg,
+                           team_mode="blueprint"):
             new_id = f"pub{created['next']}"
             created["next"] += 1
             return {
@@ -515,13 +516,16 @@ class TestVersionedPublish:
         return storage, _client_of(api_app)
 
     def _publish(self, client, version=2, name="文科志愿专家",
-                 mode="users", users=("bob",)):
+                 mode="users", users=("bob",), team_mode=None):
+        body = {
+            "agent_id": "a-leader", "version": version,
+            "display_name": name, "mode": mode, "users": list(users),
+        }
+        if team_mode is not None:
+            body["team_mode"] = team_mode
         return client.post(
             "/agent-share/publish",
-            json={
-                "agent_id": "a-leader", "version": version,
-                "display_name": name, "mode": mode, "users": list(users),
-            },
+            json=body,
             headers={"X-User-ID": "alice"},
         )
 
@@ -613,3 +617,30 @@ class TestVersionedPublish:
             },
         )
         assert r.status_code == 401
+
+    def test_publish_team_mode_default_and_auto(self, pub_env):
+        """团队形态：默认 blueprint（固定团队）；auto = 自动组建。
+
+        发布"不带团队的主理人"用 auto——产品保留组队能力但不注入
+        快照图纸名单（2026-09-09 发布形态二分）。
+        """
+        storage, client = pub_env
+        # 默认（不传 team_mode）= blueprint
+        r1 = self._publish(client, name="固定团队版")
+        assert r1.status_code == 200, r1.text
+        pub1 = r1.json()["agent_id"]
+        assert r1.json()["team_mode"] == "blueprint"
+        # 显式 auto
+        r2 = self._publish(client, name="自动组建版", team_mode="auto")
+        assert r2.status_code == 200
+        pub2 = r2.json()["agent_id"]
+        assert r2.json()["team_mode"] == "auto"
+        # pubmeta 落库带形态（发布物列表回显）
+        for pid, expect in ((pub1, "blueprint"), (pub2, "auto")):
+            raw = asyncio.run(
+                storage._client.get(f"agentforge:share:pubmeta:{pid}")
+            )
+            assert json.loads(raw)["team_mode"] == expect
+        # 非法形态 → 422
+        r3 = self._publish(client, name="x", team_mode="chaos")
+        assert r3.status_code == 422

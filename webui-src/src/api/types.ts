@@ -1312,6 +1312,24 @@ export interface PublicationInfo {
    mode: string;
    users: string[];
    published_at: string;
+   /** 团队形态：blueprint=固定团队（快照图纸重建）| auto=自动组建。 */
+   team_mode: 'blueprint' | 'auto';
+}
+
+/** 发布物使用统计（发布者视角：跨用户聚合「大A及团队」整体消耗）。 */
+export interface PublicationUsage {
+   agent_id: string;
+   display_name: string;
+   source_version: number;
+   published_at: string;
+   team_mode: 'blueprint' | 'auto';
+   /** 时间窗内用过该产品的用户数。 */
+   active_users: number;
+   totals: UsageTotals;
+   by_date: UsageByDate[];
+   by_model: UsageByModel[];
+   /** 按成员名跨用户聚合（同名角色合并：哪个专家角色烧多少 token）。 */
+   members: { name: string; in: number; out: number; calls: number }[];
 }
 
 /** 汇总口径的四项指标：输入/输出/缓存 tokens 与调用次数。 */

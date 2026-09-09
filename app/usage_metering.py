@@ -50,6 +50,40 @@ _USAGE_KEY = "agentforge:usage:{user}"
 _SEEN_KEY = "agentforge:usage:seen"
 
 
+async def load_team_structure(
+    storage: Any, user_id: str,
+) -> tuple[set[str], dict[str, str]]:
+    """该用户账号的团队结构（Redis，运行时权威）。
+
+    返回 ``(leader 集合, member→leader 映射)``。含 AgentCreate 动态
+    创建与 AgentInvite 邀请的成员——LeaderTeamStore 文件只记录创建
+    leader 时的预置名单，动态组队（如使用发布产品）的成员只有
+    Redis team 记录里有。失败降级空（测试栈无该方法）。
+    """
+    leaders: set[str] = set()
+    m2l: dict[str, str] = {}
+    try:
+        teams = await storage.list_teams(user_id)
+    except Exception:  # noqa: BLE001 — 无团队环境
+        return leaders, m2l
+    for t in teams or []:
+        lid = getattr(t, "leader_agent_id", None)
+        if not lid:
+            continue
+        members = getattr(getattr(t, "data", None), "members", None) or []
+        if not members:
+            continue
+        leaders.add(lid)
+        for m in members:
+            m_aid = (
+                m.get("agent_id") if isinstance(m, dict)
+                else getattr(m, "agent_id", None)
+            )
+            if m_aid:
+                m2l.setdefault(m_aid, lid)
+    return leaders, m2l
+
+
 def _field(date: str, agent_id: str, model: str) -> str:
     return f"{date}|{agent_id}|{model}"
 
@@ -230,19 +264,28 @@ async def usage_summary(
 
     start = (datetime.now(timezone.utc) - timedelta(days=days - 1)).strftime("%Y-%m-%d")
 
-    # 产品归属映射（当前团队结构）：member → leader；leader 自成 team
+    # 产品归属映射：member → leader；leader 自成 team。
+    # 双数据源（2026-09-09 修复动态成员归属）：
+    # 1. Redis team 记录（运行时权威）：AgentCreate 动态创建 + AgentInvite
+    #    邀请的成员——使用发布产品组队的消耗全在这里，此前缺这层
+    #    导致动态成员被错算成"独立小A"、leader 本体与成员分裂成两个产品
+    # 2. LeaderTeamStore 文件（预置名单）：创建 leader 时的成员名单，
+    #    从未组队的预置成员也归入 leader
+    redis_leaders, redis_m2l = await load_team_structure(storage, user_id)
     teams = LeaderTeamStore().load()
-    member_to_leader: dict[str, str] = {}
+    member_to_leader: dict[str, str] = {**redis_m2l}
     for leader_id, member_ids in teams.items():
         for m in member_ids:
             # 一个 member 被多个团队引用时归第一个（v1 简化）
             member_to_leader.setdefault(m, leader_id)
+    # team 主体：有预置名单的 leader ∪ Redis 在册团队 leader
+    team_leaders = {lid for lid, ms in teams.items() if ms} | redis_leaders
 
     agent_types = AgentTypeStore().load()
 
     def _product_of(agent_id: str) -> tuple[str, str]:
         """agent_id → (产品类型, 产品主体 id)。team=大A及团队，agent=独立。"""
-        if agent_id in teams and teams[agent_id]:
+        if agent_id in team_leaders:
             return "team", agent_id
         leader = member_to_leader.get(agent_id)
         if leader:

@@ -354,6 +354,52 @@ class TestSrcAgentVersion:
             "丢失中文图纸 tooltip（用户不知道徽章含义）"
         )
 
+    def test_publish_dialog_team_mode_selection(self):
+        """发布对话框必须有团队形态选择（固定团队/自动组建）。
+
+        2026-09-09 发布形态二分：快照含图纸时用户必须能选择
+        blueprint（按定义重建）或 auto（不注入名单即兴组队）。
+        """
+        mgmt = _src("pages/account/AgentManagement.tsx")
+        assert "hasBlueprint && (" in mgmt, (
+            "丢失团队形态选择的条件渲染——含图纸版本发布时无法选自动组建"
+        )
+        assert "setTeamMode(v as 'blueprint' | 'auto')" in mgmt, (
+            "丢失 teamMode 状态切换"
+        )
+        assert "teamMode," in mgmt, "publish 调用未传 teamMode"
+        assert "pub-team-mode-blueprint-label" in mgmt, "丢失固定团队选项文案 key"
+        assert "pub-team-mode-auto-label" in mgmt, "丢失自动组建选项文案 key"
+
+    def test_pub_usage_card_display(self):
+        """发布物卡片必须展示使用统计（发布者视角数据回顾）。"""
+        mgmt = _src("pages/account/AgentManagement.tsx")
+        assert "publicationsUsage()" in mgmt, "丢失使用统计 API 调用"
+        assert "pubUsage.get(p.agent_id)" in mgmt, "丢失卡片统计取数"
+        assert "u.totals.calls > 0 && (" in mgmt, "丢失统计展示条件渲染"
+        assert "account.pub-usage-line" in mgmt, "丢失统计文案 key"
+        assert "pub-team-blueprint-badge" in mgmt, "丢失形态徽章文案 key"
+
+    def test_pub_usage_api_types(self):
+        """agentShare API 必须有 publicationsUsage 与 team_mode 透传。"""
+        api = _src("api/agentShare.ts")
+        types = _src("api/types.ts")
+        assert "publicationsUsage" in api, "丢失发布物使用统计方法"
+        assert "/agent-share/pubs/usage" in api, "丢失使用统计端点"
+        assert "team_mode: teamMode" in api, "publish 未透传团队形态"
+        assert "export interface PublicationUsage" in types, "丢失使用统计类型"
+        assert "team_mode: 'blueprint' | 'auto'" in types, "丢失形态类型定义"
+
+    def test_pub_usage_i18n_keys(self):
+        """zh/en 必须有团队形态与使用统计文案。"""
+        zh = json.loads(_src("i18n/locales/zh.json"))["account"]
+        en = json.loads(_src("i18n/locales/en.json"))["account"]
+        assert zh["pub-team-mode-label"] == "团队形态"
+        assert "自动组建" in zh["pub-team-mode-auto-label"]
+        assert "{{count}} 名成员" in zh["pub-team-mode-blueprint-desc"]
+        assert en.get("pub-team-mode-label") == "Team Mode"
+        assert "{{users}} 位用户" in zh["pub-usage-tooltip"], "丢失统计 tooltip"
+
 
 class TestSrcLeaderTeam:
     """前端源码必须保留大A/小A（leader/member）定制（功能回归锁）。"""

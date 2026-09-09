@@ -569,6 +569,27 @@ class TestMeteringPipeline:
 
 # ---------------------------------------------------------------- 产品维度（v2）
 
+@pytest.fixture
+def product_env(tmp_path, monkeypatch):
+    """团队结构与类型文件指向 tmp（隔离生产 leader_teams.json）。
+
+    模块级：TestProductAggregation 与 TestDynamicTeamAggregation 共用。
+    """
+    teams = tmp_path / "teams.json"
+    teams.write_text(
+        json.dumps({"leader-1": ["member-1", "member-2"]}),
+        encoding="utf-8",
+    )
+    types = tmp_path / "types.json"
+    types.write_text(
+        json.dumps({"leader-1": "leader", "member-1": "member", "solo-9": "member"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENTFORGE_LEADER_TEAMS_FILE", str(teams))
+    monkeypatch.setenv("AGENTFORGE_AGENT_TYPES_FILE", str(types))
+    return tmp_path
+
+
 class TestProductAggregation:
     """products 维度：平台产品 = 大A及team（整体） / 独立小A（2026-09-08）。
 
@@ -582,21 +603,9 @@ class TestProductAggregation:
     """
 
     @pytest.fixture
-    def product_env(self, tmp_path, monkeypatch):
-        """团队结构与类型文件指向 tmp（隔离生产 leader_teams.json）。"""
-        teams = tmp_path / "teams.json"
-        teams.write_text(
-            json.dumps({"leader-1": ["member-1", "member-2"]}),
-            encoding="utf-8",
-        )
-        types = tmp_path / "types.json"
-        types.write_text(
-            json.dumps({"leader-1": "leader", "member-1": "member", "solo-9": "member"}),
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("AGENTFORGE_LEADER_TEAMS_FILE", str(teams))
-        monkeypatch.setenv("AGENTFORGE_AGENT_TYPES_FILE", str(types))
-        return tmp_path
+    def product_env(self, product_env):
+        """兼容：类内引用透传模块级同名 fixture。"""
+        return product_env
 
     def _seed(self, make_storage, api_app, user: str = "u1"):
         """预置：leader-1(team) + member-1/team + member-2/team + solo-9(独立)。"""
@@ -712,3 +721,130 @@ class TestProductAggregation:
         assert len(products) == 1
         assert products[0]["type"] == "agent"
         assert products[0]["name"] == "光杆大A"
+
+
+# ---------------------------------------------------------------- 动态团队归属（2026-09-09 修复）
+
+class TestDynamicTeamAggregation:
+    """Redis team 记录（动态组队）的成员必须归入「大A及团队」产品。
+
+    背景：LeaderTeamStore 文件只记录创建 leader 时的预置名单；
+    用户使用发布产品组队时 AgentCreate 动态创建的成员只存在于
+    Redis team 记录——此前缺这层导致动态成员被错算成"独立小A"、
+    leader 本体与成员分裂成两个产品条目。
+    """
+
+    def _storage_with_teams(self, make_storage, teams_by_user: dict):
+        """带 list_teams 的 storage：{user: [(leader_id, [member_ids])]}。"""
+        import asyncio
+
+        storage = make_storage()
+
+        class _TeamData:
+            def __init__(self, members):
+                self.members = members
+
+        class _Team:
+            def __init__(self, leader, member_ids):
+                self.leader_agent_id = leader
+                self.data = _TeamData(
+                    [{"agent_id": m} for m in member_ids],
+                )
+
+        async def _list_teams(uid):
+            return [
+                _Team(l, ms) for l, ms in teams_by_user.get(uid, [])
+            ]
+
+        storage.list_teams = _list_teams  # 实例级覆盖（测试注入）
+        # 预置名单文件为空（本组只测 Redis 动态结构）
+        return storage
+
+    def test_dynamic_members_merge_into_team_product(
+        self, make_storage, api_app, product_env, monkeypatch,
+    ):
+        """动态组队：leader 本体 + Redis 在册成员并入同一 team 产品。"""
+        import asyncio
+
+        (product_env / "teams.json").write_text("{}", encoding="utf-8")
+        storage = self._storage_with_teams(
+            make_storage, {"u1": [("pub-1", ["member-dyn-1", "member-dyn-2"])]},
+        )
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        data = {
+            f"{today}|pub-1|glm-4.7": {"in": 500, "out": 200, "cache": 0, "calls": 2, "agent_name": "机械控制实验室 v3"},
+            f"{today}|member-dyn-1|glm-4.7": {"in": 100, "out": 50, "cache": 0, "calls": 1, "agent_name": "robot_dynamicist"},
+            f"{today}|member-dyn-2|glm-4.7": {"in": 80, "out": 40, "cache": 0, "calls": 1, "agent_name": "sim_engineer"},
+        }
+        for f, v in data.items():
+            asyncio.run(
+                storage._client.hset(_USAGE_KEY.format(user="u1"), f, json.dumps(v))
+            )
+        api_app.state.storage = storage
+        body = _summary(TestClient(api_app), "u1")
+
+        # 修复前：pub-1 与两个成员分裂成 3 个"独立小A"产品
+        products = body["products"]
+        assert len(products) == 1, "动态团队必须聚成单一 team 产品"
+        team = products[0]
+        assert team["type"] == "team" and team["product_id"] == "pub-1"
+        assert team["in"] == 680 and team["out"] == 290
+        assert team["calls"] == 4
+        member_names = {m["name"] for m in team["members"]}
+        assert member_names == {"机械控制实验室 v3", "robot_dynamicist", "sim_engineer"}
+
+    def test_redis_structure_scoped_to_own_user(
+        self, make_storage, api_app, product_env, monkeypatch,
+    ):
+        """团队结构按用户隔离：u1 查询不吞 u2 账号的团队归属。"""
+        import asyncio
+
+        (product_env / "teams.json").write_text("{}", encoding="utf-8")
+        # u2 账号里 member-x 属于 leader-y；u1 没有任何团队
+        storage = self._storage_with_teams(
+            make_storage, {"u2": [("leader-y", ["member-x"])]},
+        )
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # u1 的用量里恰好有同 id 的 member-x（理论上 id 唯一，防御性验证）
+        asyncio.run(
+            storage._client.hset(
+                _USAGE_KEY.format(user="u1"),
+                f"{today}|member-x|glm-4.7",
+                json.dumps({"in": 10, "out": 5, "cache": 0, "calls": 1, "agent_name": "陌生成员"}),
+            )
+        )
+        api_app.state.storage = storage
+        products = _summary(TestClient(api_app), "u1")["products"]
+        # u1 无团队 → member-x 按独立小A（不得借用 u2 的团队结构归并）
+        assert len(products) == 1
+        assert products[0]["type"] == "agent" and products[0]["product_id"] == "member-x"
+
+    def test_preset_file_and_redis_merge(
+        self, make_storage, api_app, product_env,
+    ):
+        """文件预置名单 + Redis 动态成员并存：各归各的 leader。"""
+        import asyncio
+
+        # 文件：leader-1 预置 member-1；Redis：pub-2 动态 member-dyn
+        storage = self._storage_with_teams(
+            make_storage, {"u1": [("pub-2", ["member-dyn"])]},
+        )
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        data = {
+            f"{today}|leader-1|glm-4.7": {"in": 100, "out": 50, "cache": 0, "calls": 1, "agent_name": "预置主理人"},
+            f"{today}|member-1|glm-4.7": {"in": 20, "out": 10, "cache": 0, "calls": 1, "agent_name": "预置成员"},
+            f"{today}|pub-2|glm-4.7": {"in": 200, "out": 100, "cache": 0, "calls": 1, "agent_name": "发布产品"},
+            f"{today}|member-dyn|glm-4.7": {"in": 40, "out": 20, "cache": 0, "calls": 1, "agent_name": "动态成员"},
+        }
+        for f, v in data.items():
+            asyncio.run(
+                storage._client.hset(_USAGE_KEY.format(user="u1"), f, json.dumps(v))
+            )
+        api_app.state.storage = storage
+        products = {
+            p["product_id"]: p
+            for p in _summary(TestClient(api_app), "u1")["products"]
+        }
+        assert set(products) == {"leader-1", "pub-2"}, "两组团队各成产品"
+        assert products["leader-1"]["in"] == 120  # 预置主理人 + 预置成员
+        assert products["pub-2"]["in"] == 240  # 发布产品 + 动态成员

@@ -13,14 +13,22 @@ import {
 	UserPlus,
 	Users,
 	X,
+	Activity,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { agentApi, agentShareApi, agentVersionApi } from '@/api';
-import type { AgentView, PublicationInfo, ShareInfo } from '@/api';
+import type { VersionBrief } from '@/api/agentVersion';
+import type {
+	AgentView,
+	PublicationInfo,
+	PublicationUsage,
+	ShareInfo,
+} from '@/api';
 import { getUserId } from '@/api/client';
+import { formatNumber } from '@/utils/common';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
 import { AgentVersionDialog } from '@/components/dialog/AgentVersionDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
@@ -385,12 +393,13 @@ function PublishDialog({
 	onDone: () => void;
 }) {
 	const { t } = useTranslation();
-	const [versions, setVersions] = useState<{ version: number; label: string }[]>([]);
+	const [versions, setVersions] = useState<VersionBrief[]>([]);
 	const [version, setVersion] = useState<string>('');
 	const [displayName, setDisplayName] = useState('');
 	const [mode, setMode] = useState<'users' | 'public'>('users');
 	const [users, setUsers] = useState<string[]>([]);
 	const [input, setInput] = useState('');
+	const [teamMode, setTeamMode] = useState<'blueprint' | 'auto'>('blueprint');
 	const [submitting, setSubmitting] = useState(false);
 
 	useEffect(() => {
@@ -398,13 +407,11 @@ function PublishDialog({
 		setUsers([]);
 		setInput('');
 		setMode('users');
+		setTeamMode('blueprint');
 		agentVersionApi
 			.list(agent.id)
 			.then((s) => {
-				const vs = [...s.versions].reverse().map((v) => ({
-					version: v.version,
-					label: v.label,
-				}));
+				const vs = [...s.versions].reverse();
 				setVersions(vs);
 				if (vs.length > 0) {
 					const latest = String(vs[0].version);
@@ -417,6 +424,10 @@ function PublishDialog({
 			})
 			.catch(() => setVersions([]));
 	}, [open, agent.id, agent.data.name]);
+
+	// 所选版本的团队图纸（>0 = 快照内嵌团队定义，可选发布形态）
+	const selectedBrief = versions.find((v) => String(v.version) === version);
+	const hasBlueprint = (selectedBrief?.team_members ?? 0) > 0;
 
 	const addUser = () => {
 		const name = input.trim();
@@ -442,6 +453,7 @@ function PublishDialog({
 				displayName.trim(),
 				mode,
 				mode === 'users' ? users : [],
+				teamMode,
 			);
 			toast.success(t('account.pub-toast', { name: res.display_name }));
 			onOpenChange(false);
@@ -557,20 +569,66 @@ function PublishDialog({
 								</div>
 							</Label>
 							<Label
-								className={cn(
-									'flex cursor-pointer items-start gap-3 rounded-lg border p-3',
-									mode === 'public' && 'border-primary bg-primary/5',
-								)}
+							className={cn(
+								'flex cursor-pointer items-start gap-3 rounded-lg border p-3',
+								mode === 'public' && 'border-primary bg-primary/5',
+							)}
+						>
+							<RadioGroupItem value="public" className="mt-0.5" />
+							<div className="space-y-1">
+								<div className="text-sm font-medium">{t('share.mode-public-label')}</div>
+								<div className="text-xs text-muted-foreground">{t('share.mode-public-desc')}</div>
+							</div>
+						</Label>
+					</RadioGroup>
+
+					{hasBlueprint && (
+						<div className="flex flex-col gap-1.5">
+							<Label>{t('account.pub-team-mode-label')}</Label>
+							<RadioGroup
+								value={teamMode}
+								onValueChange={(v) => setTeamMode(v as 'blueprint' | 'auto')}
+								className="gap-2"
 							>
-								<RadioGroupItem value="public" className="mt-0.5" />
-								<div className="space-y-1">
-									<div className="text-sm font-medium">{t('share.mode-public-label')}</div>
-									<div className="text-xs text-muted-foreground">{t('share.mode-public-desc')}</div>
-								</div>
-							</Label>
-						</RadioGroup>
-					</div>
-				)}
+								<Label
+									className={cn(
+										'flex cursor-pointer items-start gap-3 rounded-lg border p-3',
+										teamMode === 'blueprint' && 'border-primary bg-primary/5',
+									)}
+								>
+									<RadioGroupItem value="blueprint" className="mt-0.5" />
+									<div className="space-y-1">
+										<div className="text-sm font-medium">
+											{t('account.pub-team-mode-blueprint-label')}
+										</div>
+										<div className="text-xs text-muted-foreground">
+											{t('account.pub-team-mode-blueprint-desc', {
+												count: selectedBrief?.team_members ?? 0,
+											})}
+										</div>
+									</div>
+								</Label>
+								<Label
+									className={cn(
+										'flex cursor-pointer items-start gap-3 rounded-lg border p-3',
+										teamMode === 'auto' && 'border-primary bg-primary/5',
+									)}
+								>
+									<RadioGroupItem value="auto" className="mt-0.5" />
+									<div className="space-y-1">
+										<div className="text-sm font-medium">
+											{t('account.pub-team-mode-auto-label')}
+										</div>
+										<div className="text-xs text-muted-foreground">
+											{t('account.pub-team-mode-auto-desc')}
+										</div>
+									</div>
+								</Label>
+							</RadioGroup>
+						</div>
+					)}
+				</div>
+			)}
 
 				<DialogFooter>
 					<Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -606,6 +664,7 @@ export function AgentManagement() {
 	const [agents, setAgents] = useState<AgentView[]>([]);
 	const [shares, setShares] = useState<ShareInfo[]>([]);
 	const [publications, setPublications] = useState<PublicationInfo[]>([]);
+	const [pubUsage, setPubUsage] = useState<Map<string, PublicationUsage>>(new Map());
 	const [loading, setLoading] = useState(true);
 
 	// 对话框目标
@@ -619,14 +678,21 @@ export function AgentManagement() {
 	const load = useCallback(async () => {
 		setLoading(true);
 		try {
-			const [agentRes, shareRes, pubRes] = await Promise.all([
+			const [agentRes, shareRes, pubRes, usageRes] = await Promise.all([
 				agentApi.list(),
 				agentShareApi.mine(),
 				agentShareApi.publications().catch(() => ({ publications: [] as PublicationInfo[] })),
+				// 发布者视角：跨用户聚合大A及团队消耗（迭代决策输入）
+				agentShareApi
+					.publicationsUsage()
+					.catch(() => ({ publications: [] as PublicationUsage[] })),
 			]);
 			setAgents(agentRes.agents);
 			setShares(shareRes.shares);
 			setPublications(pubRes.publications);
+			setPubUsage(
+				new Map(usageRes.publications.map((p) => [p.agent_id, p])),
+			);
 		} finally {
 			setLoading(false);
 		}
@@ -819,7 +885,9 @@ export function AgentManagement() {
 						</Empty>
 					) : (
 						<div className="flex flex-col gap-2">
-							{publications.map((p) => (
+							{publications.map((p) => {
+								const u = pubUsage.get(p.agent_id);
+								return (
 								<div
 									key={p.agent_id}
 									className="flex items-center gap-3 rounded-lg border px-3 py-2"
@@ -831,6 +899,16 @@ export function AgentManagement() {
 												{p.display_name}
 											</span>
 											<ModeBadge mode={p.mode as ShareMode} users={p.users} />
+											<Badge
+												variant="outline"
+												className={p.team_mode === 'auto'
+													? 'gap-1 border-amber-200 bg-amber-50 px-1.5 py-0 text-[10px] text-amber-700'
+													: 'gap-1 border-emerald-200 bg-emerald-50 px-1.5 py-0 text-[10px] text-emerald-700'}
+											>
+												{p.team_mode === 'auto'
+													? t('account.pub-team-auto-badge')
+													: t('account.pub-team-blueprint-badge')}
+											</Badge>
 										</div>
 										<div className="text-xs text-muted-foreground">
 											{t('account.pub-source', {
@@ -839,6 +917,25 @@ export function AgentManagement() {
 											})}
 										</div>
 									</div>
+									{/* 使用统计（发布者视角：迭代决策的数据回顾） */}
+									{u && u.totals.calls > 0 && (
+										<div
+											className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground"
+											title={t('account.pub-usage-tooltip', {
+												users: u.active_users,
+												tokens: formatNumber(u.totals.in + u.totals.out),
+											})}
+										>
+											<span className="inline-flex items-center gap-1">
+												<Activity className="size-3.5 text-primary" />
+												{t('account.pub-usage-line', {
+													users: u.active_users,
+													calls: u.totals.calls,
+													tokens: formatNumber(u.totals.in + u.totals.out),
+												})}
+											</span>
+										</div>
+									)}
 									<Button
 										size="sm"
 										variant="ghost"
@@ -851,7 +948,8 @@ export function AgentManagement() {
 										<Settings2 className="size-3.5" />
 									</Button>
 								</div>
-							))}
+								);
+							})}
 						</div>
 					)}
 				</CardContent>

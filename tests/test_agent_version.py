@@ -836,6 +836,47 @@ class TestBlueprintSnapshotFlow:
         created = db["agents"][dup["agent_id"]]
         assert created["system_prompt"] == "原始提示词"
 
+    def test_duplicate_auto_mode_skips_blueprint(self, stack):
+        """team_mode=auto（自动组建）：不注入名单，保留原始提示词。
+
+        发布"不带团队的主理人"——产品仍有 leader 组队能力，按任务
+        即兴 AgentCreate（2026-09-09 发布形态二分）。
+        """
+        import asyncio
+        from app.agent_version import duplicate_agent_core
+        client, vs, db = stack
+        aid = _create_agent(client, name="机械控制实验室", prompt="你是主理人")
+        vs.add_version(
+            aid,
+            {"name": "机械控制实验室", "system_prompt": "你是主理人"},
+            "带图纸版本",
+            team_blueprint={
+                "team_name": "双臂液体搬运研究组",
+                "members": [{"name": "robot_dynamicist",
+                             "description": "机器人动力学专家",
+                             "system_prompt": "full..."}],
+            },
+        )
+
+        class _OwnerStorage:
+            async def get_agent(self, user_id, agent_id):
+                class _R:
+                    source = "user"
+                return _R() if agent_id == aid else None
+
+        dup = asyncio.run(
+            duplicate_agent_core(
+                aid, "u1", "自动组建版", 1, _OwnerStorage(),
+                team_mode="auto",
+            ),
+        )
+        created = db["agents"][dup["agent_id"]]
+        # 未注入任何图纸痕迹
+        assert created["system_prompt"] == "你是主理人"
+        assert "双臂液体搬运研究组" not in created["system_prompt"]
+        assert "robot_dynamicist" not in created["system_prompt"]
+        assert "team_blueprint" not in created
+
     def test_restore_strips_blueprint(self, stack, monkeypatch):
         """恢复版本：PATCH body 剥离图纸字段（官方 AgentData 无此字段）。"""
         client, vs, db = stack

@@ -38,7 +38,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from agentscope.app.access import (
@@ -144,6 +144,13 @@ class PublishRequest(BaseModel):
         default_factory=list,
         description="mode=users 时的授权账号列表（用户名）",
     )
+    team_mode: str = Field(
+        default="blueprint",
+        description=(
+            "团队形态：blueprint=固定团队（快照图纸注入，按定义重建成员）"
+            " | auto=自动组建（不注入名单，保留组队能力按任务即兴组队）"
+        ),
+    )
 
 
 class PublicationInfo(BaseModel):
@@ -157,6 +164,7 @@ class PublicationInfo(BaseModel):
     mode: str = "users"
     users: list[str] = []
     published_at: str = ""
+    team_mode: str = "blueprint"
 
 
 class MyPublicationsResponse(BaseModel):
@@ -369,6 +377,10 @@ async def publish_version(body: PublishRequest, request: Request) -> Publication
     display_name = body.display_name.strip()[:100]
     if not display_name:
         raise HTTPException(status_code=422, detail="对外名称不能为空")
+    if body.team_mode not in ("blueprint", "auto"):
+        raise HTTPException(
+            status_code=422, detail="团队形态必须是 blueprint/auto",
+        )
 
     # 版本必须存在（发布的是快照，不是实时配置）
     store = AgentVersionStore()
@@ -380,7 +392,7 @@ async def publish_version(body: PublishRequest, request: Request) -> Publication
     # 核心：从版本快照复制出对外产品（独立个体）
     dup = await duplicate_agent_core(
         body.agent_id, user_id, display_name, body.version,
-        request.app.state.storage,
+        request.app.state.storage, team_mode=body.team_mode,
     )
     published_id = dup["agent_id"]
 
@@ -393,6 +405,7 @@ async def publish_version(body: PublishRequest, request: Request) -> Publication
         "source_version": body.version,
         "display_name": display_name,
         "published_at": _now_iso(),
+        "team_mode": body.team_mode,
     }
     await client.set(
         _PUBMETA_KEY.format(published_id=published_id),
@@ -408,6 +421,7 @@ async def publish_version(body: PublishRequest, request: Request) -> Publication
         mode=mode,
         users=users if mode == "users" else [],
         published_at=pubmeta["published_at"],
+        team_mode=body.team_mode,
     )
 
 
@@ -451,7 +465,173 @@ async def list_my_publications(request: Request) -> MyPublicationsResponse:
                 mode=(share or {}).get("mode") or "users",
                 users=(share or {}).get("users") or [],
                 published_at=meta.get("published_at") or "",
+                team_mode=meta.get("team_mode") or "blueprint",
             ),
         )
     pubs.sort(key=lambda p: p.published_at, reverse=True)
     return MyPublicationsResponse(publications=pubs)
+
+
+# ── 发布物使用统计（发布者视角，2026-09-09）：培育闭环的数据回顾 ──────────
+
+
+class PublicationUsage(BaseModel):
+    """单个发布物的使用统计（跨用户聚合「大A及团队」整体消耗）。
+
+    所有者回顾"产品被谁用了、跑了多少任务、token 烧在哪"的依据——
+    迭代决策的输入（和 agent 对话 + 使用数据回顾）。
+    """
+
+    agent_id: str
+    display_name: str
+    source_version: int = 0
+    published_at: str = ""
+    team_mode: str = "blueprint"
+    active_users: int = 0
+    """时间窗内用过该产品的用户数"""
+    totals: dict = Field(
+        default_factory=lambda: {"in": 0, "out": 0, "cache": 0, "calls": 0},
+    )
+    by_date: list[dict] = []
+    by_model: list[dict] = []
+    members: list[dict] = []
+    """按成员名跨用户聚合（同名成员合并——图纸保证名字一致，
+    发布者关心的是"哪个专家角色烧了多少 token"）"""
+
+
+@agent_share_router.get(
+    "/agent-share/pubs/usage",
+    summary="我的发布物使用统计（发布者视角：跨用户聚合大A及团队消耗）",
+)
+async def pubs_usage(
+    request: Request,
+    days: int = Query(default=30, ge=1, le=365),
+) -> dict:
+    """发布者视角的使用数据回顾（培育闭环的反馈输入）。
+
+    与 ``/usage/summary``（消费者视角，查自己消费多少）互补——这里
+    跨全平台用户聚合**自己发布的**产品使用量：用户用产品组队时，
+    主理人本体 + 在该用户账号里重建的全体团队成员消耗全部归入
+    该发布产品（「大A及团队」口径 = 调用一次任务的完整成本）。
+
+    隐私边界：只暴露聚合数据（活跃用户数/总量/趋势/角色构成），
+    不暴露具体用户的会话内容。
+    """
+    user_id = _require_user(request)
+    storage = request.app.state.storage
+    client = storage._client
+    from datetime import datetime, timedelta, timezone  # noqa: PLC0415
+
+    start = (
+        datetime.now(timezone.utc) - timedelta(days=days - 1)
+    ).strftime("%Y-%m-%d")
+
+    # 我的发布物集合 + 元数据
+    pub_ids = await client.smembers(_PUBS_KEY.format(owner=user_id))
+    pub_meta: dict[str, dict] = {}
+    for pid in pub_ids:
+        raw = await client.get(_PUBMETA_KEY.format(published_id=pid))
+        if not raw:
+            continue
+        try:
+            pub_meta[pid] = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+    if not pub_meta:
+        return {"days": days, "publications": []}
+
+    # 聚合骨架
+    agg: dict[str, dict] = {
+        pid: {
+            "meta": meta,
+            "users": set(),
+            "totals": {"in": 0, "out": 0, "cache": 0, "calls": 0},
+            "by_date": {},
+            "by_model": {},
+            "members": {},
+        }
+        for pid, meta in pub_meta.items()
+    }
+
+    # 扫全平台 usage 键（每用户一个；跳过去重 Set）
+    from .usage_metering import _SEEN_KEY, _USAGE_KEY, load_team_structure  # noqa: PLC0415
+
+    async for key in client.scan_iter(match="agentforge:usage:*"):
+        if key == _SEEN_KEY:
+            continue
+        uid = key[len("agentforge:usage:"):]
+        raw_map = await client.hgetall(key)
+        if not raw_map:
+            continue
+        # 该用户账号里，各发布物领导的团队成员（动态组队的成员归入产品）
+        try:
+            _, m2l = await load_team_structure(storage, uid)
+        except Exception:  # noqa: BLE001 — 团队结构缺失按无成员处理
+            m2l = {}
+        for field, val_json in raw_map.items():
+            try:
+                date, agent_id, model = field.split("|", 2)
+                val = json.loads(val_json)
+            except (ValueError, TypeError):
+                continue
+            if date < start:
+                continue
+            # 归属：产品本体 或 产品在该用户账号里领导的团队成员
+            if agent_id in agg:
+                pid = agent_id
+            else:
+                leader = m2l.get(agent_id)
+                if leader not in agg:
+                    continue  # 别人的/自己的其他智能体，不混入
+                pid = leader
+            a = agg[pid]
+            a["users"].add(uid)
+            for k in ("in", "out", "cache", "calls"):
+                a["totals"][k] += val.get(k, 0)
+            d = a["by_date"].setdefault(
+                date, {"date": date, "in": 0, "out": 0, "calls": 0},
+            )
+            d["in"] += val.get("in", 0)
+            d["out"] += val.get("out", 0)
+            d["calls"] += val.get("calls", 0)
+            m = a["by_model"].setdefault(
+                model, {"model": model, "in": 0, "out": 0, "calls": 0},
+            )
+            m["in"] += val.get("in", 0)
+            m["out"] += val.get("out", 0)
+            m["calls"] += val.get("calls", 0)
+            # 成员构成按名聚合（跨用户同名合并，主理人本体名=产品名）
+            name = val.get("agent_name") or agent_id[:8]
+            mem = a["members"].setdefault(
+                name, {"name": name, "in": 0, "out": 0, "calls": 0},
+            )
+            mem["in"] += val.get("in", 0)
+            mem["out"] += val.get("out", 0)
+            mem["calls"] += val.get("calls", 0)
+
+    # 输出（按发布时间降序，与 pubs 列表一致）
+    out = []
+    for pid, a in agg.items():
+        meta = a["meta"]
+        out.append(PublicationUsage(
+            agent_id=pid,
+            display_name=meta.get("display_name") or pid[:8],
+            source_version=meta.get("source_version") or 0,
+            published_at=meta.get("published_at") or "",
+            team_mode=meta.get("team_mode") or "blueprint",
+            active_users=len(a["users"]),
+            totals=a["totals"],
+            by_date=sorted(
+                a["by_date"].values(), key=lambda x: x["date"], reverse=True,
+            ),
+            by_model=sorted(
+                a["by_model"].values(),
+                key=lambda x: -(x["in"] + x["out"]),
+            ),
+            members=sorted(
+                a["members"].values(),
+                key=lambda x: -(x["in"] + x["out"]),
+            ),
+        ))
+    out.sort(key=lambda p: p.published_at, reverse=True)
+    return {"days": days, "publications": out}
