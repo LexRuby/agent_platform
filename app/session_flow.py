@@ -540,6 +540,73 @@ async def dissolve_team_flow(
     )
 
 
+class MemberLiveStatus(BaseModel):
+    """单个成员的实时运行状态。"""
+
+    agent_id: str
+    session_id: str
+    name: str = ""
+    running: bool
+
+
+class TeamLiveStatusResponse(BaseModel):
+    """团队实时状态：主理人与全部成员的运行锁快照。
+
+    用于前端区分「运行中」（任一会话持运行锁——正在干活）与
+    「休息中」（团队在册但全部空闲，2026-09-09 用户反馈："任务
+    都结束了，状态不该还是运行中"）。运行判定与官方 sessions
+    列表同源：message_bus.is_locked(session_lock(sid))。
+    """
+
+    leader_session_id: str
+    leader_running: bool
+    members: list[MemberLiveStatus] = []
+
+
+@session_flow_router.get(
+    "/team-flow/{leader_session_id}/live-status",
+    response_model=TeamLiveStatusResponse,
+    summary="团队实时状态（主理人+成员运行锁快照）",
+)
+async def team_live_status(
+    leader_session_id: str,
+    request: Request,
+    agent_id: str = Query(description="leader 的 agent id"),
+) -> TeamLiveStatusResponse:
+    """轮询端点：leader 与全部成员会话当前是否在运行。"""
+    user_id = _require_user(request)
+    storage = request.app.state.storage
+    bus = request.app.state.message_bus
+
+    members = await _leader_members(storage, user_id, leader_session_id)
+    member_status: list[MemberLiveStatus] = []
+    for m in members:
+        name = ""
+        try:
+            agent = await storage.get_agent(user_id, m["agent_id"])
+            name = getattr(getattr(agent, "config", None), "name", "") or ""
+        except Exception:  # noqa: BLE001 — 名字缺失不影响状态
+            pass
+        member_status.append(
+            MemberLiveStatus(
+                agent_id=m["agent_id"],
+                session_id=m["session_id"],
+                name=name,
+                running=await bus.is_locked(
+                    MessageBusKeys.session_lock(m["session_id"]),
+                ),
+            ),
+        )
+
+    return TeamLiveStatusResponse(
+        leader_session_id=leader_session_id,
+        leader_running=await bus.is_locked(
+            MessageBusKeys.session_lock(leader_session_id),
+        ),
+        members=member_status,
+    )
+
+
 @session_flow_router.get(
     "/sessions/{session_id}/flow-archive",
     summary="查询该会话的截断归档（被删消息副本）",

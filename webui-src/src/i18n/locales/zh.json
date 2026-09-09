@@ -806,6 +806,7 @@
       "toolCount": "{{count}} 次工具调用",
       "duration": "运行 {{sec}}s",
       "statusRunning": "运行中",
+      "statusResting": "休息中",
       "statusEnded": "已结束",
       "taskLabel": "任务",
       "tabActivity": "团队动态",

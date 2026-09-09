@@ -85,10 +85,22 @@ export interface TeamHistoryEntry {
 
 /** 会话流程操作结果（后端 app/session_flow.py FlowOpResponse）。 */
 export interface FlowOpResponse {
-	session_id: string;
-	kept_messages: number;
-	archived_messages: number;
-	cancelled_members: number;
+     session_id: string;
+     kept_messages: number;
+     archived_messages: number;
+     cancelled_members: number;
+}
+
+/** 团队实时状态（GET /team-flow/{sid}/live-status）。 */
+export interface TeamLiveStatusResponse {
+     leader_session_id: string;
+     leader_running: boolean;
+     members: {
+          agent_id: string;
+          session_id: string;
+          name: string;
+          running: boolean;
+     }[];
 }
 
 /** 一次截断归档（被删消息副本，后端 flow-archive 端点）。 */
@@ -209,6 +221,17 @@ export const sessionApi = {
 		client.post<FlowOpResponse>(
 			`/team-flow/${leaderSessionId}/dissolve`,
 			null,
+			{ agent_id: agentId },
+		),
+
+	/**
+	 * 团队实时状态：主理人 + 全部成员会话的运行锁快照（与官方
+	 * sessions 列表同源判定）。前端轮询用于区分「运行中」（任一
+	 * 会话持锁）与「休息中」（在册但全部空闲）。
+	 */
+	teamLiveStatus: (leaderSessionId: string, agentId: string) =>
+		client.get<TeamLiveStatusResponse>(
+			`/team-flow/${leaderSessionId}/live-status`,
 			{ agent_id: agentId },
 		),
 

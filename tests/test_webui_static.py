@@ -1342,6 +1342,49 @@ class TestWorkflowNodeRerun:
         assert panel.count("teamActive !== true") >= 2
         assert "teamActive={teamActive}" in panel
 
+    def test_team_live_status_resting(self):
+        """团队实时状态：区分「运行中」与「休息中」（2026-09-09
+        用户反馈"任务都结束了，状态不该还是运行中"）。
+
+        后端 GET /team-flow/{sid}/live-status 返回主理人+成员运行锁
+        快照；前端 4s 轮询注入 teamLive——任一持锁=运行中（脉冲），
+        在册+全部空闲=休息中（静态灰点）；分派未闭环+成员空闲的
+        节点/成员徽章降为待命。
+        """
+        api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
+        assert "teamLiveStatus" in api
+        assert "`/team-flow/${leaderSessionId}/live-status`" in api
+        assert "TeamLiveStatusResponse" in api
+
+        panel = (
+            _SRC_DIR / "components" / "panel" / "TeamFlowPanel.tsx"
+        ).read_text(encoding="utf-8")
+        # 快照驱动：anyLiveRunning / resting / 休息中徽章
+        assert "anyLiveRunning" in panel
+        assert "const resting = teamActive === true && anyLiveRunning === false" in panel
+        assert "statusResting" in panel
+        # 成员徽章：分派未闭环 + 快照空闲 → 待命
+        assert "teamLive.members.find" in panel
+        # 工作流分派节点：idle（待命）状态
+        assert "'idle'" in panel
+        assert "stStandby" in panel
+
+        cv = (
+            _SRC_DIR / "pages" / "chat" / "ChatViewport.tsx"
+        ).read_text(encoding="utf-8")
+        # 轮询：在册团队 4s 拉快照，失败保留上次
+        assert "teamLiveStatus(sessionId, agentId)" in cv
+        assert "setInterval(load, 4000)" in cv
+        # 两处面板注入
+        assert cv.count("teamLive={teamLive ?? undefined}") == 2
+
+        zh = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "zh.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        assert zh["panel"]["teamFlow"]["statusResting"] == "休息中"
+
     def test_api_team_fork_defined(self):
         api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
         assert "TeamForkResponse" in api

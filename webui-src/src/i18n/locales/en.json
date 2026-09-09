@@ -806,6 +806,7 @@
       "toolCount": "{{count}} tool calls",
       "duration": "ran {{sec}}s",
       "statusRunning": "Running",
+      "statusResting": "Resting",
       "statusEnded": "Ended",
       "taskLabel": "Task",
       "tabActivity": "Activity",

@@ -93,6 +93,13 @@ interface Props {
          *  成员列表是历史/预置回退名单（2026-09-09 用户反馈"团队没了
          *  右侧还显示团队"——此前静默回退无任何标注）。 */
         teamActive?: boolean;
+        /** 团队实时运行快照（轮询注入）：任一会话（主理人/成员）持
+         *  运行锁 = 正在干活；全部空闲 = 休息中。undefined = 尚未
+         *  拉到（保持原推导，不闪烁）。 */
+        teamLive?: {
+                leaderRunning: boolean;
+                members: { agent_id: string; session_id: string; running: boolean }[];
+        };
         /** 进入成员会话单独迭代（成员 Tab 的次要入口）。 */
         onOpenMember?: (member: FlowMember) => void;
         /** 节点级 fork（2026-09-08）：从该节点新建分支重跑后续链路。 */
@@ -387,6 +394,7 @@ export function TeamFlowPanel({
         leaderName,
         members = [],
         teamActive,
+        teamLive,
         onOpenMember,
         onForkNode,
         onRerunNode,
@@ -472,16 +480,28 @@ export function TeamFlowPanel({
                         events.some((e) => e.kind === 'team_deleted'),
                 [teamActive, events],
         );
+        // 实时运行快照（2026-09-09 用户反馈"任务结束了还显示运行
+        // 中"）：任一会话（主理人/成员）持运行锁 = 正在干活；全部
+        // 空闲 = 休息中。快照未到（undefined）不改变原判定。
+        const anyLiveRunning = teamLive
+                ? teamLive.leaderRunning || teamLive.members.some((m) => m.running)
+                : undefined;
+        /** 休息中：在册团队 + 快照明确全部空闲。 */
+        const resting = teamActive === true && anyLiveRunning === false;
         const running = useMemo(
                 () =>
-                        teamActive ??
-                        (events.some(
-                                (e) =>
-                                        e.kind === 'team_created' ||
-                                        e.kind === 'member_joined',
-                        ) &&
-                                !teamDeleted),
-                [teamActive, events, teamDeleted],
+                        teamActive === true
+                                ? // 在册：快照说了算；快照未到时暂按运行
+                                  // 中（首拉 4s 内到达，不长期误显）
+                                  (anyLiveRunning ?? true)
+                                : (teamActive ??
+                                  (events.some(
+                                          (e) =>
+                                                  e.kind === 'team_created' ||
+                                                  e.kind === 'member_joined',
+                                  ) &&
+                                          !teamDeleted)),
+                [teamActive, anyLiveRunning, events, teamDeleted],
         );
 
         // 图上成员：在册成员优先，再补充事件中出现但已不在册的
@@ -601,19 +621,28 @@ export function TeamFlowPanel({
          * 修正：解散后未完成的分派 → 已停止；从未分派 → 待命；
          * 只有"有未闭环分派且团队在册"才是执行中。 */
         const memberStatus = (
-                name: string,
+        	m: FlowMember,
         ): 'reported' | 'interrupted' | 'working' | 'standby' | 'stopped' => {
-                const dn = (raw: string) => displayName(raw);
-                if (events.some((e) => e.kind === 'member_report' && dn(e.from) === name))
-                        return 'reported';
-                if (events.some((e) => e.kind === 'member_interrupted' && dn(e.from) === name))
-                        return 'interrupted';
-                const dispatched = events.some(
-                        (e) => e.kind === 'dispatch' && dn(e.to) === name,
-                );
-                if (!dispatched) return 'standby';
-                if (teamDeleted) return 'stopped';
-                return 'working';
+        	const name = m.name;
+        	const dn = (raw: string) => displayName(raw);
+        	if (events.some((e) => e.kind === 'member_report' && dn(e.from) === name))
+        		return 'reported';
+        	if (events.some((e) => e.kind === 'member_interrupted' && dn(e.from) === name))
+        		return 'interrupted';
+        	const dispatched = events.some(
+        		(e) => e.kind === 'dispatch' && dn(e.to) === name,
+        	);
+        	if (!dispatched) return 'standby';
+        	if (teamDeleted) return 'stopped';
+        	// 实时快照（2026-09-09）：分派未闭环 + 快照明确空闲 →
+        	// 待命（等待调度/汇报挂起），持锁才算执行中
+        	if (teamLive && m.sessionId) {
+        		const live = teamLive.members.find(
+        			(x) => x.session_id === m.sessionId,
+        		);
+        		if (live && !live.running) return 'standby';
+        	}
+        	return 'working';
         };
 
         const timelineEvents = events.filter(
@@ -649,6 +678,8 @@ export function TeamFlowPanel({
 							>
 								{running ? (
 									<span className="size-1.5 animate-pulse rounded-full bg-primary-foreground" />
+								) : resting ? (
+									<span className="size-1.5 rounded-full bg-muted-foreground/50" />
 								) : teamDeleted ? (
 									<AlertTriangle className="size-2.5" />
 								) : (
@@ -656,9 +687,11 @@ export function TeamFlowPanel({
 								)}
 								{running
 									? t('panel.teamFlow.statusRunning')
-									: teamDeleted
-										? t('panel.teamFlow.statusDissolved')
-										: t('panel.teamFlow.statusEnded')}
+									: resting
+										? t('panel.teamFlow.statusResting')
+										: teamDeleted
+											? t('panel.teamFlow.statusDissolved')
+											: t('panel.teamFlow.statusEnded')}
 							</Badge>
 						</button>
 						{/* 团队流程控制（2026-09-08 v3）：暂停 = leader +
@@ -776,7 +809,7 @@ export function TeamFlowPanel({
 												latestEdge === key || latestEdge === `${dn}→${leaderName}`;
 											const midX = (leaderX + x) / 2;
 											const midY = (leaderY + memberY) / 2 + 10;
-											const st = memberStatus(dn);
+											const st = memberStatus(m);
 											return (
 												<g key={`${m.id || m.name}`}>
 													{/* 连线 */}
@@ -989,6 +1022,7 @@ export function TeamFlowPanel({
 											events={events}
 											leaderName={leaderName}
 											teamActive={teamActive}
+											teamLive={teamLive}
 											onSelectReport={(e) => {
                                                                                         // 被中断节点：预填默认引导语——fork 后
                                                                                         // auto_started 直接重跑该成员（2026-09-08
@@ -1069,7 +1103,7 @@ export function TeamFlowPanel({
 														);
 												})()}
 												{chartMembers.map((m, i) => {
-														const st = memberStatus(m.name);
+														const st = memberStatus(m);
 														const color = colorOf(i);
 														const detail = focus === m.name;
 														const memberEvents = events.filter(
@@ -1449,16 +1483,22 @@ function TimelineRow({ e, leaderName }: { e: FlowEvent; leaderName: string }) {
  * 核心入口，任意节点皆可重开）。
  */
 function PipelineView({
-        events,
-        leaderName,
-        teamActive,
-        onSelectReport,
+	events,
+	leaderName,
+	teamActive,
+	teamLive,
+	onSelectReport,
 }: {
-        events: FlowEvent[];
-        leaderName: string;
-        /** 数据层在册状态：true 时消息历史里的解散事件不否决（见主组件 teamDeleted 注释）。 */
-        teamActive?: boolean;
-        onSelectReport?: (e: FlowEvent) => void;
+	events: FlowEvent[];
+	leaderName: string;
+	/** 数据层在册状态：true 时消息历史里的解散事件不否决（见主组件 teamDeleted 注释）。 */
+	teamActive?: boolean;
+	/** 实时运行快照：分派未闭环 + 成员空闲 → 待命（不误显执行中）。 */
+	teamLive?: {
+		leaderRunning: boolean;
+		members: { agent_id: string; session_id: string; running: boolean }[];
+	};
+	onSelectReport?: (e: FlowEvent) => void;
 }) {
         const { t } = useTranslation();
         const dn = (raw: string) => displayName(raw, t);
@@ -1472,19 +1512,29 @@ function PipelineView({
          *  （在下一次同成员分派之前）——都无即"进行中"；团队解散
          *  后未闭环 → "已停止"（2026-09-09：不再永远显示执行中）。 */
         const statusOf = (
-                ev: FlowEvent,
-                idx: number,
-        ): 'working' | 'done' | 'interrupted' | 'stopped' => {
-                const member = dn(ev.to);
-                for (let j = idx + 1; j < events.length; j++) {
-                        const e = events[j];
-                        if (e.kind === 'dispatch' && dn(e.to) === member) break;
-                        if (e.kind === 'member_report' && dn(e.from) === member)
-                                return 'done';
-                        if (e.kind === 'member_interrupted' && dn(e.from) === member)
-                                return 'interrupted';
-                }
-                return teamDeleted ? 'stopped' : 'working';
+        	ev: FlowEvent,
+        	idx: number,
+        ): 'working' | 'done' | 'interrupted' | 'stopped' | 'idle' => {
+        	const member = dn(ev.to);
+        	for (let j = idx + 1; j < events.length; j++) {
+        		const e = events[j];
+        		if (e.kind === 'dispatch' && dn(e.to) === member) break;
+        		if (e.kind === 'member_report' && dn(e.from) === member)
+        			return 'done';
+        		if (e.kind === 'member_interrupted' && dn(e.from) === member)
+        			return 'interrupted';
+        	}
+        	if (teamDeleted) return 'stopped';
+        	// 实时快照（2026-09-09）：未闭环分派 + 成员空闲 → 待命，
+        	// 持锁才算执行中。e.to 形如 "name@agentId8"。
+        	if (teamLive) {
+        		const agent8 = ev.to.split('@')[1];
+        		const live = agent8
+        			? teamLive.members.find((x) => x.agent_id.slice(0, 8) === agent8)
+        			: undefined;
+        		if (live && !live.running) return 'idle';
+        	}
+        	return 'working';
         };
 
         /** 主理人执行节点：同一宿主消息内的 leader_say + tool 事件
@@ -1516,6 +1566,7 @@ function PipelineView({
                 | 'done'
                 | 'interrupted'
                 | 'stopped'
+                | 'idle'
                 | 'leader'
                 | 'final'
                 | 'deleted'
@@ -1639,6 +1690,7 @@ function PipelineView({
                 done: 'bg-emerald-500',
                 interrupted: 'bg-amber-500',
                 stopped: 'bg-slate-400',
+                idle: 'bg-slate-300',
                 leader: 'bg-primary',
                 final: 'bg-primary',
                 deleted: 'bg-muted-foreground/50',
@@ -1649,6 +1701,7 @@ function PipelineView({
                 done: t('panel.teamFlow.stDone'),
                 interrupted: t('panel.teamFlow.stInterrupted'),
                 stopped: t('panel.teamFlow.stStopped'),
+                idle: t('panel.teamFlow.stStandby'),
                 leader: '',
                 final: t('panel.teamFlow.stFinal'),
                 deleted: '',
@@ -1695,6 +1748,8 @@ function PipelineView({
                                                                                                 ? 'bg-amber-100 text-amber-700'
                                                                                                 : n.status === 'stopped'
                                                                                                         ? 'bg-slate-200 text-slate-600'
+                                                                                                : n.status === 'idle'
+                                                                                                        ? 'bg-slate-100 text-slate-500'
                                                                                                         : 'bg-muted text-muted-foreground')
                                                                 }
                                                         >

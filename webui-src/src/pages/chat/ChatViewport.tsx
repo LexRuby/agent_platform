@@ -401,6 +401,41 @@ export function ChatViewport({
 		};
 	}, [sessionId]); // 建队/解散由消息流事件触发 refetchSessions → view 变化重渲染
 
+	// 团队实时状态轮询（2026-09-09 用户反馈"任务结束了还显示运行中"）：
+	// 在册团队每 4s 拉取主理人+成员运行锁快照，驱动 Badge 区分
+	// 「运行中」（任一持锁）与「休息中」（全部空闲）。失败保留上次
+	// 快照（不闪烁）；团队不在册/切换会话时停轮询并清空。
+	useEffect(() => {
+		if (!sessionId || !agentId || !view?.team) {
+			setTeamLive(null);
+			return;
+		}
+		let alive = true;
+		const load = async () => {
+			try {
+				const r = await sessionApi.teamLiveStatus(sessionId, agentId);
+				if (alive) {
+					setTeamLive({
+						leaderRunning: r.leader_running,
+						members: r.members.map((m) => ({
+							agent_id: m.agent_id,
+							session_id: m.session_id,
+							running: m.running,
+						})),
+					});
+				}
+			} catch {
+				// 轮询失败静默：保留上次快照
+			}
+		};
+		void load();
+		const timer = setInterval(load, 4000);
+		return () => {
+			alive = false;
+			clearInterval(timer);
+		};
+	}, [sessionId, agentId, view?.team]);
+
 
 	// 成员职责说明：邀请场景读 invite_description；主理人创建的成员
 	// 没有该字段，职责在官方生成的 system_prompt "Your role: ..." 段
@@ -776,6 +811,12 @@ export function ChatViewport({
 	const [restartOpen, setRestartOpen] = useState(false);
     /** 解散团队确认对话框（用户主动解散的唯一入口）。 */
     const [dissolveOpen, setDissolveOpen] = useState(false);
+    /** 团队实时运行快照（2026-09-09：区分「运行中」与「休息中」）。
+     *  在册团队时每 4s 轮询 live-status（主理人+成员运行锁）。 */
+    const [teamLive, setTeamLive] = useState<{
+        leaderRunning: boolean;
+        members: { agent_id: string; session_id: string; running: boolean }[];
+    } | null>(null);
 	/** 截断（从这里重开）确认：待截断的锚点消息 id */
 	const [truncateTarget, setTruncateTarget] = useState<string | null>(null);
 
@@ -1124,6 +1165,7 @@ export function ChatViewport({
 									leaderName={leaderName}
 									members={flowMembers}
 									teamActive={!!view?.team}
+									teamLive={teamLive ?? undefined}
 									onOpenMember={handleOpenFlowMember}
 									onForkNode={handleForkNode}
 									onRerunNode={handleRerunNode}
@@ -1255,11 +1297,12 @@ export function ChatViewport({
 								{isLeader && sessionId ? (
 									<div className="shrink-0">
 											<TeamFlowPanel
-												msgs={msgs}
-												leaderName={leaderName}
-												members={flowMembers}
-												teamActive={!!view?.team}
-												onOpenMember={handleOpenFlowMember}
+													msgs={msgs}
+													leaderName={leaderName}
+													members={flowMembers}
+													teamActive={!!view?.team}
+													teamLive={teamLive ?? undefined}
+													onOpenMember={handleOpenFlowMember}
 												onForkNode={handleForkNode}
 												onRerunNode={handleRerunNode}
 												onPauseTeam={handlePauseTeam}

@@ -177,6 +177,105 @@ def stack():
     )
 
 
+
+# ================================================================ live-status
+
+
+class TestTeamLiveStatus:
+    """GET /team-flow/{sid}/live-status：主理人+成员运行锁快照。
+
+    2026-09-09 用户反馈"任务结束了还显示运行中"——前端需要区分
+    「运行中」（任一会话持锁）与「休息中」（在册但全部空闲），
+    判定与官方 sessions 列表同源（message_bus.is_locked）。
+    """
+
+    def test_all_idle(self, stack):
+        """在册团队、全部空闲 → leader/members running 全 False。"""
+        _seed_session(stack.fake, stack.storage, team_id="t-1")
+        _seed_team(
+            stack.fake, stack.storage,
+            members=[
+                {"agent_id": "a-m1", "session_id": "s-m1"},
+                {"agent_id": "a-m2", "session_id": "s-m2"},
+            ],
+        )
+
+        r = stack.client.get(
+            f"/team-flow/{SID}/live-status",
+            params={"agent_id": AGENT},
+            headers=U,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["leader_session_id"] == SID
+        assert body["leader_running"] is False
+        assert len(body["members"]) == 2
+        assert all(m["running"] is False for m in body["members"])
+        assert {m["session_id"] for m in body["members"]} == {"s-m1", "s-m2"}
+
+    def test_leader_running(self, stack, monkeypatch):
+        """主理人持锁 → leader_running=True。"""
+        _seed_session(stack.fake, stack.storage, team_id="t-1")
+        _seed_team(stack.fake, stack.storage)
+
+        async def locked(key: str) -> bool:
+            # leader 的会话锁（InMemoryMessageBus key 含 session id）
+            return SID in key
+
+        monkeypatch.setattr(stack.bus, "is_locked", locked)
+        r = stack.client.get(
+            f"/team-flow/{SID}/live-status",
+            params={"agent_id": AGENT},
+            headers=U,
+        )
+        assert r.status_code == 200
+        assert r.json()["leader_running"] is True
+
+    def test_member_running(self, stack, monkeypatch):
+        """成员持锁 → 该成员 running=True，其余 False。"""
+        _seed_session(stack.fake, stack.storage, team_id="t-1")
+        _seed_team(
+            stack.fake, stack.storage,
+            members=[
+                {"agent_id": "a-m1", "session_id": "s-m1"},
+                {"agent_id": "a-m2", "session_id": "s-m2"},
+            ],
+        )
+
+        async def locked(key: str) -> bool:
+            return "s-m2" in key
+
+        monkeypatch.setattr(stack.bus, "is_locked", locked)
+        r = stack.client.get(
+            f"/team-flow/{SID}/live-status",
+            params={"agent_id": AGENT},
+            headers=U,
+        )
+        assert r.status_code == 200
+        body = r.json()
+        by_sid = {m["session_id"]: m["running"] for m in body["members"]}
+        assert by_sid == {"s-m1": False, "s-m2": True}
+
+    def test_no_team_empty_members(self, stack):
+        """无在册团队 → members 空列表（前端判休息中的前提）。"""
+        _seed_session(stack.fake, stack.storage, team_id=None)
+
+        r = stack.client.get(
+            f"/team-flow/{SID}/live-status",
+            params={"agent_id": AGENT},
+            headers=U,
+        )
+        assert r.status_code == 200
+        assert r.json()["members"] == []
+
+    def test_unauthenticated(self, stack):
+        r = stack.client.get(
+            f"/team-flow/{SID}/live-status",
+            params={"agent_id": AGENT},
+        )
+        assert r.status_code == 401
+
+
 # ================================================================ dissolve
 
 
