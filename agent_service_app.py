@@ -32,7 +32,11 @@ from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.rag import ApproxTokenChunker, QdrantStore
 from fastapi.responses import HTMLResponse
 
-from app.agent_share import RedisAgentSharePolicy, agent_share_router
+from app.agent_share import (
+    AgentShareDeleteCleanupMiddleware,
+    RedisAgentSharePolicy,
+    agent_share_router,
+)
 from app.agent_type import AgentTypeMiddleware
 from app.agent_version import AgentVersionMiddleware, agent_version_router
 from app.auth import AuthMiddleware, _LOGIN_HTML, auth_router
@@ -190,6 +194,7 @@ if (_web_dir / "index.html").exists():
 #         + 提示词模板/agent_type 注入 /agent/schema/v2
 #         + agent 版本封板（冻结中 PATCH 403 拦截、GET 注入 version 状态；
 #           放最外层保证冻结拦截先于 agent_type/leader_team 处理，零副作用）
+#         + agent 本体删除成功后清理共享授权与版本化发布索引
 #         + agent_type 叠加（POST/PATCH 捕获、GET 注入、DELETE 清理）
 #         + leader 预置团队叠加（team_members 捕获/提示词注入/GET 注入）
 #         + startup 钩子（lifespan 完成后启动 ARK 模型心跳）
@@ -202,7 +207,10 @@ app = _StartupHook(
         SPAPageFallbackMiddleware(
             PromptTemplateSchemaMiddleware(
                 AgentVersionMiddleware(
-                    LeaderTeamMiddleware(AgentTypeMiddleware(app)),
+                    AgentShareDeleteCleanupMiddleware(
+                        LeaderTeamMiddleware(AgentTypeMiddleware(app)),
+                        storage,
+                    ),
                 ),
             ),
             index_path=str(_web_dir / "index.html"),

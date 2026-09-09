@@ -47,6 +47,7 @@ from agentscope.app.storage._model._agent import (  # noqa: E402
 )
 
 from app.agent_share import (  # noqa: E402
+    AgentShareDeleteCleanupMiddleware,
     RedisAgentSharePolicy,
     agent_share_router,
 )
@@ -644,3 +645,89 @@ class TestVersionedPublish:
         # 非法形态 → 422
         r3 = self._publish(client, name="x", team_mode="chaos")
         assert r3.status_code == 422
+
+
+# ---------------------------------------------------------------- 本体删除级联清理
+
+class TestAgentDeleteShareCleanup:
+    """所有入口删除发布物本体后，共享 Redis 数据不能留下孤儿。"""
+
+    @pytest.fixture
+    def delete_app(self, storage):
+        async def inner(scope, receive, send):
+            status = 404 if scope["path"] == "/agent/failed" else 200
+            await send({
+                "type": "http.response.start",
+                "status": status,
+                "headers": [],
+            })
+            await send({"type": "http.response.body", "body": b"{}"})
+
+        return AgentShareDeleteCleanupMiddleware(inner, storage)
+
+    @staticmethod
+    async def _delete(app, path: str) -> int:
+        sent = []
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            sent.append(message)
+
+        await app({
+            "type": "http",
+            "method": "DELETE",
+            "path": path,
+            "headers": [(b"x-user-id", b"alice")],
+        }, receive, send)
+        return sent[0]["status"]
+
+    async def test_successful_delete_cleans_share_and_publication(
+        self, storage, delete_app,
+    ):
+        rec = {
+            "owner": "alice", "mode": "users", "users": ["bob", "carol"],
+            "agent_name": "发布物", "shared_at": "t",
+        }
+        c = storage._client
+        await c.set("agentforge:share:agent:pub1", json.dumps(rec))
+        await c.set(
+            "agentforge:share:pubmeta:pub1",
+            json.dumps({"source_version": 1}),
+        )
+        await c.sadd("agentforge:share:to:bob", "pub1")
+        await c.sadd("agentforge:share:to:carol", "pub1")
+        await c.sadd("agentforge:share:public", "pub1")
+        await c.sadd("agentforge:share:owner:alice", "pub1")
+        await c.sadd("agentforge:share:pubs:alice", "pub1")
+        # 模拟历史脏数据：主记录没列出的授权和错误 owner 索引也应清除。
+        await c.sadd("agentforge:share:to:legacy-user", "pub1")
+        await c.sadd("agentforge:share:owner:legacy-owner", "pub1")
+        await c.sadd("agentforge:share:pubs:legacy-owner", "pub1")
+
+        assert await self._delete(delete_app, "/agent/pub1") == 200
+        assert not await c.exists("agentforge:share:agent:pub1")
+        assert not await c.exists("agentforge:share:pubmeta:pub1")
+        assert not await c.sismember("agentforge:share:to:bob", "pub1")
+        assert not await c.sismember("agentforge:share:to:carol", "pub1")
+        assert not await c.sismember("agentforge:share:public", "pub1")
+        assert not await c.sismember("agentforge:share:owner:alice", "pub1")
+        assert not await c.sismember("agentforge:share:pubs:alice", "pub1")
+        assert not await c.sismember("agentforge:share:to:legacy-user", "pub1")
+        assert not await c.sismember(
+            "agentforge:share:owner:legacy-owner", "pub1",
+        )
+        assert not await c.sismember(
+            "agentforge:share:pubs:legacy-owner", "pub1",
+        )
+
+    async def test_failed_delete_preserves_share_data(self, storage, delete_app):
+        await storage._client.set(
+            "agentforge:share:agent:failed",
+            json.dumps({"owner": "alice", "mode": "public", "users": []}),
+        )
+        assert await self._delete(delete_app, "/agent/failed") == 404
+        assert await storage._client.exists(
+            "agentforge:share:agent:failed",
+        ) == 1

@@ -28,6 +28,10 @@
 - ``PUT  /agent-share/{agent_id}``  发布/更新可见性（仅 owner）
 - ``DELETE /agent-share/{agent_id}``  取消发布（仅 owner）
 
+``AgentShareDeleteCleanupMiddleware`` 监听官方 ``DELETE /agent/{id}``：
+只有本体删除成功才级联清理上述共享索引和版本化发布元数据，避免从
+聊天页或通用 API 删除后，发布列表残留无法使用的孤儿记录。
+
 权限语义：共享一律只读（READ）。跨 owner 编辑（EDIT 权限）留待
 后续按需开放——SaaS 消费场景（客户用大小A）只读即可，且防止
 消费者误改生产版本。
@@ -242,6 +246,80 @@ async def _write_share(
     else:  # public
         await client.sadd(_PUBLIC_KEY, agent_id)
     await client.sadd(_OWNER_KEY.format(owner=owner), agent_id)
+
+
+async def cleanup_deleted_agent_share(
+    client: Any,
+    agent_id: str,
+    owner_hint: str = "",
+) -> None:
+    """删除智能体本体后，清理共享及版本化发布的全部关联索引。"""
+    # 删除是低频操作。扫描索引可处理主记录损坏、旧版本漏写 owner/users
+    # 等历史数据，保证不会留下仍引用已删除本体的 Set 成员。
+    index_patterns = (
+        "agentforge:share:to:*",
+        "agentforge:share:owner:*",
+        "agentforge:share:pubs:*",
+    )
+    for pattern in index_patterns:
+        async for key in client.scan_iter(match=pattern):
+            await client.srem(key, agent_id)
+
+    await client.srem(_PUBLIC_KEY, agent_id)
+    if owner_hint:
+        await client.srem(_OWNER_KEY.format(owner=owner_hint), agent_id)
+        await client.srem(_PUBS_KEY.format(owner=owner_hint), agent_id)
+    await client.delete(
+        _AGENT_KEY.format(agent_id=agent_id),
+        _PUBMETA_KEY.format(published_id=agent_id),
+    )
+
+
+class AgentShareDeleteCleanupMiddleware:
+    """成功删除 ``/agent/{id}`` 后同步清理共享和发布物元数据。"""
+
+    def __init__(self, app: Any, storage: StorageBase) -> None:
+        self.app = app
+        self.client = storage._client  # noqa: SLF001 - 与共享策略共用 Redis
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = (scope.get("path") or "").rstrip("/")
+        method = scope.get("method", "")
+        prefix = "/agent/"
+        rest = path[len(prefix):] if path.startswith(prefix) else ""
+        if method != "DELETE" or not rest or "/" in rest:
+            await self.app(scope, receive, send)
+            return
+
+        status = 500
+
+        async def send_wrapper(message) -> None:
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = message.get("status", 500)
+            if (
+                message["type"] == "http.response.body"
+                and not message.get("more_body")
+                and status in (200, 204)
+            ):
+                owner = ""
+                for key, value in scope.get("headers") or []:
+                    if key.lower() == b"x-user-id":
+                        owner = value.decode("utf-8", errors="ignore")
+                        break
+                try:
+                    await cleanup_deleted_agent_share(
+                        self.client, rest, owner_hint=owner,
+                    )
+                except Exception:  # noqa: BLE001 - 本体已删，不能篡改成功响应
+                    _logger.exception("删除智能体后的共享索引清理失败: %s", rest)
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
 
 
 def _valid_username(name: str) -> bool:

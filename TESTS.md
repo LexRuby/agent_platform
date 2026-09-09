@@ -537,14 +537,14 @@ API 层 3，FakeSessionService duck-typing）；webui_static +3
 > 列出指定 MCP server 的工具清单；monkeypatch `_list_tools_via_probe`
 > 不访问真实 server，storage 用假 record。
 
-### 34. `test_agent_share.py`（33 例）—— 智能体跨账号共享 + 版本化发布
+### 34. `test_agent_share.py`（36 例）—— 智能体跨账号共享 + 版本化发布
 
 > 用户需求（v1，2026-09-07）："我发布之后，能选择哪些账号可以看到
 > 我的大A/小A。"
 > 用户需求（v2，2026-09-08）："发布的时候要有版本控制——同一智能体
 > 的 v2（文科版）、v3（理科版）要能分别发布、对外重命名。"
 
-**共享 v1**（`RedisAgentSharePolicy` + 管理端点，24 例）：
+**共享 v1 + 版本可见性**（策略、管理端点与版本权限，26 例）：
 - 官方 `ResourceAccessPolicyBase` 的 Redis 实现——授予的 agent 以
   只读 ResourceRef 并入官方 ResourceAccessService（列表合并
   editable=false / resolve_for_edit 403 / 会话聊天放行，全链路官方自带）
@@ -553,12 +553,17 @@ API 层 3，FakeSessionService duck-typing）；webui_static +3
   改可见性）、`DELETE /agent-share/{id}`（取消发布）
 - 测试用**真类** `ResourceAccessService` 验证策略与官方链路集成
 
-**版本化发布 v2**（`TestVersionedPublish`，9 例）：
+**版本化发布 v2**（`TestVersionedPublish`，8 例）：
 - `POST /agent-share/publish`：版本快照 → 复制出独立对外产品
   （可重命名）+ 共享；发布物元数据（源 agent + 源版本）入 Redis
 - `GET /agent-share/pubs`：我的发布物列表（含溯源）
 - 取消发布清理 pubmeta（防已下架产品残留列表）
 - 发布必须是 users/public 模式（发布必共享）；版本快照必须存在
+
+**本体删除级联**（`TestAgentDeleteShareCleanup`，2 例）：
+- 任意入口成功删除 `DELETE /agent/{id}` 后，清理共享主记录、授权用户、
+  public/owner 索引、发布元数据和发布物索引（含历史脏索引）
+- 官方删除返回失败时不得误清共享数据
 
 ### 35. 账户中心（2026-09-07/08，test_usage_metering 扩展 28 例 + test_webui_static 扩展）
 
