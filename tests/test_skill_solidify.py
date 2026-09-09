@@ -464,3 +464,86 @@ class TestPromptSop:
         # 官方 app 记录了工厂（create_app 参数链路）
         assert asa._official_app.state.extra_agent_tools \
             is asa._solidify_factory
+
+
+class TestRuntimeSopInjection:
+    """运行时 SOP 注入（2026-09-09 用户需求：所有 agent 默认都有）。
+
+    存储层注入覆盖不到 AgentCreate 成员（直接走 storage，不经 HTTP
+    中间件）与存量 agent——patch ChatService 的 Agent 构造类，聊天
+    组装时统一追加（查重幂等，不污染存储提示词）。
+    """
+
+    def test_patch_replaces_chat_agent_class(self):
+        """patch 后 _chat.Agent 是包装类（SOP 注入生效点）。"""
+        from agentscope.app._service import _chat
+        from app import skill_solidify
+
+        skill_solidify.patch_runtime_sop()
+        assert getattr(_chat.Agent, "_agentforge_sop_injected", False)
+
+    def test_patch_idempotent(self):
+        """重复 patch 不叠加包装类。"""
+        from agentscope.app._service import _chat
+        from app import skill_solidify
+
+        skill_solidify.patch_runtime_sop()
+        first = _chat.Agent
+        skill_solidify.patch_runtime_sop()
+        assert _chat.Agent is first  # 幂等：同一次 patch
+
+    def test_sop_section_shape(self):
+        """SOP 段内容完整：固化动作/纪律/复用三要素。"""
+        from app import skill_solidify
+
+        sec = skill_solidify.SOP_SECTION
+        assert skill_solidify.SOP_MARKER in sec
+        assert "SolidifySkill" in sec
+        assert "泛化抽象" in sec
+        assert "skill_viewer" in sec or "<agent-skills>" in sec
+
+    def test_apply_runtime_sop_pure_function(self):
+        """SOP 变换纯函数：追加/查重跳过/None 透传。"""
+        from app import skill_solidify
+
+        # 无 SOP → 追加（原文保留在前）
+        out = skill_solidify.apply_runtime_sop("你是普通小A。")
+        assert out.startswith("你是普通小A。")
+        assert skill_solidify.SOP_MARKER in out
+        assert "SolidifySkill" in out
+
+        # 已含 SOP（存储层注入过的 leader 提示词）→ 原样返回
+        with_sop = "主理人。\n\n" + skill_solidify.SOP_SECTION
+        assert skill_solidify.apply_runtime_sop(with_sop) is with_sop
+
+        # 空提示词 → 官方 None 语义透传
+        assert skill_solidify.apply_runtime_sop(None) is None
+
+        # 尾部空白清理后追加
+        out2 = skill_solidify.apply_runtime_sop("成员提示。\n  ")
+        assert "成员提示。\n\n\n## 技能沉淀" in out2 or out2.startswith("成员提示。")
+
+    def test_wrapper_class_uses_pure_function(self):
+        """包装类 __init__ 委托 apply_runtime_sop（组装点正确）。"""
+        from app import skill_solidify
+
+        skill_solidify.patch_runtime_sop()
+        sop_cls = skill_solidify.get_sop_agent_cls()
+        assert sop_cls is not None
+        assert sop_cls.__module__ is not None
+
+        # 猴补父类构造：拦截 super().__init__ 收到的最终提示词
+        received = {}
+        bases = sop_cls.__bases__
+
+        class _FakeBase:
+            def __init__(self, *, system_prompt=None, **kw):
+                received["sp"] = system_prompt
+
+        sop_cls.__bases__ = (_FakeBase,)
+        try:
+            sop_cls(system_prompt="AgentCreate 成员。")
+            assert skill_solidify.SOP_MARKER in received["sp"]
+            assert received["sp"].startswith("AgentCreate 成员。")
+        finally:
+            sop_cls.__bases__ = bases

@@ -12,6 +12,8 @@
 - restore 恢复历史版本（冻结中 = 显式授权，也可执行）
 """
 
+import asyncio
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -891,3 +893,149 @@ class TestBlueprintSnapshotFlow:
         # db 中 agent 更新后的内容（PATCH body 经 fake_call_official 进 db）
         assert db["agents"][aid]["system_prompt"] == "主理人提示词"
         assert "team_blueprint" not in db["agents"][aid]
+
+
+class TestSyncPresetTeam:
+    """发版图纸回写预置团队名单（2026-09-09：团队随版本走）。
+
+    用户需求：主理人发版（含团队图纸）后，基于该版本开新会话时
+    团队要跟过去——预置名单回写 + 提示词名单段注入。
+    """
+
+    def _create_leader(self, client, name="机械控制实验室"):
+        """创建 leader 类型 agent（默认 _create_agent 是 member）。"""
+        r = client.post("/agent/", json={
+            "name": name, "system_prompt": "你是主理人。",
+            "agent_type": "leader",
+        })
+        assert r.status_code in (200, 201), r.text
+        aid = r.json()["agent_id"]
+        return aid
+
+    def test_freeze_syncs_preset_team(self, env, monkeypatch):
+        """发版 → 图纸成员回写预置名单 + 提示词名单段注入。"""
+        st = _bp_storage_full(leader_agent=None)  # leader id 动态替换
+        client, vs, db = _make_stack(env, monkeypatch, storage=st)
+        aid = self._create_leader(client)
+        # 团队 leader 指向新创建的 agent；leader 自身进 storage
+        st.teams["t-1"].leader_agent_id = aid
+        st.agents[aid] = _BPAgent(aid, _BPData("机械控制实验室", "你是主理人。"))
+        r = client.post(f"/agent/{aid}/freeze", headers=U)
+        assert r.status_code == 200, r.text
+        # 预置名单写入 leader_teams.json
+        ls = LeaderTeamStore(str(env / "teams.json"))
+        members = ls.get(aid)
+        assert set(members) == {"a-m1", "a-m2"}
+        # 提示词含名单段（成员名 + 职责）
+        sp = db["agents"][aid]["system_prompt"]
+        assert "robot_dynamicist" in sp and "registry_expert" in sp
+        assert "机器人动力学专家，负责建模" in sp
+        assert "## 预置团队成员" in sp
+
+    def test_restore_syncs_preset_team(self, env, monkeypatch):
+        """恢复含图纸版本 → 预置名单同步（团队跟过去）。"""
+        st = _bp_storage_full()
+        st.teams["t-1"].leader_agent_id = "a-leader"
+        # 快照成员带 agent_id（新格式 collect 输出）
+        bp = {
+            "team_name": "T", "members": [
+                {"agent_id": "a-m1", "name": "robot_dynamicist",
+                 "description": "建模", "system_prompt": "x"},
+            ],
+        }
+        client, vs, db = _make_stack(env, monkeypatch, storage=st)
+        aid = self._create_leader(client)  # 中间件已记 leader 类型
+        # 生产语义：leader 自身必在 storage（sync 读它注入名单段）
+        st.agents[aid] = _BPAgent(aid, _BPData("机械控制实验室", "你是主理人。"))
+        vs.add_version(
+            aid, {"name": "大A", "system_prompt": "主理人"}, "v1",
+            team_blueprint=bp,
+        )
+        r = client.post(f"/agent/{aid}/versions/1/restore", headers=U)
+        assert r.status_code == 200, r.text
+        ls = LeaderTeamStore(str(env / "teams.json"))
+        assert ls.get(aid) == ["a-m1"]
+        # 提示词恢复 + 名单段注入
+        sp = db["agents"][aid]["system_prompt"]
+        assert sp.startswith("主理人") or "主理人" in sp
+        assert "robot_dynamicist" in sp
+
+    def test_empty_blueprint_keeps_existing(self, env, monkeypatch):
+        """图纸无成员（解散后发版）→ 不清已有预置名单（历史资产保留）。"""
+        import asyncio
+        from app.agent_version import sync_preset_team
+        client, vs, db = _make_stack(env, monkeypatch)
+        aid = self._create_leader(client)
+        ls = LeaderTeamStore(str(env / "teams.json"))
+        ls.set(aid, ["old-member"])
+        result = asyncio.run(
+            sync_preset_team("u1", aid, {"members": []}, _BPStorage()),
+        )
+        assert result is False
+        assert ls.get(aid) == ["old-member"]  # 未被动
+
+    def test_deleted_member_filtered(self, env, monkeypatch):
+        """成员 agent 已删（get_agent → None）→ 过滤，不进名单。"""
+        import asyncio
+        from app.agent_version import sync_preset_team
+        st = _bp_storage_full()
+        st.agents.pop("a-m2")  # registry_expert 被删
+        client, vs, db = _make_stack(env, monkeypatch, storage=st)
+        aid = self._create_leader(client)
+        bp = {
+            "team_name": "T", "members": [
+                {"agent_id": "a-m1", "name": "robot_dynamicist",
+                 "description": "建模"},
+                {"agent_id": "a-m2", "name": "registry_expert",
+                 "description": "检索"},
+            ],
+        }
+        result = asyncio.run(sync_preset_team("u1", aid, bp, st))
+        assert result is True
+        ls = LeaderTeamStore(str(env / "teams.json"))
+        assert ls.get(aid) == ["a-m1"]  # 只剩存在的成员
+
+    def test_member_agent_no_sync(self, env, monkeypatch):
+        """非 leader（member 类型）发版 → 不回写预置名单。"""
+        import asyncio
+        from app.agent_version import sync_preset_team
+        st = _bp_storage_full()
+        client, vs, db = _make_stack(env, monkeypatch, storage=st)
+        aid = _create_agent(client)  # member 类型
+        bp = {"team_name": "T", "members": [
+            {"agent_id": "a-m1", "name": "m1", "description": "d"},
+        ]}
+        result = asyncio.run(sync_preset_team("u1", aid, bp, st))
+        assert result is False
+        ls = LeaderTeamStore(str(env / "teams.json"))
+        assert ls.get(aid) == []
+
+    def test_missing_leader_prompt_skips_injection(self, env, monkeypatch):
+        """leader 提示词缺失（storage 无记录）→ 只回写名单，不覆盖提示词。"""
+        import asyncio
+        from app.agent_version import sync_preset_team
+        st = _bp_storage_full()
+        st.agents["a-leader"] = _BPAgent(  # 无提示词的 leader
+            "a-leader", _BPData("大A", ""),
+        )
+        client, vs, db = _make_stack(env, monkeypatch, storage=st)
+        # 不经 client 创建——直接对 a-leader 回写
+        from app.agent_type import AgentTypeStore as ATS
+        ts = ATS(str(env / "types.json"))
+        ts.set("a-leader", "leader")
+        bp = {"team_name": "T", "members": [
+            {"agent_id": "a-m1", "name": "m1", "description": "d"},
+        ]}
+        result = asyncio.run(sync_preset_team("u1", "a-leader", bp, st))
+        assert result is True
+        ls = LeaderTeamStore(str(env / "teams.json"))
+        assert ls.get("a-leader") == ["a-m1"]  # 名单已回写
+        assert "a-leader" not in db["agents"]  # 提示词未被 PATCH 覆盖
+
+    def test_blueprint_members_carry_agent_id(self, env, monkeypatch):
+        """collect_team_blueprint 输出成员带 agent_id（回写依赖）。"""
+        from app.agent_version import collect_team_blueprint
+        st = _bp_storage_full()
+        bp = asyncio.run(collect_team_blueprint("u1", "a-leader", st))
+        ids = {m["agent_id"] for m in bp["members"]}
+        assert ids == {"a-m1", "a-m2"}

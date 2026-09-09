@@ -314,6 +314,7 @@ async def collect_team_blueprint(
             if mrole:
                 desc = mrole.group(1).strip()
         members_out.append({
+            "agent_id": m_agent_id,
             "name": name,
             "description": desc,
             "system_prompt": sp,
@@ -350,6 +351,68 @@ def _blueprint_prompt_section(bp: dict) -> str:
         "经过实战验证，是本服务的核心能力资产；除非用户明确要求调整，不要改动成员定义。",
     ]
     return "\n".join(lines)
+
+
+async def sync_preset_team(user_id: str, agent_id: str, blueprint, storage) -> bool:
+    """发版收图纸后回写预置团队名单（2026-09-09：团队随版本走）。
+
+    用户需求：主理人发版（含团队图纸）后，基于该版本开新会话时团队
+    要跟过去。团队实体本身不随版本走（在册状态绑定运行时会话），但
+    **预置名单**可以：成员 agent 在软解散设计下保留，把图纸成员回写
+    为 leader 的预置名单（leader_teams.json）+ 提示词名单段——新会话
+    右侧立刻显示成员名单，主理人发任务时 AgentInvite 邀请重建团队。
+
+    图纸无成员（无在册团队/全删了）时不动已有名单（历史资产保留）。
+    提示词写走 ``_call_official``（未包装官方 app）——发版封板状态也
+    能写，与 restore_version 同款授权语义。
+    """
+    if not blueprint or not blueprint.get("members"):
+        return False
+    from .agent_type import AgentTypeStore  # noqa: PLC0415
+    from .leader_team import (  # noqa: PLC0415
+        LeaderTeamStore,
+        build_team_section,
+        strip_team_section,
+    )
+
+    if AgentTypeStore().load().get(agent_id) != "leader":
+        return False
+    members: list[dict] = []
+    for m in blueprint["members"]:
+        aid = m.get("agent_id") or ""
+        if not aid:
+            continue
+        try:
+            rec = await storage.get_agent(user_id, aid)
+        except Exception:  # noqa: BLE001 — 成员记录缺失（历史级联）
+            continue
+        if rec is None:
+            continue  # 成员已删：不进名单（邀请死 id 会失败）
+        members.append({
+            "id": aid,
+            "name": m.get("name") or aid[:8],
+            "description": m.get("description") or "",
+        })
+    if not members:
+        return False
+    LeaderTeamStore().set(agent_id, [m["id"] for m in members])
+    # 提示词名单段注入（strip 旧段再写新段，SOP 段在名单段之前不受影响）
+    record = await storage.get_agent(user_id, agent_id)
+    sp = ((getattr(record, "data", None) and record.data.system_prompt) or "").strip()
+    if not sp:
+        # leader 记录缺失/空提示词：只回写名单，跳过提示词注入——
+        # 防御性短路（防止把提示词覆盖成纯名单段）
+        _logger.warning("预置名单回写：leader %s 提示词缺失，跳过注入", agent_id)
+        return True
+    new_sp = strip_team_section(sp) + "\n" + build_team_section(members)
+    r = await _call_official(
+        "PATCH", f"/agent/{agent_id}", user_id,
+        json_body={"system_prompt": new_sp},
+    )
+    if r.status_code not in (200, 204):
+        _logger.warning("预置名单提示词注入失败 %s: HTTP %s", agent_id, r.status_code)
+        return False
+    return True
 
 
 async def _require_agent_visible(agent_id: str, request: Request | None) -> None:
@@ -398,6 +461,12 @@ async def freeze_agent(agent_id: str, body: FreezeRequest | None = None, request
     rec["frozen"] = True
     rec["current_version"] = entry["version"]
     store.save(agent_id, rec)
+    # 团队随版本走：图纸回写预置名单（新会话右侧显示成员、主理人可邀请重建）
+    if blueprint is not None:
+        await sync_preset_team(
+            user_id, agent_id, blueprint,
+            getattr(request.app.state, "storage", None),
+        )
     return _status(store, agent_id)
 
 
@@ -439,6 +508,12 @@ async def save_version(agent_id: str, body: FreezeRequest | None = None, request
     rec = store.record(agent_id)
     rec["current_version"] = entry["version"]
     store.save(agent_id, rec)
+    # 团队随版本走：图纸回写预置名单（与 freeze 同源）
+    if blueprint is not None:
+        await sync_preset_team(
+            user_id, agent_id, blueprint,
+            getattr(request.app.state, "storage", None),
+        )
     return _status(store, agent_id)
 
 
@@ -591,7 +666,9 @@ async def restore_version(agent_id: str, version: int, request: Request = None) 
     # 经官方端点直写（_official_app 未包装拦截链），冻结中也不会被
     # 自家中间件 403 拦住——这就是"得到授权后的更新"
     # 图纸字段剥离（官方 AgentData 无此字段；恢复的是主理人配置，
-    # 团队实体本身不随版本恢复——下次 save-version 重收最新图纸）
+    # 团队实体本身不随版本恢复——但预置名单随图纸同步（2026-09-09：
+    # 恢复到含团队图纸的版本，团队要跟过去））
+    blueprint = (entry.get("data") or {}).get("team_blueprint")
     restore_data = {
         k: v for k, v in (entry.get("data") or {}).items()
         if k != "team_blueprint"
@@ -605,6 +682,10 @@ async def restore_version(agent_id: str, version: int, request: Request = None) 
             status_code=502,
             detail=f"版本恢复写入失败: HTTP {r.status_code}",
         )
+    # 团队随版本走：恢复的快照图纸回写预置名单（新会话团队跟过去）
+    storage = getattr(request.app.state, "storage", None)
+    if blueprint is not None and storage is not None:
+        await sync_preset_team(user_id, agent_id, blueprint, storage)
     rec = store.record(agent_id)
     rec["current_version"] = version
     store.save(agent_id, rec)

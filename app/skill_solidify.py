@@ -270,3 +270,73 @@ def make_solidify_factory(storage):
 
     factory.services = services  # type: ignore[attr-defined]
     return factory
+
+
+# ── 运行时 SOP 注入（2026-09-09 用户需求：所有 agent 默认都有技能沉淀环节）──
+#
+# 存储层注入（leader_team.py 对 leader 的提示词注入）覆盖不到两类 agent：
+# 1. AgentCreate 直接走 storage 创建的团队成员（不经 HTTP 中间件链）；
+# 2. 功能上线前的存量 agent。
+# 所以在 ChatService 组装 Agent 的最后一环注入：所有 agent 聊天时
+# system_prompt 自动带上 SOP 段（幂等——存储层已注入的查重跳过），
+# 不污染存储的提示词（用户编辑框看到的是原文）。
+
+SOP_MARKER = "## 技能沉淀（固定环节）"
+SOP_SECTION = (
+    "\n\n## 技能沉淀（固定环节）\n"
+    "任务交付且用户满意后，主动复盘并把验证过的方法固化为技能：\n"
+    "- 用 SolidifySkill 固化（团队主理人可用 for_member 给成员固化）；\n"
+    "- 泛化抽象：剥离项目特定参数，保留可迁移的方法论本质；\n"
+    "- 开始新任务前先查 <agent-skills> 清单、用 skill_viewer 读已有\n"
+    "  技能，避免重复造轮子。"
+)
+
+# patch 后的包装类引用（测试与诊断用；None = 未 patch）
+_sop_agent_cls = None
+
+
+def get_sop_agent_cls():
+    """返回 patch 后的包装 Agent 类（未 patch 时 None）。"""
+    return _sop_agent_cls
+
+
+def apply_runtime_sop(system_prompt: str | None) -> str | None:
+    """SOP 变换纯函数：无 SOP 追加；已有/为空原样返回。
+
+    独立成函数便于直接测试（包装 ``__init__`` 依赖官方 Agent
+    构造的重依赖，测试无法实例化）。
+    """
+    if system_prompt and SOP_MARKER not in system_prompt:
+        return system_prompt.rstrip() + SOP_SECTION
+    return system_prompt
+
+
+def patch_runtime_sop() -> None:
+    """替换官方 ``_chat.Agent`` 为带 SOP 注入的薄包装类。
+
+    ``ChatService.__init__`` 中 ``self._agent_cls = custom_agent_cls or
+    Agent`` 引用的是 ``_chat`` 模块命名空间里的 ``Agent``——patch
+    模块属性即可让所有后续构造的 ChatService 实例都使用包装类。
+    幂等：重复调用不叠加包装。
+    """
+    from agentscope.agent import Agent as OfficialAgent
+    from agentscope.app._service import _chat
+
+    if getattr(_chat.Agent, "_agentforge_sop_injected", False):
+        return  # 已 patch（幂等）
+
+    class SopAgent(OfficialAgent):
+        """官方 Agent 包装：system_prompt 追加技能沉淀 SOP（查重）。"""
+
+        _agentforge_sop_injected = True
+
+        def __init__(self, *, system_prompt=None, **kwargs):
+            super().__init__(
+                system_prompt=apply_runtime_sop(system_prompt),
+                **kwargs,
+            )
+
+    _chat.Agent = SopAgent  # type: ignore[assignment]
+    global _sop_agent_cls  # noqa: PLW0603
+    _sop_agent_cls = SopAgent
+    _logger.info("运行时技能沉淀 SOP 注入已启用（全 agent）")

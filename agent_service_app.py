@@ -45,7 +45,7 @@ from app.prompt_templates import (
 )
 from app.spa_static import SPAStaticFiles
 from app.session_flow import session_flow_router
-from app.skill_solidify import make_solidify_factory
+from app.skill_solidify import make_solidify_factory, patch_runtime_sop
 from app.team_fork import team_fork_router
 from app.startup_hook import StartupHook
 from app.team_archive import team_archive_router
@@ -140,6 +140,10 @@ app.include_router(team_fork_router)
 from app.chat_safety import patch_chat_safety  # noqa: E402
 
 patch_chat_safety()
+
+# 运行时技能沉淀 SOP 注入：所有 agent（大A/小A/AgentCreate 成员/
+# 存量）聊天时 system_prompt 自动带技能沉淀环节——不污染存储提示词
+patch_runtime_sop()
 
 # 提示词模板：列表 API + 注入 /agent/schema/v2（前端据此渲染模板下拉）
 app.include_router(prompt_templates_router)
