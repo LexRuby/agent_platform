@@ -1326,6 +1326,22 @@ class TestWorkflowNodeRerun:
         # setup 错误文案不再误导为纯配置问题
         assert "权限确认" in zh["messageBubble"]["error"]["setup"]
 
+    def test_team_alive_data_layer_priority(self):
+        """团队状态判定：数据层（在册）优先于消息历史（曾解散）。
+
+        2026-09-09 数据修复反馈：主会话 team_id 重新绑定后刷新仍显示
+        "已解散"——消息历史里的 team_deleted 事件否决了在册状态。
+        修复：teamActive === true 时 teamDeleted 恒为 false。
+        """
+        panel = (
+            _SRC_DIR / "components" / "panel" / "TeamFlowPanel.tsx"
+        ).read_text(encoding="utf-8")
+        # 主组件：数据层优先（teamActive !== true 才看消息历史）
+        assert "teamActive !== true" in panel
+        # PipelineView 接收 teamActive 并同语义判定
+        assert panel.count("teamActive !== true") >= 2
+        assert "teamActive={teamActive}" in panel
+
     def test_api_team_fork_defined(self):
         api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
         assert "TeamForkResponse" in api

@@ -461,18 +461,26 @@ export function TeamFlowPanel({
                         ),
                 [events],
         );
+        // 解散判定：数据层优先（2026-09-09 数据修复反馈"刷新还是
+        // 已解散"）——在册团队（teamActive === true）就是运行中；
+        // 消息历史里的解散事件只代表"曾经解散过"（如重新绑定/重组
+        // 队后历史保留），不否决当前在册状态。teamActive 未提供时
+        // 才退回消息推导。
         const teamDeleted = useMemo(
-                () => events.some((e) => e.kind === 'team_deleted'),
-                [events],
+                () =>
+                        teamActive !== true &&
+                        events.some((e) => e.kind === 'team_deleted'),
+                [teamActive, events],
         );
         const running = useMemo(
                 () =>
-                        (teamActive ??
-                                events.some(
-                                        (e) =>
-                                                e.kind === 'team_created' ||
-                                                e.kind === 'member_joined',
-                                )) && !teamDeleted,
+                        teamActive ??
+                        (events.some(
+                                (e) =>
+                                        e.kind === 'team_created' ||
+                                        e.kind === 'member_joined',
+                        ) &&
+                                !teamDeleted),
                 [teamActive, events, teamDeleted],
         );
 
@@ -980,6 +988,7 @@ export function TeamFlowPanel({
 										<PipelineView
 											events={events}
 											leaderName={leaderName}
+											teamActive={teamActive}
 											onSelectReport={(e) => {
                                                                                         // 被中断节点：预填默认引导语——fork 后
                                                                                         // auto_started 直接重跑该成员（2026-09-08
@@ -1442,16 +1451,22 @@ function TimelineRow({ e, leaderName }: { e: FlowEvent; leaderName: string }) {
 function PipelineView({
         events,
         leaderName,
+        teamActive,
         onSelectReport,
 }: {
         events: FlowEvent[];
         leaderName: string;
+        /** 数据层在册状态：true 时消息历史里的解散事件不否决（见主组件 teamDeleted 注释）。 */
+        teamActive?: boolean;
         onSelectReport?: (e: FlowEvent) => void;
 }) {
         const { t } = useTranslation();
         const dn = (raw: string) => displayName(raw, t);
 
-        const teamDeleted = events.some((e) => e.kind === 'team_deleted');
+        // 与主组件同语义：数据层优先（在册即活，历史解散事件不否决）
+        const teamDeleted =
+                teamActive !== true &&
+                events.some((e) => e.kind === 'team_deleted');
 
         /** 分派节点的执行状态：向后扫描同成员的下一个汇报/中断
          *  （在下一次同成员分派之前）——都无即"进行中"；团队解散
