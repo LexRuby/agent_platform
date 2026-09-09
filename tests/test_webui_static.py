@@ -326,6 +326,34 @@ class TestSrcAgentVersion:
             "丢失选择器冻结徽章——用户无法分辨正在对话的 agent 是否已封板"
         )
 
+    def test_version_brief_has_team_members(self):
+        """VersionBrief 必须含 team_members 字段（方案 A 图纸随版本走）。"""
+        api = _src("api/agentVersion.ts")
+        assert "team_members: number" in api, (
+            "VersionBrief 丢失 team_members——前端拿不到图纸成员数"
+        )
+
+    def test_version_dialog_team_badge(self):
+        """版本对话框必须展示团队图纸徽章（team_members > 0 时）。"""
+        dialog = _src("components/dialog/AgentVersionDialog.tsx")
+        assert "v.team_members > 0 && (" in dialog, (
+            "丢失图纸徽章条件渲染——用户无法分辨哪个版本含团队定义"
+        )
+        assert "teamBlueprintBadge" in dialog, "丢失图纸徽章 i18n key"
+        assert "Users" in dialog, "丢失 Users 图标导入"
+
+    def test_team_blueprint_i18n_keys(self):
+        """zh/en 必须有图纸徽章文案（双语齐全，避免回退 key 原样展示）。"""
+        zh = json.loads(_src("i18n/locales/zh.json"))
+        en = json.loads(_src("i18n/locales/en.json"))
+        zh_v = zh.get("dialog-agent-version", {})
+        en_v = en.get("dialog-agent-version", {})
+        assert zh_v.get("teamBlueprintBadge") == "团队×{{count}}", "丢失中文图纸徽章文案"
+        assert en_v.get("teamBlueprintBadge") == "Team×{{count}}", "丢失英文图纸徽章文案"
+        assert "{{count}} 名成员" in zh_v.get("teamBlueprintTooltip", ""), (
+            "丢失中文图纸 tooltip（用户不知道徽章含义）"
+        )
+
 
 class TestSrcLeaderTeam:
     """前端源码必须保留大A/小A（leader/member）定制（功能回归锁）。"""

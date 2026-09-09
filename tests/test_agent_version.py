@@ -38,8 +38,11 @@ def env(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _make_stack(env, monkeypatch):
+def _make_stack(env, monkeypatch, storage=None):
     """与生产同构的中间件链：Version(LeaderTeam(AgentType(官方)))。
+
+    storage：可选，挂到 inner app 的 state.storage（模拟生产
+    create_app 的 app.state.storage，供 freeze 收集团队图纸）。
 
     内层 mock 的响应结构一律取自 tests/official_contract.py（真实契约），
     禁止手写 {"id": ...} 之类内联结构——曾因 mock 失真导致线上 bug 测试全绿。
@@ -77,6 +80,8 @@ def _make_stack(env, monkeypatch):
         return {"ok": True}
 
     inner.include_router(av.agent_version_router)
+    if storage is not None:
+        inner.state.storage = storage
 
     # _call_official 指向未包装的内层 app（生产语义：绕过拦截链）
     async def fake_call(method, path, user_id, json_body=None, params=None):
@@ -556,3 +561,281 @@ class TestEdgeCases:
         monkeypatch.setattr(av, "_call_official", bad_call)
         r = client.post(f"/agent/{aid}/versions/1/restore", headers=U)
         assert r.status_code == 502
+
+
+# ================================================================ 团队图纸（方案 A）
+
+
+class _BPData:
+    """duck-typing 成员 agent 载荷（dataclass 形态）。"""
+
+    def __init__(self, name, system_prompt, invite_description=None):
+        self.name = name
+        self.system_prompt = system_prompt
+        self.invite_config = (
+            {"invite_description": invite_description}
+            if invite_description else None
+        )
+
+
+class _BPAgent:
+    def __init__(self, agent_id, data):
+        self.id = agent_id
+        self.data = data
+
+
+class _BPMember:
+    def __init__(self, agent_id, session_id):
+        self.agent_id = agent_id
+        self.session_id = session_id
+
+
+class _BPTeamData:
+    def __init__(self, name, description, members):
+        self.name = name
+        self.description = description
+        self.members = members
+
+
+class _BPTeam:
+    def __init__(self, team_id, session_id, leader_agent_id, data, updated_at=""):
+        self.id = team_id
+        self.session_id = session_id
+        self.leader_agent_id = leader_agent_id
+        self.data = data
+        self.updated_at = updated_at
+
+
+class _BPSession:
+    def __init__(self, session_id, team_id=None):
+        self.id = session_id
+        self.team_id = team_id
+
+
+class _BPStorage:
+    """蓝图收集用最小 storage duck-typing。"""
+
+    def __init__(self):
+        self.teams = {}
+        self.sessions = {}
+        self.agents = {}
+
+    async def list_teams(self, user_id):
+        return list(self.teams.values())
+
+    async def get_session(self, user_id, agent_id, session_id):
+        return self.sessions.get(session_id)
+
+    async def get_agent(self, user_id, agent_id):
+        return self.agents.get(agent_id)
+
+
+def _bp_storage_full(leader_agent="a-leader"):
+    """完整团队：存活 leader 会话 + created/invited 两成员。"""
+    st = _BPStorage()
+    st.sessions["s-leader"] = _BPSession("s-leader", team_id="t-1")
+    st.agents["a-m1"] = _BPAgent("a-m1", _BPData(
+        "robot_dynamicist",
+        "You are robot_dynamicist, a member of team '研究组' led by 大A.\n\n"
+        "Team purpose: 双臂搬运研究\n\n"
+        "Your role: 机器人动力学专家，负责建模\n\n"
+        "You communicate with the team leader through TeamSay.",
+    ))
+    st.agents["a-m2"] = _BPAgent("a-m2", _BPData(
+        "registry_expert",
+        "You are registry_expert...\n\nYou communicate.",
+        invite_description="注册表专家，负责领域检索",
+    ))
+    st.teams["t-1"] = _BPTeam(
+        "t-1", "s-leader", leader_agent,
+        _BPTeamData("双臂液体搬运研究组", "研究双臂搬运优化", [
+            _BPMember("a-m1", "s-m1"),
+            _BPMember("a-m2", "s-m2"),
+        ]),
+        updated_at="2026-09-09T00:00:00Z",
+    )
+    return st
+
+
+class TestCollectTeamBlueprint:
+    async def test_full_team_collected(self):
+        """存活团队 → 团队名/宗旨 + 两成员定义（职责提取两种来源）。"""
+        from app.agent_version import collect_team_blueprint
+        st = _bp_storage_full()
+        bp = await collect_team_blueprint("u1", "a-leader", st)
+        assert bp["team_name"] == "双臂液体搬运研究组"
+        assert bp["team_description"] == "研究双臂搬运优化"
+        assert len(bp["members"]) == 2
+        m1 = next(m for m in bp["members"] if m["name"] == "robot_dynamicist")
+        # created 成员：Your role 段提取
+        assert "动力学专家" in m1["description"]
+        assert "机器人动力学专家，负责建模" == m1["description"]
+        m2 = next(m for m in bp["members"] if m["name"] == "registry_expert")
+        # invited 成员：invite_description 优先
+        assert m2["description"] == "注册表专家，负责领域检索"
+        # 完整提示词随快照留档
+        assert "robot_dynamicist" in m1["system_prompt"]
+
+    async def test_prefers_alive_team(self):
+        """同时领导存活与已解散团队 → 选存活（leader 会话仍绑定）。"""
+        from app.agent_version import collect_team_blueprint
+        st = _bp_storage_full()
+        # 旧的（已解散：会话 team_id=None）updated_at 更新
+        st.teams["t-old"] = _BPTeam(
+            "t-old", "s-old", "a-leader",
+            _BPTeamData("旧团队", "", [_BPMember("a-m1", "s-m1")]),
+            updated_at="2026-09-10T00:00:00Z",
+        )
+        st.sessions["s-old"] = _BPSession("s-old", team_id=None)
+        bp = await collect_team_blueprint("u1", "a-leader", st)
+        assert bp["team_name"] == "双臂液体搬运研究组"
+
+    async def test_fallback_to_dissolved_when_no_alive(self):
+        """无存活团队 → 退回最近领导的（软解散资产仍可发版）。"""
+        from app.agent_version import collect_team_blueprint
+        st = _bp_storage_full()
+        st.sessions["s-leader"].team_id = None
+        bp = await collect_team_blueprint("u1", "a-leader", st)
+        assert bp["team_name"] == "双臂液体搬运研究组"
+
+    async def test_no_team_none(self):
+        """无在册团队 / 非该 agent 领导 → None。"""
+        from app.agent_version import collect_team_blueprint
+        st = _BPStorage()
+        assert await collect_team_blueprint("u1", "a-leader", st) is None
+        st2 = _bp_storage_full(leader_agent="someone-else")
+        assert await collect_team_blueprint("u1", "a-leader", st2) is None
+
+    async def test_missing_member_agent_skipped(self):
+        """成员记录缺失（历史级联）→ 跳过，其余照常。"""
+        from app.agent_version import collect_team_blueprint
+        st = _bp_storage_full()
+        del st.agents["a-m2"]
+        bp = await collect_team_blueprint("u1", "a-leader", st)
+        assert [m["name"] for m in bp["members"]] == ["robot_dynamicist"]
+
+
+class TestBlueprintSnapshotFlow:
+    """freeze → 快照含图纸 → duplicate 注入产品提示词。"""
+
+    def test_freeze_embeds_blueprint(self, env, monkeypatch):
+        from app.agent_version import AgentVersionStore
+        st = _bp_storage_full(leader_agent="a1")
+        client, vs, db = _make_stack(env, monkeypatch, storage=st)
+        aid = _create_agent(client, name="机械控制实验室")
+        r = client.post(f"/agent/{aid}/freeze", headers=U)
+        assert r.status_code == 200, r.text
+        entry = AgentVersionStore().get_version(aid, 1)
+        bp = entry["data"]["team_blueprint"]
+        assert bp["team_name"] == "双臂液体搬运研究组"
+        assert {m["name"] for m in bp["members"]} == {
+            "robot_dynamicist", "registry_expert",
+        }
+
+    def test_freeze_without_storage_no_blueprint(self, stack):
+        """测试栈（无 state.storage）→ 快照无图纸字段，向后兼容。"""
+        client, vs, db = stack
+        aid = _create_agent(client)
+        client.post(f"/agent/{aid}/freeze", headers=U)
+        entry = vs.get_version(aid, 1)
+        assert "team_blueprint" not in entry["data"]
+
+    def test_dedup_counts_blueprint(self, env):
+        """图纸变化 = 内容变化：不 force 时产生新版本号。"""
+        vs = AgentVersionStore(str(env / "versions.json"))
+        data = {"name": "大A", "system_prompt": "主理人"}
+        vs.add_version("a1", data, "v1", team_blueprint={"team_name": "T1", "members": [{"name": "m1"}]})
+        # 同内容同图纸 → 复用 v1
+        e2 = vs.add_version("a1", data, "", team_blueprint={"team_name": "T1", "members": [{"name": "m1"}]})
+        assert e2["version"] == 1
+        # 图纸变了 → v2
+        e3 = vs.add_version("a1", data, "", team_blueprint={"team_name": "T2", "members": [{"name": "m1"}]})
+        assert e3["version"] == 2
+
+    def test_duplicate_injects_blueprint_prompt(self, stack):
+        """发布/复制：快照图纸 → 产品 system_prompt 含重建指令，
+        且 payload 不带 team_blueprint 字段（官方 API 不认）。"""
+        import asyncio
+        from app.agent_version import AgentVersionStore, duplicate_agent_core
+        client, vs, db = stack
+        aid = _create_agent(client, name="机械控制实验室")
+        vs.add_version(
+            aid,
+            {"name": "机械控制实验室", "system_prompt": "你是主理人"},
+            "发版",
+            team_blueprint={
+                "team_name": "双臂液体搬运研究组",
+                "team_description": "研究双臂搬运优化",
+                "members": [
+                    {"name": "robot_dynamicist",
+                     "description": "机器人动力学专家，负责建模",
+                     "system_prompt": "full..."},
+                    {"name": "registry_expert",
+                     "description": "注册表专家，负责领域检索",
+                     "system_prompt": "full2..."},
+                ],
+            },
+        )
+        class _OwnerStorage:
+            """所有权校验 stub：任何 agent 都属于 u1、非 team 成员。"""
+
+            def __init__(self, agent_id):
+                self._aid = agent_id
+
+            async def get_agent(self, user_id, agent_id):
+                class _R:
+                    source = "user"
+                return _R() if agent_id == self._aid else None
+
+        storage = _OwnerStorage(aid)
+        dup = asyncio.run(
+            duplicate_agent_core(
+                aid, "u1", "机械臂控制", 1, storage,
+            ),
+        )
+        new_id = dup["agent_id"]
+        created = db["agents"][new_id]
+        sp = created["system_prompt"]
+        # 注入图纸章节：团队名 + 成员名 + 职责 + 重建指令
+        assert "双臂液体搬运研究组" in sp
+        assert "robot_dynamicist" in sp and "registry_expert" in sp
+        assert "机器人动力学专家，负责建模" in sp
+        assert "AgentCreate" in sp
+        # 字段剥离：官方 payload 不带图纸
+        assert "team_blueprint" not in created
+        # 原提示词保留
+        assert sp.startswith("你是主理人")
+
+    def test_duplicate_without_blueprint_untouched(self, stack):
+        """旧版本快照（无图纸）→ 复制行为不变。"""
+        import asyncio
+        from app.agent_version import duplicate_agent_core
+        client, vs, db = stack
+        aid = _create_agent(client, name="普通智能体", prompt="原始提示词")
+        vs.add_version(aid, {"name": "普通智能体", "system_prompt": "原始提示词"})
+        class _OwnerStorage:
+            async def get_agent(self, user_id, agent_id):
+                class _R:
+                    source = "user"
+                return _R() if agent_id == aid else None
+
+        dup = asyncio.run(
+            duplicate_agent_core(aid, "u1", "普通智能体 副本", 1, _OwnerStorage()),
+        )
+        created = db["agents"][dup["agent_id"]]
+        assert created["system_prompt"] == "原始提示词"
+
+    def test_restore_strips_blueprint(self, stack, monkeypatch):
+        """恢复版本：PATCH body 剥离图纸字段（官方 AgentData 无此字段）。"""
+        client, vs, db = stack
+        aid = _create_agent(client)
+        vs.add_version(
+            aid, {"name": "大A", "system_prompt": "主理人提示词"}, "v1",
+            team_blueprint={"team_name": "T", "members": [{"name": "m"}]},
+        )
+        # 不经 fake_call_official 而是直接验证：restore 用 _call_official
+        r = client.post(f"/agent/{aid}/versions/1/restore", headers=U)
+        assert r.status_code == 200, r.text
+        # db 中 agent 更新后的内容（PATCH body 经 fake_call_official 进 db）
+        assert db["agents"][aid]["system_prompt"] == "主理人提示词"
+        assert "team_blueprint" not in db["agents"][aid]

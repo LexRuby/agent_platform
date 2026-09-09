@@ -1,4 +1,4 @@
-import { CircleAlert, History, Loader2, Lock, LockOpen, RotateCcw, Send } from 'lucide-react';
+import { CircleAlert, History, Loader2, Lock, LockOpen, RotateCcw, Send, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -206,6 +206,20 @@ export function AgentVersionDialog({ open, onOpenChange, agent, onUpdated }: Pro
 															className="shrink-0 px-1 py-0 text-[10px]"
 														>
 															{t('dialog-agent-version.current')}
+														</Badge>
+													)}
+													{v.team_members > 0 && (
+														<Badge
+															variant="outline"
+															className="shrink-0 gap-0.5 px-1 py-0 text-[10px] text-emerald-700"
+															title={t('dialog-agent-version.teamBlueprintTooltip', {
+																count: v.team_members,
+															})}
+														>
+															<Users className="size-3" />
+															{t('dialog-agent-version.teamBlueprintBadge', {
+																count: v.team_members,
+															})}
 														</Badge>
 													)}
 													<span className="min-w-0 truncate text-xs text-muted-foreground">

@@ -1089,6 +1089,8 @@
     "current": "当前",
     "switch": "切换到此版本",
     "switchTooltip": "恢复该版本配置并设为当前版本",
+    "teamBlueprintBadge": "团队×{{count}}",
+    "teamBlueprintTooltip": "该版本快照内嵌团队定义（{{count}} 名成员的名称与职责）。发布此版本的产品会按定义自动重建团队，培养成果随版本走。",
     "empty": "尚无版本。研发迭代到满意后，点「发布新版本」生成 v1。"
   },
   "workdir": {

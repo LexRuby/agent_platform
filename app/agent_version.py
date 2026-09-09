@@ -28,6 +28,7 @@ AgentVersionMiddleware 在最外层（Auth 之内），保证冻结的 PATCH
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -122,6 +123,7 @@ class AgentVersionStore:
 
     def add_version(
         self, agent_id: str, data: dict, label: str = "", *, force: bool = False,
+        team_blueprint: dict | None = None,
     ) -> dict:
         """追加版本快照。返回版本条目。
 
@@ -130,9 +132,16 @@ class AgentVersionStore:
         - ``force=True``（save-version 用）：显式发版动作，**总是新增**
           ——用户点了「发布新版本」按钮，即使配置未变也要有反馈
           （历史 bug：静默复用导致界面上"点了没反应"）。
+        - ``team_blueprint``（2026-09-09 方案 A）：主理人发版时把团队
+          定义（团队名/宗旨 + 成员名/职责/完整提示词）打进快照。
+          发布 = 从快照复制产品 → 产品提示词自动注入团队图纸，
+          组队时按定义重建成员（培养资产随版本走，不再只发主理人
+          壳子）。dedup 比较含图纸（团队变了 = 新版本）。
         """
         rec = self.record(agent_id)
         payload = {k: data[k] for k in CONFIG_FIELDS if k in data}
+        if team_blueprint:
+            payload["team_blueprint"] = team_blueprint
         if (
             not force
             and rec["versions"]
@@ -157,6 +166,9 @@ class VersionBrief(BaseModel):
     version: int
     created_at: str
     label: str = ""
+    """团队图纸成员数（方案 A）：>0 表示该版本快照内嵌了团队定义，
+    发布产品自带成员重建指令；0 = 仅主理人配置（历史版本）。"""
+    team_members: int = 0
 
 
 class VersionDetail(VersionBrief):
@@ -190,6 +202,10 @@ def _status(store: AgentVersionStore, agent_id: str) -> AgentVersionStatus:
                 version=v["version"],
                 created_at=v.get("created_at", ""),
                 label=v.get("label", ""),
+                team_members=len(
+                    ((v.get("data") or {}).get("team_blueprint") or {})
+                    .get("members", []),
+                ),
             )
             for v in rec["versions"]
         ],
@@ -216,6 +232,124 @@ def _require_user(request: Request) -> str:
     if not user_id:
         raise HTTPException(status_code=401, detail="未登录")
     return user_id
+
+
+# ── 团队图纸（2026-09-09 方案 A：发版快照内嵌团队定义） ─────────────────
+
+
+async def collect_team_blueprint(
+    user_id: str, agent_id: str, storage,
+) -> dict | None:
+    """主理人 agent → 团队图纸（团队名/宗旨 + 成员定义）。
+
+    选队规则：该 agent 领导的团队中，优先选**存活**的（leader 会话
+    仍绑定），再按 updated_at 取最新——用户培养的"当前版本团队"。
+    解散残留（软解散后 team 记录仍在）不选，除非从无存活团队。
+
+    成员职责提取（与前端 memberRole 同源逻辑）：
+    - 邀请成员：``invite_config.invite_description``；
+    - AgentCreate 成员：官方模板 system_prompt 的 ``Your role:`` 段
+      （职责即 AgentCreate 的 description 参数，重建时原样回传）。
+    """
+    try:
+        teams = await storage.list_teams(user_id)
+    except Exception:  # noqa: BLE001 — 无团队环境（测试栈等）
+        return None
+    led = [t for t in teams if getattr(t, "leader_agent_id", None) == agent_id]
+    if not led:
+        return None
+
+    async def _alive(team) -> bool:
+        try:
+            sess = await storage.get_session(
+                user_id, agent_id, team.session_id,
+            )
+            return sess is not None and getattr(sess, "team_id", None) == team.id
+        except Exception:  # noqa: BLE001
+            return False
+
+    alive = [t for t in led if await _alive(t)]
+    pool = alive or led
+    team = max(
+        pool,
+        key=lambda t: getattr(t, "updated_at", "") or "",
+    )
+
+    tdata = getattr(team, "data", None)
+    members_out: list[dict] = []
+    for m in getattr(tdata, "members", None) or []:
+        m_agent_id = m.get("agent_id") if isinstance(m, dict) else m.agent_id
+        if not m_agent_id:
+            continue
+        try:
+            rec = await storage.get_agent(user_id, m_agent_id)
+        except Exception:  # noqa: BLE001 — 成员记录缺失（历史级联）
+            continue
+        if rec is None:
+            continue
+        raw = getattr(rec, "config", None) or getattr(rec, "data", None) or {}
+        # 官方 AgentRecord.data 是 pydantic 模型；测试 duck-typing 可能
+        # 是 dict 或 dataclass——归一成 dict
+        if hasattr(raw, "model_dump"):
+            cfg = raw.model_dump()
+        elif isinstance(raw, dict):
+            cfg = raw
+        else:
+            cfg = {
+                "name": getattr(raw, "name", ""),
+                "system_prompt": getattr(raw, "system_prompt", ""),
+                "invite_config": getattr(raw, "invite_config", None),
+            }
+        name = cfg.get("name") or (m_agent_id[:8])
+        # 职责：invite_description 优先，其次 system_prompt 的 Your role 段
+        desc = ""
+        inv = cfg.get("invite_config") or {}
+        if isinstance(inv, dict):
+            desc = inv.get("invite_description") or ""
+        sp = cfg.get("system_prompt") or ""
+        if not desc:
+            mrole = re.search(
+                r"Your role:\s*(.*?)(?=\n\nYou communicate|\Z)", sp, re.S,
+            )
+            if mrole:
+                desc = mrole.group(1).strip()
+        members_out.append({
+            "name": name,
+            "description": desc,
+            "system_prompt": sp,
+        })
+
+    return {
+        "team_name": getattr(tdata, "name", "") or "",
+        "team_description": getattr(tdata, "description", "") or "",
+        "members": members_out,
+    }
+
+
+def _blueprint_prompt_section(bp: dict) -> str:
+    """图纸 → 追加到产品 system_prompt 的章节（发布注入用）。
+
+    只注入 name + description（AgentCreate 的参数即这两项）；
+    完整成员 system_prompt 留在快照里做溯源，不进提示词（官方
+    模板会自动包装，重复注入反而污染）。
+    """
+    lines = [
+        "",
+        "## 你的专家团队（发版快照 · 培育成果）",
+        f"你在团队「{bp.get('team_name') or '工作组'}」中培养并实战验证过以下专家分工"
+        f"（团队宗旨：{bp.get('team_description') or '协作完成复杂任务'}）。",
+        "当任务需要组队时，**不要即兴创建成员**，必须用 AgentCreate 按以下定义重建",
+        "（名字与职责原样传入，保持一致）：",
+        "",
+    ]
+    for m in bp.get("members") or []:
+        lines.append(f"- **{m.get('name', '成员')}**：{m.get('description', '')}")
+    lines += [
+        "",
+        "重建后按任务需要分派具体工作（AgentCreate 的 prompt 参数）。这些职责分工"
+        "经过实战验证，是本服务的核心能力资产；除非用户明确要求调整，不要改动成员定义。",
+    ]
+    return "\n".join(lines)
 
 
 async def _require_agent_visible(agent_id: str, request: Request | None) -> None:
@@ -250,8 +384,16 @@ async def _require_agent_visible(agent_id: str, request: Request | None) -> None
 async def freeze_agent(agent_id: str, body: FreezeRequest | None = None, request: Request = None) -> AgentVersionStatus:
     user_id = _require_user(request)
     data = await _fetch_agent_data(agent_id, user_id)
+    # 方案 A（2026-09-09）：主理人发版快照内嵌团队定义——培养的是
+    # 大A+Team 整体资产，快照只有主理人壳子 = 发布丢掉团队
+    blueprint = await collect_team_blueprint(
+        user_id, agent_id, getattr(request.app.state, "storage", None),
+    ) if getattr(request.app.state, "storage", None) is not None else None
     store = AgentVersionStore()
-    entry = store.add_version(agent_id, data, (body.label if body else "") or "")
+    entry = store.add_version(
+        agent_id, data, (body.label if body else "") or "",
+        team_blueprint=blueprint,
+    )
     rec = store.record(agent_id)
     rec["frozen"] = True
     rec["current_version"] = entry["version"]
@@ -283,10 +425,16 @@ async def unfreeze_agent(agent_id: str, request: Request = None) -> AgentVersion
 async def save_version(agent_id: str, body: FreezeRequest | None = None, request: Request = None) -> AgentVersionStatus:
     user_id = _require_user(request)
     data = await _fetch_agent_data(agent_id, user_id)
+    # 方案 A：与 freeze 同源——每次发版重收团队图纸（团队迭代了
+    # 图纸跟着更新，自我修复）
+    blueprint = await collect_team_blueprint(
+        user_id, agent_id, getattr(request.app.state, "storage", None),
+    ) if getattr(request.app.state, "storage", None) is not None else None
     store = AgentVersionStore()
     # force=True：显式发版总是新增（配置未变也产生新版本号）
     entry = store.add_version(
         agent_id, data, (body.label if body else "") or "", force=True,
+        team_blueprint=blueprint,
     )
     rec = store.record(agent_id)
     rec["current_version"] = entry["version"]
@@ -346,8 +494,17 @@ async def duplicate_agent_core(
         if entry is None:
             raise HTTPException(status_code=404, detail=f"版本 v{version} 不存在")
         data = {**data, **(entry.get("data") or {})}
+    # 方案 A（2026-09-09）：快照带团队图纸 → 注入产品提示词。
+    # 图纸字段本身必须剥离（官方 AgentData 无此字段，带着会被
+    # pydantic 拒掉）；发布的产品按图纸重建团队成员。
+    blueprint = data.pop("team_blueprint", None)
     new_name = (name or f"{data.get('name', '智能体')} 副本").strip()[:100] or "未命名智能体"
     payload = {**data, "name": new_name}
+    if blueprint and blueprint.get("members"):
+        payload["system_prompt"] = (
+            (payload.get("system_prompt") or "").rstrip()
+            + "\n" + _blueprint_prompt_section(blueprint)
+        )
     # 类型跟随源（leader/member）——AgentTypeMiddleware 从 POST body 剥离
     from .agent_type import AgentTypeStore  # noqa: PLC0415
     atype = AgentTypeStore().load().get(agent_id)
@@ -401,6 +558,10 @@ async def get_version(agent_id: str, version: int, request: Request = None) -> V
         version=entry["version"],
         created_at=entry.get("created_at", ""),
         label=entry.get("label", ""),
+        team_members=len(
+            ((entry.get("data") or {}).get("team_blueprint") or {})
+            .get("members", []),
+        ),
         data=entry.get("data") or {},
     )
 
@@ -418,9 +579,15 @@ async def restore_version(agent_id: str, version: int, request: Request = None) 
         raise HTTPException(status_code=404, detail=f"版本 v{version} 不存在")
     # 经官方端点直写（_official_app 未包装拦截链），冻结中也不会被
     # 自家中间件 403 拦住——这就是"得到授权后的更新"
+    # 图纸字段剥离（官方 AgentData 无此字段；恢复的是主理人配置，
+    # 团队实体本身不随版本恢复——下次 save-version 重收最新图纸）
+    restore_data = {
+        k: v for k, v in (entry.get("data") or {}).items()
+        if k != "team_blueprint"
+    }
     r = await _call_official(
         "PATCH", f"/agent/{agent_id}", user_id,
-        json_body=entry.get("data") or {},
+        json_body=restore_data,
     )
     if r.status_code not in (200, 204):
         raise HTTPException(

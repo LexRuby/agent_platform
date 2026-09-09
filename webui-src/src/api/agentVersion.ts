@@ -10,6 +10,8 @@ export interface VersionBrief {
     version: number;
     created_at: string;
     label: string;
+    /** 团队图纸成员数（>0 = 快照内嵌团队定义，发布产品自带成员重建指令）。 */
+    team_members: number;
 }
 
 export interface AgentVersionStatus {

@@ -1100,6 +1100,8 @@
     "current": "Current",
     "switch": "Switch to this version",
     "switchTooltip": "Restore this version's config and make it current",
+    "teamBlueprintBadge": "Team×{{count}}",
+    "teamBlueprintTooltip": "This version snapshot embeds the team definition ({{count}} members with names and roles). Products published from it rebuild the team automatically.",
     "empty": "No versions yet. After iterating to your satisfaction, click \"Release new version\" to create v1."
   },
   "user-menu": {
