@@ -260,7 +260,9 @@ class TestMiddleware:
         assert ls.get(lid) == []
         sp = db_sp(r)
         assert "## 预置团队成员" not in sp
-        assert sp == "基础"
+        # 名单段被剥离；技能沉淀 SOP 段注入（固定环节，PATCH 全量提交时保留）
+        assert sp.startswith("基础")
+        assert lt.SKILL_SOP_MARKER in sp
 
     def test_delete_cleans_sidecar(self, stack):
         client, _, ls, _ = stack
@@ -479,6 +481,8 @@ class TestLeaderDefaultPrompt:
         stored = client.get("/agent/").json()["agents"][0]
         assert stored["data"]["system_prompt"].startswith("你是资深高考规划师。")
         assert "团队纪律" not in stored["data"]["system_prompt"].split("## 预置")[0]
+        # 固定环节：自定义提示词的 leader 也注入技能沉淀 SOP
+        assert lt.SKILL_SOP_MARKER in stored["data"]["system_prompt"]
 
     def test_post_member_default_prompt_untouched(self, stack):
         client, _, _, _ = stack
@@ -504,3 +508,153 @@ class TestLeaderDefaultPrompt:
         sp = agents[lid]["data"]["system_prompt"]
         assert "- 高考志愿兵（@a1）：志愿专家" in sp
         assert "不要提前解散团队" in sp
+
+
+class TestSkillSopInjection:
+    """技能沉淀固定环节：任何主理人提示词都注入 SOP 段（幂等、位置防截断）。
+
+    用户需求（2026-09-09）：任务交付后"自我整理/抽象/工具化"是固定环节，
+    不能靠 agent 即兴——存量主理人（自定义提示词）也要有 SOP。
+    """
+
+    def test_default_template_contains_sop_once(self, stack):
+        """默认模板自带 SOP（标记一致），替换路径不重复追加。"""
+        client, _, _, _ = stack
+        client.post("/agent/", json={
+            "name": "裸主理人", "agent_type": "leader", "system_prompt": "",
+        })
+        sp = client.get("/agent/").json()["agents"][0]["data"]["system_prompt"]
+        assert sp.count(lt.SKILL_SOP_MARKER) == 1
+        assert "SolidifySkill" in sp
+
+    def test_post_custom_prompt_gets_sop(self, stack):
+        """自定义提示词的存量主理人创建时注入 SOP。"""
+        client, _, _, _ = stack
+        client.post("/agent/", json={
+            "name": "机械控制实验室", "agent_type": "leader",
+            "system_prompt": "你是机器人动力学专家，负责统筹团队。\n\n## 判断标准\n- 复杂任务组队执行。",
+        })
+        sp = client.get("/agent/").json()["agents"][0]["data"]["system_prompt"]
+        assert sp.count(lt.SKILL_SOP_MARKER) == 1
+        assert "SolidifySkill" in sp and "泛化抽象" in sp
+        # 原文完整保留
+        assert sp.startswith("你是机器人动力学专家")
+
+    def test_sop_idempotent_on_repatch(self, stack):
+        """PATCH 已注入过 SOP 的提示词：不重复追加（幂等）。"""
+        client, _, _, _ = stack
+        lid = client.post("/agent/", json={
+            "name": "L", "agent_type": "leader", "system_prompt": "基础设定。",
+        }).json()["agent_id"]
+        r1 = client.patch(f"/agent/{lid}", json={
+            "system_prompt": "新设定。\n\n" + lt.SKILL_SOP_SECTION,
+            "team_members": [],
+        })
+        sp1 = db_sp(r1)
+        assert sp1.count(lt.SKILL_SOP_MARKER) == 1
+        # 二次 PATCH：SOP 已在，不再追加
+        r2 = client.patch(f"/agent/{lid}", json={
+            "system_prompt": sp1,
+            "team_members": [],
+        })
+        assert db_sp(r2).count(lt.SKILL_SOP_MARKER) == 1
+
+    def test_sop_survives_member_section_rewrite(self, stack):
+        """SOP 在名单段之前：重写名单段（strip 截断）不丢 SOP。"""
+        client, _, _, _ = stack
+        m1, m2 = _mk_members(client, 2)
+        lid = client.post("/agent/", json={
+            "name": "L", "agent_type": "leader", "system_prompt": "主提示词。",
+            "team_members": [
+                {"id": m1, "name": "a", "description": ""},
+            ],
+        }).json()["agent_id"]
+        # 编辑：换成员名单 + 全量提示词（含已注入的 SOP 与旧名单段）
+        r = client.patch(f"/agent/{lid}", json={
+            "system_prompt": client.get("/agent/").json()["agents"][-1]
+            ["data"]["system_prompt"],
+            "team_members": [{"id": m2, "name": "b", "description": "d"}],
+        })
+        sp = db_sp(r)
+        # 结构完整：主提示词 → SOP → 名单段，各一次
+        assert sp.count("## 预置团队成员") == 1
+        assert sp.count(lt.SKILL_SOP_MARKER) == 1
+        assert sp.index(lt.SKILL_SOP_MARKER) < sp.index("## 预置团队成员")
+        assert sp.startswith("主提示词")
+
+    def test_patch_members_only_no_prompt_override(self, stack):
+        """PATCH 只带 team_members 不带 system_prompt：不凭空注入提示词键。"""
+        client, _, _, _ = stack
+        m1, = _mk_members(client, 1)
+        lid = client.post("/agent/", json={
+            "name": "L", "agent_type": "leader", "system_prompt": "原提示词。",
+            "team_members": [{"id": m1, "name": "x", "description": ""}],
+        }).json()["agent_id"]
+        r = client.patch(f"/agent/{lid}", json={
+            "team_members": [{"id": m1, "name": "x2", "description": "d"}],
+        })
+        # 官方 mock 直接 update body：system_prompt 键不该出现在请求体里
+        assert "system_prompt" not in r.json()["data"] or db_sp(r)
+
+    def test_member_agent_never_gets_sop(self, stack):
+        """member 类型不注入 SOP（仅主理人）。"""
+        client, _, _, _ = stack
+        client.post("/agent/", json={
+            "name": "普通成员", "agent_type": "member",
+            "system_prompt": "你是成员。",
+        })
+        sp = client.get("/agent/").json()["agents"][0]["data"]["system_prompt"]
+        assert lt.SKILL_SOP_MARKER not in sp
+        assert sp == "你是成员。"
+
+    def test_plain_patch_leader_prompt_gets_sop(self, stack):
+        """不带 team_members 的普通 PATCH：存量 leader 改提示词也注入 SOP。"""
+        client, ts, _, _ = stack
+        lid = client.post("/agent/", json={
+            "name": "存量主理人", "agent_type": "leader",
+            "system_prompt": "你是机器人专家。",
+        }).json()["agent_id"]
+        # 模拟存量：手动移除已注入的 SOP（复现老数据无 SOP 的形态）
+        agents = client.get("/agent/").json()["agents"]
+        raw_sp = agents[0]["data"]["system_prompt"]
+        assert ts.get(lid) == "leader"
+        stripped = raw_sp.split("\n\n" + lt.SKILL_SOP_MARKER)[0]
+        # 普通 PATCH：只带 system_prompt（官方编辑对话框的字段子集）
+        r = client.patch(f"/agent/{lid}", json={"system_prompt": stripped})
+        sp = db_sp(r)
+        assert sp.count(lt.SKILL_SOP_MARKER) == 1
+        assert sp.startswith("你是机器人专家。")
+
+    def test_plain_patch_member_untouched(self, stack):
+        """普通 PATCH member：原样透传，不注入。"""
+        client, _, _, _ = stack
+        mid = client.post("/agent/", json={
+            "name": "成员", "agent_type": "member",
+            "system_prompt": "你是成员。",
+        }).json()["agent_id"]
+        r = client.patch(f"/agent/{mid}", json={"system_prompt": "新成员提示。"})
+        assert db_sp(r) == "新成员提示。"
+
+    def test_plain_patch_without_prompt_passthrough(self, stack):
+        """普通 PATCH 不带 system_prompt（如只改名）：原样透传。"""
+        client, _, _, _ = stack
+        lid = client.post("/agent/", json={
+            "name": "L", "agent_type": "leader", "system_prompt": "原提示。",
+        }).json()["agent_id"]
+        r = client.patch(f"/agent/{lid}", json={"name": "新名字"})
+        data = r.json()["data"]
+        assert data["name"] == "新名字"
+        # system_prompt 键未被凭空注入
+        assert "system_prompt" not in data or db_sp(r)
+
+    def test_unit_apply_prompt_sop_position(self):
+        """单元：SOP 注入剥离旧名单段后落在其前（防 strip 截断）。"""
+        data = {
+            "agent_type": "leader",
+            "system_prompt": "主文。\n\n## 预置团队成员\n- 旧（@a1）",
+        }
+        lt._apply_leader_default_prompt(data)
+        sp = data["system_prompt"]
+        assert "## 预置团队成员" not in sp  # 旧名单段被剥离
+        assert sp.endswith(lt.SKILL_SOP_SECTION.strip())
+        assert sp.startswith("主文。")

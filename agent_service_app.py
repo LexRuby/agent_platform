@@ -45,6 +45,7 @@ from app.prompt_templates import (
 )
 from app.spa_static import SPAStaticFiles
 from app.session_flow import session_flow_router
+from app.skill_solidify import make_solidify_factory
 from app.team_fork import team_fork_router
 from app.startup_hook import StartupHook
 from app.team_archive import team_archive_router
@@ -58,6 +59,11 @@ redis_port = int(os.environ.get("AGENTFORGE_REDIS_PORT", "6379"))
 
 storage = RedisStorage(host=redis_host, port=redis_port)
 vector_store = QdrantStore(location=":memory:")
+
+# 技能固化（SolidifySkill）：所有 agent 的 toolkit 都带上——任务交付后
+# "自我整理/抽象/工具化"的固定环节工具化，走官方 skills 分区链路
+# （workspace_manager 官方单例，create_app 返回后注入工厂）
+_solidify_factory = make_solidify_factory(storage)
 
 app = create_app(
     storage=storage,
@@ -86,14 +92,21 @@ app = create_app(
         ),
     ],
     extra_credentials=[ArkCredential],
+    # 全局工具：SolidifySkill（技能固化，官方扩展点——每次会话组装
+    # toolkit 时工厂产出实例，workspace_manager 见下方注入）
+    extra_agent_tools=_solidify_factory,
 )
-
-# 用户管理：认证 API + 登录页（在静态挂载之前注册，确保路由优先匹配）
-app.include_router(auth_router)
 
 # 官方 app 原始引用：team_archive 等叠加层进程内调用官方端点用
 # （不带我们的中间件包装，避免循环鉴权；身份走 X-User-ID 头）
 _official_app = app
+
+# 技能固化工厂注入官方 workspace_manager（create_app 内建单例，
+# 含缓存与生命周期；工厂在会话聊天时才被调用，届时必已注入）
+_solidify_factory.services["workspace_manager"] = app.state.workspace_manager
+
+# 用户管理：认证 API + 登录页（在静态挂载之前注册，确保路由优先匹配）
+app.include_router(auth_router)
 
 # 主理人预置团队：member 推荐 API（中间件见下方包装链）
 app.include_router(leader_team_router)

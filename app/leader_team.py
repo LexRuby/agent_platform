@@ -39,6 +39,21 @@ _DEFAULT_FILE = _BASE_DIR / "data" / "leader_teams.json"
 # 注入 system_prompt 的名单段落标记（PATCH 时按标记整段替换）
 SECTION_MARKER = "## 预置团队成员"
 
+# 技能沉淀 SOP 段标记（追加前查重，保证幂等）
+SKILL_SOP_MARKER = "## 技能沉淀（固定环节）"
+
+# 技能沉淀固定环节：任何主理人（含自定义提示词的存量主理人）都注入。
+# 用户要求把"任务交付后自我整理/抽象/工具化"固化为固定环节，不能靠
+# agent 即兴发挥——注入位置在名单段之前，避免被 strip_team_section
+# 按 SECTION_MARKER 截断丢弃。
+SKILL_SOP_SECTION = """
+## 技能沉淀（固定环节）
+任务交付且用户满意后，主动复盘并把验证过的方法固化为技能：
+- 用 SolidifySkill 固化（给自己或用 for_member 给成员）；
+- 泛化抽象：剥离项目特定参数，保留可迁移的方法论本质；
+- 开始新任务前先查 <agent-skills> 清单、用 skill_viewer 读已有
+  技能，避免重复造轮子。"""
+
 # 官方 schema 的默认提示词（用户未填写时的兜底）
 _OFFICIAL_DEFAULT_PROMPT = "You're a helpful assistant."
 
@@ -62,7 +77,14 @@ DEFAULT_LEADER_PROMPT = """你是「{name}」，一个团队型智能体的领�
 - **禁止**在成员尚未汇报时调用 TeamDelete 解散团队——解散会
   中断正在工作的成员，造成产出丢失；
 - 成员汇报以 team-message 形式到达，逐一整合，不遗漏；
-- 简单寒暄/单点事实问题直接回答，无需组队。"""
+- 简单寒暄/单点事实问题直接回答，无需组队。
+
+## 技能沉淀（固定环节）
+任务交付且用户满意后，主动复盘并把验证过的方法固化为技能：
+- 用 SolidifySkill 固化（给自己或用 for_member 给成员）；
+- 泛化抽象：剥离项目特定参数，保留可迁移的方法论本质；
+- 开始新任务前先查 <agent-skills> 清单、用 skill_viewer 读已有
+  技能，避免重复造轮子。"""
 
 
 def _teams_file() -> Path:
@@ -127,7 +149,10 @@ def build_team_section(members: list[dict]) -> str:
         "2. 名单不构成限制——任务需要时仍可邀请其他在册 agent，"
         "或用 AgentCreate 创建新的临时成员（必须起有意义的名字并写明职责）；",
         "3. 成员汇报会以 team-message 形式到达，逐一整合、不遗漏；",
-        "4. 全部成员汇报并整合完成后才可结束任务（不要提前解散团队）。",
+        "4. 全部成员汇报并整合完成后才可结束任务（不要提前解散团队）；",
+        "5. 任务交付且用户满意后，用 SolidifySkill 复盘固化验证过的方法"
+        "（泛化抽象，可 for_member 按成员专长分别固化）；新任务前先查"
+        " <agent-skills> 清单避免重建。",
     ]
     for m in members:
         desc = (m.get("description") or "").strip()
@@ -135,18 +160,35 @@ def build_team_section(members: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _apply_leader_default_prompt(data: dict) -> None:
-    """leader 未写有效提示词时替换为默认主理人模板（原地修改）。
+def _apply_leader_default_prompt(
+    data: dict,
+    *,
+    is_leader: bool | None = None,
+) -> None:
+    """主理人提示词规范化（原地修改）。
 
-    官方表单不填 system_prompt 时提交 "You're a helpful assistant."，
-    曾致 leader 回复普通助手、无团队纪律（中途解散团队）。
+    1. 未写有效提示词：替换为默认主理人模板（官方表单不填
+       system_prompt 时提交 "You're a helpful assistant."，曾致
+       leader 回复普通助手、无团队纪律、中途解散团队）；
+    2. 自定义提示词但缺技能沉淀环节：追加标准 SOP 段（幂等——
+       按标记查重）。追加前先剥离名单段，保证 SOP 落在名单段
+       之前，重写名单段时不会被截断丢弃。
+
+    ``is_leader``：PATCH 请求体不带 ``agent_type``（该字段是创建
+    专属），但能走到注入逻辑的 PATCH 必带 team_members（主理人
+    专属字段）——调用方显式传 True；None 则按 ``agent_type`` 判。
     """
-    if data.get("agent_type") != LEADER:
+    if is_leader is None:
+        is_leader = data.get("agent_type") == LEADER
+    if not is_leader:
         return
     sp = (data.get("system_prompt") or "").strip()
     if not sp or sp == _OFFICIAL_DEFAULT_PROMPT:
         name = (data.get("name") or "主理人").strip()
         data["system_prompt"] = DEFAULT_LEADER_PROMPT.replace("{name}", name)
+    elif SKILL_SOP_MARKER not in sp:
+        base = strip_team_section(sp)
+        data["system_prompt"] = base + "\n" + SKILL_SOP_SECTION
 
 
 def strip_team_section(system_prompt: str) -> str:
@@ -302,14 +344,19 @@ class LeaderTeamMiddleware:
         new_body, members = extract_team_members(body)
         receive = _make_receive(new_body)
         if members is None:
-            await self.app(scope, receive, send)
+            # 普通 PATCH（不带 team_members）：无预置成员的存量主理人
+            # 走不到下方注入逻辑——leader 编辑提示词时在此补注 SOP
+            await self._patch_sop_only(scope, receive, send, leader_id)
             return
         try:
             data = json.loads(new_body)
         except Exception:  # noqa: BLE001
             data = {}
-        # leader 编辑时未写有效提示词同样替换为默认模板
-        _apply_leader_default_prompt(data)
+        # leader 编辑时：带 system_prompt 的请求做提示词规范化
+        # （默认模板兜底 + 技能沉淀 SOP 注入）。仅改成员不带
+        # system_prompt 的请求跳过——不能凭空造出提示词键覆盖原值
+        if "system_prompt" in data:
+            _apply_leader_default_prompt(data, is_leader=True)
         valid = self._validate_members(members)
         if valid:
             base_prompt = strip_team_section(data.get("system_prompt") or "")
@@ -346,6 +393,35 @@ class LeaderTeamMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
+
+    async def _patch_sop_only(
+        self, scope, receive, send, leader_id: str,
+    ) -> None:
+        """不带 team_members 的 PATCH：仅做 leader 提示词 SOP 注入。
+
+        场景：无预置成员的存量主理人编辑提示词（PATCH body 只有
+        system_prompt/name 等官方字段）。leader 判定走 type_store
+        （PATCH body 无 agent_type——那是创建专属字段）。非 leader、
+        非 JSON、不带 system_prompt 的请求原样透传。
+        """
+        if self.type_store.get(leader_id) != LEADER:
+            await self.app(scope, receive, send)
+            return
+        body = await _read_body(receive)
+        try:
+            data = json.loads(body)
+        except Exception:  # noqa: BLE001 — 非 JSON 原样透传
+            await self.app(scope, _make_receive(body), send)
+            return
+        if not isinstance(data, dict) or "system_prompt" not in data:
+            await self.app(scope, _make_receive(body), send)
+            return
+        _apply_leader_default_prompt(data, is_leader=True)
+        await self.app(
+            scope,
+            _make_receive(json.dumps(data, ensure_ascii=False).encode("utf-8")),
+            send,
+        )
 
     async def _run_delete(self, scope, receive, send, leader_id: str) -> None:
         state = {"start": None, "chunks": []}
