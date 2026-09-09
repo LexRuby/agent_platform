@@ -24,6 +24,7 @@ import {
         ChevronUp,
         CircleStop,
         ClipboardList,
+        Crown,
         GitBranch,
         Clock,
         ExternalLink,
@@ -102,6 +103,9 @@ interface Props {
         onPauseTeam?: () => void;
         /** 团队继续：唤醒 leader 从当前状态恢复调度。 */
         onResumeTeam?: () => void;
+        /** 解散团队（2026-09-09）：用户主动，软解散语义——LLM 的
+         *  TeamDelete 已被无条件 DENY，这是唯一解散入口。 */
+        onDissolveTeam?: () => void;
         /** leader 回复进行中或流程操作进行中（禁用控制按钮）。 */
         teamBusy?: boolean;
 }
@@ -388,6 +392,7 @@ export function TeamFlowPanel({
         onRerunNode,
         onPauseTeam,
         onResumeTeam,
+        onDissolveTeam,
         teamBusy = false,
 }: Props) {
         const { t } = useTranslation();
@@ -580,13 +585,26 @@ export function TeamFlowPanel({
                 setFocus(focus === dn ? null : dn);
         };
 
-        /** 成员执行状态：已汇报 / 被中断 / 执行中。 */
-        const memberStatus = (name: string): 'reported' | 'interrupted' | 'working' => {
+        /** 成员执行状态：已汇报 / 被中断 / 执行中 / 待命 / 已停止。
+         *
+         * 2026-09-09 用户反馈"结果都产出了，成员里还有 2 人显示执行
+         * 中"——旧状态机把"从未汇报"一律当执行中：团队解散后挂起的
+         * 分派永远显示执行中；从未被分派任务的成员也显示执行中。
+         * 修正：解散后未完成的分派 → 已停止；从未分派 → 待命；
+         * 只有"有未闭环分派且团队在册"才是执行中。 */
+        const memberStatus = (
+                name: string,
+        ): 'reported' | 'interrupted' | 'working' | 'standby' | 'stopped' => {
                 const dn = (raw: string) => displayName(raw);
                 if (events.some((e) => e.kind === 'member_report' && dn(e.from) === name))
                         return 'reported';
                 if (events.some((e) => e.kind === 'member_interrupted' && dn(e.from) === name))
                         return 'interrupted';
+                const dispatched = events.some(
+                        (e) => e.kind === 'dispatch' && dn(e.to) === name,
+                );
+                if (!dispatched) return 'standby';
+                if (teamDeleted) return 'stopped';
                 return 'working';
         };
 
@@ -662,25 +680,46 @@ export function TeamFlowPanel({
 									</Button>
 								)}
 								{onResumeTeam && (
-									<Button
-										variant="ghost"
-										size="sm"
-										className="h-7 gap-1 px-2 text-xs"
-										disabled={teamBusy}
-										title={t('panel.teamFlow.resumeTeam')}
-										onClick={(e) => {
-											e.stopPropagation();
-											onResumeTeam();
-										}}
-									>
-										<Play className="size-3.5" />
-										<span className="hidden md:inline">
-											{t('panel.teamFlow.resumeTeam')}
-										</span>
-									</Button>
-								)}
-							</div>
-						)}
+										<Button
+											variant="ghost"
+											size="sm"
+											className="h-7 gap-1 px-2 text-xs"
+											disabled={teamBusy}
+											title={t('panel.teamFlow.resumeTeam')}
+											onClick={(e) => {
+												e.stopPropagation();
+												onResumeTeam();
+											}}
+										>
+											<Play className="size-3.5" />
+											<span className="hidden md:inline">
+												{t('panel.teamFlow.resumeTeam')}
+											</span>
+										</Button>
+									)}
+									{/* 解散团队（2026-09-09）：唯一解散入口——
+									    LLM 的 TeamDelete 已被无条件 DENY，解散是
+									    用户的主动操作（软解散，资产保留） */}
+									{onDissolveTeam && (
+										<Button
+											variant="ghost"
+											size="sm"
+											className="h-7 gap-1 px-2 text-xs text-destructive hover:text-destructive"
+											disabled={teamBusy}
+											title={t('panel.teamFlow.dissolveTeamTooltip')}
+											onClick={(e) => {
+												e.stopPropagation();
+												onDissolveTeam();
+											}}
+										>
+											<AlertTriangle className="size-3.5" />
+											<span className="hidden md:inline">
+												{t('panel.teamFlow.dissolveTeam')}
+											</span>
+										</Button>
+									)}
+								</div>
+							)}
 						<button
 							type="button"
 							className="shrink-0 text-muted-foreground"
@@ -977,6 +1016,49 @@ export function TeamFlowPanel({
 														</span>
 													</div>
 												)}
+												{/* 主理人卡片（2026-09-09 用户反馈"工作流、成员、
+												    产物上都不涉及主理人"——培育的是大A+Team 整体，
+												    主理人是团队的一员）：置顶展示，点击过滤其执行
+												    动态（说明/工具/最终交付） */}
+												{(() => {
+														const leaderEvents = events.filter(
+																(e) =>
+																		e.kind === 'leader_say' ||
+																		e.kind === 'final' ||
+																		e.kind === 'tool' ||
+																		e.kind === 'user_task',
+														);
+														const detail = focus === leaderName;
+														return (
+																<div
+																		className="rounded-lg border-2 border-primary/60 bg-primary/5 p-2"
+																>
+																		<div className="flex items-center gap-2">
+																				<Crown className="size-3.5 text-primary" />
+																				<button
+																						type="button"
+																						className="text-sm font-semibold"
+																						onClick={() => setFocus(detail ? null : leaderName)}
+																				>
+																						{leaderName}
+																				</button>
+																				<Badge className="bg-primary/10 text-[10px] text-primary">
+																						{t('panel.teamFlow.leaderBadge')}
+																				</Badge>
+																				<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+																						{t('panel.teamFlow.leaderDesc')}
+																				</span>
+																		</div>
+																		{detail && leaderEvents.length > 0 && (
+																				<div className="mt-2 max-h-40 space-y-1 overflow-y-auto border-t pt-2">
+																						{leaderEvents.map((e, j) => (
+																								<TimelineRow key={j} e={e} leaderName={leaderName} />
+																						))}
+																				</div>
+																		)}
+																</div>
+														);
+												})()}
 												{chartMembers.map((m, i) => {
 														const st = memberStatus(m.name);
 														const color = colorOf(i);
@@ -1009,7 +1091,11 @@ export function TeamFlowPanel({
 																								? t('panel.teamFlow.stReported')
 																								: st === 'interrupted'
 																										? t('panel.teamFlow.stInterrupted')
-																										: t('panel.teamFlow.stWorking')}
+																										: st === 'standby'
+																												? t('panel.teamFlow.stStandby')
+																												: st === 'stopped'
+																														? t('panel.teamFlow.stStopped')
+																														: t('panel.teamFlow.stWorking')}
 																				</Badge>
 																				<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
 																						{m.description || t('panel.teamFlow.noDescription')}
@@ -1031,7 +1117,7 @@ export function TeamFlowPanel({
 																								<TimelineRow key={j} e={e} leaderName={leaderName} />
 																						))}
 																				</div>
-																	 )}
+																		)}
 																</div>
 														);
 												})}
@@ -1345,10 +1431,13 @@ function TimelineRow({ e, leaderName }: { e: FlowEvent; leaderName: string }) {
  * 工作流 Tab：从上至下的执行流水线（2026-09-09 用户需求重做）。
  *
  * 用户任务 → 组队 → 分派 → 汇报/中断 → … → 最终交付，严格按时序
- * 竖排；每个分派节点带执行状态（进行中/已完成/被中断——由其后同
- * 成员的下一个汇报/中断事件推导）。任务节点（用户任务/分派/汇报/
- * 被中断）均可点击：查看详情 + 从该节点新建分支重跑（分支对比
- * 培育的核心入口，任意节点皆可重开）。
+ * 竖排；每个分派节点带执行状态（进行中/已完成/被中断/已停止——由
+ * 其后同成员的下一个汇报/中断事件推导；团队解散后未闭环的分派为
+ * 已停止）。主理人（大A）是团队的一员：其每个执行回合（说明 +
+ * 工具操作）聚合为一个节点，与成员节点同链展示（2026-09-09 用户
+ * 反馈"工作流不涉及主理人、消息框很多对话工作流却很少"）。任务
+ * 节点均可点击：查看详情 + 从该节点新建分支重跑（分支对比培育的
+ * 核心入口，任意节点皆可重开）。
  */
 function PipelineView({
         events,
@@ -1362,12 +1451,15 @@ function PipelineView({
         const { t } = useTranslation();
         const dn = (raw: string) => displayName(raw, t);
 
+        const teamDeleted = events.some((e) => e.kind === 'team_deleted');
+
         /** 分派节点的执行状态：向后扫描同成员的下一个汇报/中断
-         *  （在下一次同成员分派之前）——都无即"进行中"。 */
+         *  （在下一次同成员分派之前）——都无即"进行中"；团队解散
+         *  后未闭环 → "已停止"（2026-09-09：不再永远显示执行中）。 */
         const statusOf = (
                 ev: FlowEvent,
                 idx: number,
-        ): 'working' | 'done' | 'interrupted' => {
+        ): 'working' | 'done' | 'interrupted' | 'stopped' => {
                 const member = dn(ev.to);
                 for (let j = idx + 1; j < events.length; j++) {
                         const e = events[j];
@@ -1377,17 +1469,49 @@ function PipelineView({
                         if (e.kind === 'member_interrupted' && dn(e.from) === member)
                                 return 'interrupted';
                 }
-                return 'working';
+                return teamDeleted ? 'stopped' : 'working';
         };
+
+        /** 主理人执行节点：同一宿主消息内的 leader_say + tool 事件
+         *  聚合为一个节点（叙述文本 + 工具操作数）——消息框里主理
+         *  人的每个回合（思考/写代码/跑脚本/补位成员）在工作流上
+         *  都有对应节点，不再"只看到成员汇报"。 */
+        const leaderGroups = new Map<
+                string,
+                { narration?: string; tools: number; firstIdx: number }
+        >();
+        events.forEach((e, i) => {
+                if (e.kind !== 'leader_say' && e.kind !== 'tool') return;
+                const key = e.msgId ?? `idx:${i}`;
+                const g = leaderGroups.get(key);
+                if (g) {
+                        if (e.kind === 'tool') g.tools += 1;
+                        else if (!g.narration) g.narration = e.summary;
+                } else {
+                        leaderGroups.set(key, {
+                                narration: e.kind === 'leader_say' ? e.summary : undefined,
+                                tools: e.kind === 'tool' ? 1 : 0,
+                                firstIdx: i,
+                        });
+                }
+        });
 
         type NodeStatus =
                 | 'working'
                 | 'done'
                 | 'interrupted'
+                | 'stopped'
+                | 'leader'
                 | 'final'
                 | 'deleted'
                 | 'minor';
-        const nodes: { ev: FlowEvent; label: string; status: NodeStatus }[] = [];
+        const nodes: {
+                ev: FlowEvent;
+                label: string;
+                status: NodeStatus;
+                /** 聚合节点（主理人回合）的自定义摘要。 */
+                summaryOverride?: string;
+        }[] = [];
         events.forEach((e, i) => {
                 switch (e.kind) {
                         case 'user_task':
@@ -1456,6 +1580,33 @@ function PipelineView({
                                         status: 'deleted',
                                 });
                                 break;
+                        case 'leader_say':
+                        case 'tool': {
+                                // 主理人执行节点：每个宿主消息聚合一次
+                                // （firstIdx 命中时发射，其余跳过）
+                                const key = e.msgId ?? `idx:${i}`;
+                                const g = leaderGroups.get(key);
+                                if (!g || g.firstIdx !== i) break;
+                                const summaryOverride = g.narration
+                                        ? g.tools > 0
+                                                ? `${g.narration}（${t(
+                                                          'panel.teamFlow.pipeToolCount',
+                                                          { count: g.tools },
+                                                  )}）`
+                                                : g.narration
+                                        : t('panel.teamFlow.pipeToolCount', {
+                                                  count: g.tools,
+                                          });
+                                nodes.push({
+                                        ev: e,
+                                        label: t('panel.teamFlow.pipeLeader', {
+                                                name: leaderName,
+                                        }),
+                                        status: 'leader',
+                                        summaryOverride,
+                                });
+                                break;
+                        }
                 }
         });
 
@@ -1472,6 +1623,8 @@ function PipelineView({
                 working: 'bg-blue-500 animate-pulse',
                 done: 'bg-emerald-500',
                 interrupted: 'bg-amber-500',
+                stopped: 'bg-slate-400',
+                leader: 'bg-primary',
                 final: 'bg-primary',
                 deleted: 'bg-muted-foreground/50',
                 minor: 'bg-muted-foreground/40',
@@ -1480,18 +1633,22 @@ function PipelineView({
                 working: t('panel.teamFlow.stWorking'),
                 done: t('panel.teamFlow.stDone'),
                 interrupted: t('panel.teamFlow.stInterrupted'),
+                stopped: t('panel.teamFlow.stStopped'),
+                leader: '',
                 final: t('panel.teamFlow.stFinal'),
                 deleted: '',
                 minor: '',
         };
 
-        // 可点击节点：任务流节点（用户任务/分派/汇报/被中断）——
-        // 任意节点皆可重开分支
+        // 可点击节点：任务流节点（用户任务/分派/汇报/被中断/主理人
+        // 回合）——任意节点皆可重开分支
         const clickable = (kind: FlowEvent['kind']) =>
                 kind === 'dispatch' ||
                 kind === 'member_report' ||
                 kind === 'member_interrupted' ||
-                kind === 'user_task';
+                kind === 'user_task' ||
+                kind === 'leader_say' ||
+                kind === 'tool';
 
         return (
                 <div>
@@ -1521,14 +1678,16 @@ function PipelineView({
                                                                                         ? 'bg-emerald-100 text-emerald-700'
                                                                                         : n.status === 'interrupted'
                                                                                                 ? 'bg-amber-100 text-amber-700'
-                                                                                                : 'bg-muted text-muted-foreground')
+                                                                                                : n.status === 'stopped'
+                                                                                                        ? 'bg-slate-200 text-slate-600'
+                                                                                                        : 'bg-muted text-muted-foreground')
                                                                 }
                                                         >
                                                                 {ST_LABEL[n.status]}
                                                         </span>
                                                 )}
                                                 <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-                                                        {n.ev.summary}
+                                                        {n.summaryOverride ?? n.ev.summary}
                                                 </span>
                                                 {canClick && (
                                                         <span className="shrink-0 text-primary">↻</span>

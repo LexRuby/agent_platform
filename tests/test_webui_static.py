@@ -1257,6 +1257,75 @@ class TestWorkflowNodeRerun:
         epm = en["permission-mode"]
         assert "files only" in epm["accept_edits-label"]
 
+    def test_leader_as_team_member_and_dissolve(self):
+        """主理人是团队成员 + 解散入口用户化 + 成员状态修正。
+
+        2026-09-09 用户反馈三连：
+        1. "团队那边没有主理人——工作流/成员/产物都不涉及主理人，
+           培育的是大A+Team 整体"；
+        2. "又解散了"——BYPASS 模式放行了 TeamDelete（bypass-immune
+           ASK 被引擎契约忽略），LLM 无权删团队必须无条件 DENY，
+           解散只能是用户在团队面板主动操作；
+        3. "结果都产出了还有 2 人显示执行中"——成员状态机修正。
+        """
+        panel = (
+            _SRC_DIR / "components" / "panel" / "TeamFlowPanel.tsx"
+        ).read_text(encoding="utf-8")
+        # 成员 Tab：主理人卡片置顶（Crown 图标 + leaderBadge）
+        assert "Crown" in panel
+        assert "leaderBadge" in panel
+        assert "leaderDesc" in panel
+        # 成员状态机：待命（从未分派）/ 已停止（解散后未闭环）
+        assert "'standby'" in panel
+        assert "'stopped'" in panel
+        assert "stStandby" in panel
+        assert "stStopped" in panel
+        # 工作流：主理人执行节点（按宿主消息聚合 leader_say+tool）
+        assert "leaderGroups" in panel
+        assert "pipeLeader" in panel
+        assert "pipeToolCount" in panel
+        assert "summaryOverride" in panel
+        # 解散按钮：有在册团队才显示（与暂停/继续同一前置条件）
+        assert "onDissolveTeam" in panel
+        assert "dissolveTeam" in panel
+
+        # API 封装
+        api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
+        assert "dissolveTeamFlow" in api
+        assert "`/team-flow/${leaderSessionId}/dissolve`" in api
+
+        # ChatViewport：解散确认对话框 + 回调传递（两处面板）
+        cv = (
+            _SRC_DIR / "pages" / "chat" / "ChatViewport.tsx"
+        ).read_text(encoding="utf-8")
+        assert "setDissolveOpen(true)" in cv
+        assert cv.count("onDissolveTeam={() => setDissolveOpen(true)}") == 2
+        assert "handleDissolveConfirm" in cv
+        assert "dissolveTeamFlow" in cv
+
+        # 等待权限确认引导横幅（"卡住了吗"反馈）
+        cc = (
+            _SRC_DIR / "components" / "chat" / "ChatContent.tsx"
+        ).read_text(encoding="utf-8")
+        assert "waitingConfirmHint" in cc
+
+        # i18n
+        zh = json.loads(
+            (_SRC_DIR / "i18n" / "locales" / "zh.json").read_text(
+                encoding="utf-8",
+            ),
+        )
+        tf = zh["panel"]["teamFlow"]
+        assert tf["leaderBadge"] == "主理人（大A）"
+        assert tf["stStandby"] == "待命"
+        assert tf["stStopped"] == "已停止"
+        assert tf["dissolveTeam"] == "解散团队"
+        chat = zh["chat"]
+        assert "资产" in chat["dissolveDescription"]
+        assert "权限确认" in chat["waitingConfirmHint"]
+        # setup 错误文案不再误导为纯配置问题
+        assert "权限确认" in zh["messageBubble"]["error"]["setup"]
+
     def test_api_team_fork_defined(self):
         api = (_SRC_DIR / "api" / "session.ts").read_text(encoding="utf-8")
         assert "TeamForkResponse" in api

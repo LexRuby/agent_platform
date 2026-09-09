@@ -321,26 +321,46 @@ class TestDeleteSessionGuard:
 
 # ---------------------------------------------------------------- 权限层
 class TestTeamDeletePermission:
-    """第一层：TeamDelete 必须用户确认（bypass-immune ASK）。"""
+    """第一层：LLM 无权删团队（无条件 DENY——含 BYPASS 模式）。
+
+    2026-09-09 事故：bypass-immune ASK 在 BYPASS 模式下被引擎按契约
+    忽略（"skip safety prompts"），用户切「完全信任」后主理人自主
+    TeamDelete 直接放行。引擎在所有模式下原样返回工具级 DENY。
+    """
 
     @pytest.mark.asyncio
-    async def test_check_permissions_always_asks(self):
+    async def test_check_permissions_always_denies(self):
         from agentscope.app._tool._team_delete import TeamDelete
         from agentscope.permission import PermissionBehavior
 
         decision = await TeamDelete.check_permissions(None, {}, None)
-        assert decision.behavior == PermissionBehavior.ASK
-        assert decision.bypass_immune is True  # "始终允许"规则也压不住
-        assert "团队" in decision.message
+        assert decision.behavior == PermissionBehavior.DENY
+        assert "解散" in decision.message
+        # DENY 会被引导到用户主动操作（团队面板）
+        assert "用户" in decision.message
 
     @pytest.mark.asyncio
-    async def test_decision_survives_in_modes(self):
-        """决策字段完整（消息+原因），DONT_ASK 转 DENY 由引擎保证。"""
+    async def test_decision_fields_complete(self):
+        """决策字段完整（消息+原因）。"""
         from agentscope.app._tool._team_delete import TeamDelete
 
         decision = await TeamDelete.check_permissions(None, {}, None)
         assert decision.decision_reason is not None
         assert decision.message
+
+    @pytest.mark.asyncio
+    async def test_deny_survives_bypass_mode(self):
+        """BYPASS 引擎路径：工具级 DENY 原样返回（唯一可靠拦截点）。
+
+        对照官方 _engine._check_bypass：Step 4 tool.check_permissions
+        的 ALLOW/DENY 在 BYPASS 下也原样返回；只有 ASK 被跳过。
+        """
+        import inspect
+
+        from agentscope.permission._engine import PermissionEngine
+
+        src = inspect.getsource(PermissionEngine._check_bypass)
+        assert "PermissionBehavior.DENY" in src  # DENY 在 BYPASS 契约内生效
 
 
 # ---------------------------------------------------------------- 服务层

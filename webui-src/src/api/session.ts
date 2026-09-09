@@ -200,6 +200,18 @@ export const sessionApi = {
 			agent_id: agentId,
 		}),
 
+	/**
+	 * 解散团队（用户主动，软解散语义）：LLM 的 TeamDelete 已被无
+	 * 条件 DENY——这是唯一解散入口。取消成员运行、解除绑定，全部
+	 * 培养资产（成员 agent/会话/产出）保留。
+	 */
+	dissolveTeamFlow: (leaderSessionId: string, agentId: string) =>
+		client.post<FlowOpResponse>(
+			`/team-flow/${leaderSessionId}/dissolve`,
+			null,
+			{ agent_id: agentId },
+		),
+
 	/** 查询该会话的截断归档（被删消息副本，历次列表）。 */
 	flowArchive: (sessionId: string, agentId: string) =>
 		client.get<{ session_id: string; archives: FlowArchiveEntry[] }>(

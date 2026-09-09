@@ -132,7 +132,7 @@
       "upstream": "The upstream model service returned an error.",
       "connection": "Could not reach the model service — network error or timeout.",
       "internal": "An unexpected internal error occurred.",
-      "setup": "The session could not be prepared — check the agent's model, tools and knowledge bases.",
+      "setup": "Session setup failed — common causes: the session is awaiting a permission confirmation (handle the confirm card above the input); or the agent model/tools/knowledge-base config is invalid.",
       "unknown": "The reply failed with an unknown error."
     },
     "teamHintCompact": "reported to the leader (see the team panel on the right)",
@@ -196,7 +196,12 @@
     "pauseTeamDone": "Team paused ({{count}} member runs stopped)",
     "resumeDone": "Resume signal sent, continuing from current state",
     "resume": "Resume",
-    "resumeTooltip": "Continue reasoning from the current state (context kept)"
+    "resumeTooltip": "Continue reasoning from the current state (context kept)",
+    "waitingConfirmHint": "Session is paused awaiting permission confirmation — handle the confirm card below (allow/deny) to continue; sending new messages will not take effect. To cancel the pending operation: use Pause Team then Resume Team.",
+    "dissolveTitle": "Dissolve team",
+    "dissolveDescription": "Stops all team runs and unbinds the team. All cultivated assets are preserved: member agents, member sessions, artifacts and history are NOT deleted. This action can only be initiated by you.",
+    "dissolveConfirm": "Dissolve",
+    "dissolveDone": "Team dissolved (assets preserved)"
   },
   "dialog-agent-create": {
     "title": "Create agent",
@@ -861,7 +866,15 @@
       "stFinal": "Delivered",
       "pauseTeam": "Pause team",
       "resumeTeam": "Resume team",
-      "defaultInterruptedPrompt": "\"{{name}}\" was interrupted last time and produced no result. Please re-assign the task to this member (improving on existing work if any) and continue the remaining pipeline."
+      "defaultInterruptedPrompt": "\"{{name}}\" was interrupted last time and produced no result. Please re-assign the task to this member (improving on existing work if any) and continue the remaining pipeline.",
+      "leaderBadge": "Leader (Big A)",
+      "leaderDesc": "Team leader: task dispatch and delivery integration",
+      "stStandby": "Standby",
+      "stStopped": "Stopped",
+      "dissolveTeam": "Dissolve team",
+      "dissolveTeamTooltip": "Dissolve team (soft dissolve: stop runs, keep all members & artifacts)",
+      "pipeLeader": "{{name}} · working",
+      "pipeToolCount": "{{count}} operation(s)"
     },
     "team": {
       "membersHeading": "Members",

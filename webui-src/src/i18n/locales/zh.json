@@ -132,7 +132,7 @@
       "upstream": "上游模型服务返回了错误。",
       "connection": "无法连接模型服务 —— 网络错误或超时。",
       "internal": "发生了未预期的内部错误。",
-      "setup": "会话准备失败 —— 请检查该智能体的模型、工具和知识库配置。",
+      "setup": "会话准备失败——常见原因：会话正在等待权限确认（请处理输入框上方的确认卡）；或智能体的模型、工具和知识库配置异常。",
       "unknown": "回复因未知错误失败。"
     },
     "teamHintCompact": "已向主理人汇报（详见右侧团队面板）",
@@ -196,7 +196,12 @@
     "pauseTeamDone": "团队已暂停（{{count}} 个成员运行已停止）",
     "resumeDone": "已发送继续指令，正在从当前状态恢复",
     "resume": "继续",
-    "resumeTooltip": "从当前状态继续推理（保留上下文）"
+    "resumeTooltip": "从当前状态继续推理（保留上下文）",
+    "waitingConfirmHint": "会话暂停等待权限确认——请处理下方确认卡（允许/拒绝）后继续；发送新消息不会生效。如需取消挂起的操作：团队会话可「暂停团队」后「继续团队」。",
+    "dissolveTitle": "解散团队",
+    "dissolveDescription": "将停止团队全部运行并解除绑定。培养资产全部保留：成员智能体、成员会话、产出与历史记录不删除，随时可重新组队。此操作只能由你手动发起。",
+    "dissolveConfirm": "确认解散",
+    "dissolveDone": "团队已解散（资产已保留）"
   },
   "dialog-agent-create": {
     "title": "创建智能体",
@@ -861,7 +866,15 @@
       "stFinal": "已交付",
       "pauseTeam": "暂停团队",
       "resumeTeam": "继续团队",
-      "defaultInterruptedPrompt": "「{{name}}」上次执行被中断、未产出结果。请重新给该成员分派任务（可基于已有成果改进），并继续后续链路。"
+      "defaultInterruptedPrompt": "「{{name}}」上次执行被中断、未产出结果。请重新给该成员分派任务（可基于已有成果改进），并继续后续链路。",
+      "leaderBadge": "主理人（大A）",
+      "leaderDesc": "团队主理人：统筹任务分派与成果整合",
+      "stStandby": "待命",
+      "stStopped": "已停止",
+      "dissolveTeam": "解散团队",
+      "dissolveTeamTooltip": "解散团队（软解散：停止运行，成员与产出全部保留）",
+      "pipeLeader": "{{name}} · 执行",
+      "pipeToolCount": "{{count}} 项操作"
     },
     "team": {
       "membersHeading": "成员",

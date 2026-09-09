@@ -60,27 +60,37 @@ def patch_team_protection() -> None:
 
 
 def _patch_team_delete_permission() -> None:
-    """TeamDelete.check_permissions → bypass-immune ASK（强制用户确认）。"""
+    """TeamDelete.check_permissions → 无条件 DENY（LLM 永远无权删团队）。
+
+    2026-09-09 事故：此前返回 bypass-immune ASK，但官方权限引擎在
+    BYPASS 模式下按契约忽略 bypass_immune（"skip safety prompts"），
+    用户切「完全信任」后主理人收尾时自主 TeamDelete 直接放行——
+    团队又被解散。引擎在所有模式下都原样返回工具级 DENY（唯一
+    可靠拦截点）。
+
+    解散团队只能由用户在团队面板「解散团队」按钮主动发起
+    （``POST /team-flow/{sid}/dissolve``，软解散语义）。
+    """
     from agentscope.app._tool._team_delete import TeamDelete
     from agentscope.permission import PermissionBehavior, PermissionDecision
 
-    async def require_user_confirm(
+    async def deny_team_delete(
         self: Any,
         tool_input: dict[str, Any],
         context: Any,
     ) -> PermissionDecision:
         return PermissionDecision(
-            behavior=PermissionBehavior.ASK,
+            behavior=PermissionBehavior.DENY,
             message=(
-                "主理人请求解散团队。团队与成员是培养资产（上下文与"
-                "产出将保留），解散后团队停止运行。是否确认？"
+                "解散团队只能由用户在团队面板主动操作（培养资产保护），"
+                "智能体无权解散团队。请在最终回复中告知用户：如需解散"
+                "团队，可在团队面板点击「解散团队」。"
             ),
-            decision_reason="agentforge: 团队删除必须经用户确认（培养资产保护）",
-            bypass_immune=True,
+            decision_reason="agentforge: LLM 无权解散团队（用户主动控制）",
         )
 
-    TeamDelete.check_permissions = require_user_confirm  # type: ignore[method-assign]
-    _logger.info("已 patch TeamDelete.check_permissions → 强制用户确认")
+    TeamDelete.check_permissions = deny_team_delete  # type: ignore[method-assign]
+    _logger.info("已 patch TeamDelete.check_permissions → 无条件 DENY（LLM 无权删团队）")
 
 
 def _patch_delete_team_service() -> None:

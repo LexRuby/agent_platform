@@ -493,6 +493,53 @@ async def resume_team_flow(
     return FlowOpResponse(session_id=leader_session_id)
 
 
+@session_flow_router.post(
+    "/team-flow/{leader_session_id}/dissolve",
+    response_model=FlowOpResponse,
+    summary="解散团队（用户主动，软解散语义）",
+)
+async def dissolve_team_flow(
+    leader_session_id: str,
+    request: Request,
+    agent_id: str = Query(description="leader 的 agent id"),
+) -> FlowOpResponse:
+    """用户主动解散团队（2026-09-09：LLM 的 TeamDelete 已被无条件
+    DENY，解散的唯一入口）。
+
+    走 patched ``SessionService.delete_team``（软解散）：取消全部
+    成员正在运行的任务（不删记录）→ 解除 leader 会话的团队绑定。
+    成员 agent / 成员会话 / 团队记录**全部保留**（培养资产）。
+    """
+    user_id = _require_user(request)
+    storage = request.app.state.storage
+    session_service = request.app.state.session_service
+
+    record = await _get_session_record(
+        storage, user_id, agent_id, leader_session_id,
+    )
+    if not record.team_id:
+        raise HTTPException(
+            status_code=409,
+            detail="该会话没有在册团队（已解散或尚未组队），无需解散",
+        )
+
+    # 成员数用于反馈；软解散后绑定即解除
+    members = await _leader_members(storage, user_id, leader_session_id)
+    ok = await session_service.delete_team(user_id, record.team_id)
+    if not ok:
+        raise HTTPException(status_code=500, detail="解散失败，请重试")
+
+    _logger.info(
+        "团队解散（用户主动，资产保留）: user=%s leader_session=%s "
+        "team=%s members=%d",
+        user_id, leader_session_id, record.team_id, len(members),
+    )
+    return FlowOpResponse(
+        session_id=leader_session_id,
+        cancelled_members=len(members),
+    )
+
+
 @session_flow_router.get(
     "/sessions/{session_id}/flow-archive",
     summary="查询该会话的截断归档（被删消息副本）",

@@ -774,6 +774,8 @@ export function ChatViewport({
 
 	/** 重启确认对话框 */
 	const [restartOpen, setRestartOpen] = useState(false);
+    /** 解散团队确认对话框（用户主动解散的唯一入口）。 */
+    const [dissolveOpen, setDissolveOpen] = useState(false);
 	/** 截断（从这里重开）确认：待截断的锚点消息 id */
 	const [truncateTarget, setTruncateTarget] = useState<string | null>(null);
 
@@ -934,6 +936,26 @@ export function ChatViewport({
 			setFlowPending(false);
 		}
 	}, [sessionId, agentId, t]);
+
+	/**
+	 * 解散团队（用户主动，软解散）：取消成员运行 + 解除绑定，培养
+	 * 资产全部保留。LLM 的 TeamDelete 已被无条件 DENY——这是唯一
+	 * 解散入口（2026-09-09）。
+	 */
+	const handleDissolveConfirm = useCallback(async () => {
+		if (!sessionId || !agentId) return;
+		setFlowPending(true);
+		try {
+			await sessionApi.dissolveTeamFlow(sessionId, agentId);
+			toast.success(t('chat.dissolveDone'));
+		} catch {
+			// client.ts 已弹错误 toast
+		} finally {
+			setFlowPending(false);
+			// 刷新视图（team 解除绑定 → 面板转"已解散"态）
+			void refetchSessions();
+		}
+	}, [sessionId, agentId, t, refetchSessions]);
 
 	return (
 		<>
@@ -1107,6 +1129,7 @@ export function ChatViewport({
 									onRerunNode={handleRerunNode}
 									onPauseTeam={handlePauseTeam}
 									onResumeTeam={handleResumeFlow}
+									onDissolveTeam={() => setDissolveOpen(true)}
 									teamBusy={phase !== 'idle' || flowPending}
 								/>
 							) : null}
@@ -1231,20 +1254,21 @@ export function ChatViewport({
 							>
 								{isLeader && sessionId ? (
 									<div className="shrink-0">
-										<TeamFlowPanel
-											msgs={msgs}
-											leaderName={leaderName}
-											members={flowMembers}
-											teamActive={!!view?.team}
-											onOpenMember={handleOpenFlowMember}
-											onForkNode={handleForkNode}
-											onRerunNode={handleRerunNode}
-											onPauseTeam={handlePauseTeam}
-											onResumeTeam={handleResumeFlow}
-											teamBusy={phase !== 'idle' || flowPending}
-										/>
-									</div>
-								) : null}
+											<TeamFlowPanel
+												msgs={msgs}
+												leaderName={leaderName}
+												members={flowMembers}
+												teamActive={!!view?.team}
+												onOpenMember={handleOpenFlowMember}
+												onForkNode={handleForkNode}
+												onRerunNode={handleRerunNode}
+												onPauseTeam={handlePauseTeam}
+												onResumeTeam={handleResumeFlow}
+												onDissolveTeam={() => setDissolveOpen(true)}
+												teamBusy={phase !== 'idle' || flowPending}
+											/>
+										</div>
+									) : null}
 								<ResourceTabsPanel
 									mcp={resourceContent.mcp}
 									skill={resourceContent.skill}
@@ -1295,6 +1319,16 @@ export function ChatViewport({
 				description={t('chat.restartDescription')}
 				confirmLabel={t('chat.restartConfirm')}
 				onConfirm={handleRestartConfirm}
+			/>
+			{/* 解散团队确认（2026-09-09）：用户主动解散的唯一入口——
+			    LLM 的 TeamDelete 已被无条件 DENY。软解散：资产保留 */}
+			<DeleteDialog
+				open={dissolveOpen}
+				onOpenChange={setDissolveOpen}
+				title={t('chat.dissolveTitle')}
+				description={t('chat.dissolveDescription')}
+				confirmLabel={t('chat.dissolveConfirm')}
+				onConfirm={handleDissolveConfirm}
 			/>
 			<DeleteDialog
 				open={forkTarget !== null}

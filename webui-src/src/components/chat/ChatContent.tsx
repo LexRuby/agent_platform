@@ -6,7 +6,7 @@ import {
 	type TextBlock,
 	type ToolCallBlock,
 } from '@agentscope-ai/agentscope/message';
-import { GitBranch, Play, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, GitBranch, Play, TriangleAlert } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { Button } from '../ui/button';
@@ -244,18 +244,27 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 						className="absolute bottom-full left-0 right-0 mb-2 z-50"
 					>
 						{toConfirmedToolCalls.length > 0 ? (
-							<ConfirmCard
-								key={`${toConfirmedToolCalls[0].replyId}:${toConfirmedToolCalls[0].toolCall.id}`}
-								toolCall={toConfirmedToolCalls[0].toolCall}
-								onUserConfirm={(confirm, rules) =>
-									onUserConfirm(
-										toConfirmedToolCalls[0].toolCall,
-										confirm,
-										toConfirmedToolCalls[0].replyId,
-										rules,
-									)
-								}
-							/>
+							<div className="space-y-1.5">
+								{/* 等待权限确认引导（2026-09-09 用户反馈"卡住了
+								    吗"）：会话停在权限确认时，新消息会失败——
+								    明确告知处理方式，避免误判为故障 */}
+								<div className="flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700">
+									<AlertTriangle className="mt-0.5 size-3 shrink-0" />
+									<span>{t('chat.waitingConfirmHint')}</span>
+								</div>
+								<ConfirmCard
+									key={`${toConfirmedToolCalls[0].replyId}:${toConfirmedToolCalls[0].toolCall.id}`}
+									toolCall={toConfirmedToolCalls[0].toolCall}
+									onUserConfirm={(confirm, rules) =>
+										onUserConfirm(
+											toConfirmedToolCalls[0].toolCall,
+											confirm,
+											toConfirmedToolCalls[0].replyId,
+											rules,
+										)
+									}
+								/>
+							</div>
 						) : (
 							footerSlot
 						)}

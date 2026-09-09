@@ -128,14 +128,21 @@ class _ChatStub:
 
 @dataclass
 class _SessionSvcStub:
-    """SessionService stub：记录 cancel_session_run 调用。"""
+    """SessionService stub：记录 cancel_session_run / delete_team 调用。"""
 
     cancelled: list[str] = field(default_factory=list)
+    deleted_teams: list[str] = field(default_factory=list)
+    # 控制 delete_team 返回值（默认成功）
+    delete_team_ok: bool = True
 
     async def cancel_session_run(self, session_id: str,
                                  timeout: float = 10.0) -> bool:
         self.cancelled.append(session_id)
         return True
+
+    async def delete_team(self, user_id: str, team_id: str) -> bool:
+        self.deleted_teams.append(team_id)
+        return self.delete_team_ok
 
 
 @pytest.fixture
@@ -168,6 +175,76 @@ def stack():
         client=TestClient(app), fake=fake, storage=storage,
         bus=bus, chat=chat, session_svc=session_svc,
     )
+
+
+# ================================================================ dissolve
+
+
+class TestDissolveTeamFlow:
+    """POST /team-flow/{sid}/dissolve：用户主动解散（唯一入口）。
+
+    2026-09-09：LLM 的 TeamDelete 已被无条件 DENY（BYPASS 也拦得住），
+    解散只能由用户在团队面板发起。软解散语义：取消成员运行 + 解除
+    leader 绑定，资产全保留。
+    """
+
+    def test_dissolve_with_team(self, stack):
+        """在册团队 → 200，走软解散（delete_team），返回成员数。"""
+        _seed_session(stack.fake, stack.storage, team_id="t-1")
+        _seed_team(
+            stack.fake, stack.storage,
+            members=[
+                {"agent_id": "a-m1", "session_id": "s-m1"},
+                {"agent_id": "a-m2", "session_id": "s-m2"},
+            ],
+        )
+
+        r = stack.client.post(
+            f"/team-flow/{SID}/dissolve",
+            params={"agent_id": AGENT},
+            headers=U,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["session_id"] == SID
+        assert body["cancelled_members"] == 2
+        # 软解散被调用（patched SessionService.delete_team）
+        assert stack.session_svc.deleted_teams == ["t-1"]
+
+    def test_dissolve_without_team_409(self, stack):
+        """无在册团队（已解散/未组队）→ 409，且不触发删除。"""
+        _seed_session(stack.fake, stack.storage, team_id=None)
+
+        r = stack.client.post(
+            f"/team-flow/{SID}/dissolve",
+            params={"agent_id": AGENT},
+            headers=U,
+        )
+        assert r.status_code == 409
+        assert "没有在册团队" in r.json()["detail"]
+        assert stack.session_svc.deleted_teams == []
+
+    def test_dissolve_service_failure_500(self, stack):
+        """软解散失败（delete_team 返回 False）→ 500。"""
+        stack.session_svc.delete_team_ok = False
+        _seed_session(stack.fake, stack.storage, team_id="t-1")
+        _seed_team(stack.fake, stack.storage)
+
+        r = stack.client.post(
+            f"/team-flow/{SID}/dissolve",
+            params={"agent_id": AGENT},
+            headers=U,
+        )
+        assert r.status_code == 500
+
+    def test_dissolve_missing_session_404(self, stack):
+        """会话不存在 → 404（_get_session_record 官方语义）。"""
+        r = stack.client.post(
+            f"/team-flow/s-none/dissolve",
+            params={"agent_id": AGENT},
+            headers=U,
+        )
+        assert r.status_code == 404
 
 
 # ================================================================ truncate
