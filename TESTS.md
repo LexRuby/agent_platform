@@ -669,6 +669,26 @@ Redis seed 5 条消息 → truncate 保留 3 归档 2 → flow-archive 副本
 `no skill returned any result`，智能体必须将空召回视为检索边界，不能据此
 宣称无相似专利。
 
+### 40. `test_agent_share_mcp.py`（16 例）——发布物最薄 MCP 封装（2026-11-02）
+
+> 每个版本化发布物复用同一 Streamable HTTP 端点模板，对外只暴露
+> `run_task` 和 `get_run`。前者异步启动任务，后者返回运行状态、团队成员
+> 职责、可验证行动轨迹和最终答案；原始 thinking、凭证和内部路径不外泄。
+
+| 组 | 覆盖点 |
+|---|---|
+| 协议与授权 | MCP 工具清单；owner/public/指定账号可见性；无权访问统一拒绝 |
+| 运行隔离 | 同一会话连续运行按消息锚点切窗；run_id 按账号与发布物隔离 |
+| 团队透明度 | 聚合主理人和小A状态、职责及可验证消息；过滤 thinking 并脱敏敏感字段 |
+| 长历史 | 分页回溯到运行起点；超过 5000 条时明确返回截断标记 |
+| 凭证 | Cookie 管理端签发发布物 scoped Bearer；Redis 只存摘要；跨发布物不可复用；支持统一吊销 |
+| 生命周期 | 取消发布或删除发布物时吊销凭证；durable pending 保证删除中断后可恢复清理 |
+
+验证：`test_agent_share_mcp.py`、`test_agent_share.py`、`test_auth_api.py`
+合计 97 项通过。真实 `:30000` 冒烟中，Basic 和签发后的 Bearer 均成功
+列出 `run_task/get_run`；前端相关文件 ESLint 通过，TypeScript + Vite
+生产构建通过。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量

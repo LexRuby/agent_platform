@@ -36,7 +36,9 @@ from app.agent_share import (
     AgentShareDeleteCleanupMiddleware,
     RedisAgentSharePolicy,
     agent_share_router,
+    reconcile_agent_share_delete_pending,
 )
+from app.agent_share_mcp import agent_share_mcp_router
 from app.agent_type import AgentTypeMiddleware
 from app.agent_version import AgentVersionMiddleware, agent_version_router
 from app.auth import AuthMiddleware, _LOGIN_HTML, auth_router
@@ -131,6 +133,7 @@ app.include_router(agent_version_router)
 
 # 智能体共享管理：发布/取消/我的发布列表 API（策略已注入 create_app）
 app.include_router(agent_share_router)
+app.include_router(agent_share_mcp_router)
 
 # 会话流程控制：任意位置重新对话（truncate）/ 流程重启（restart）/
 # 团队暂停继续（team-flow pause/resume）/ 截断归档查询（2026-09-08 v3）
@@ -166,8 +169,10 @@ def _start_ark_heartbeat() -> None:
     from app.ark_credential import start_heartbeat
 
     start_heartbeat()
-    # 用量存量回填（幂等，后台执行不阻塞启动）
-    asyncio.get_running_loop().create_task(backfill_usage(storage))
+    # 存量回填与删除 pending 恢复均后台执行，不阻塞启动
+    loop = asyncio.get_running_loop()
+    loop.create_task(backfill_usage(storage))
+    loop.create_task(reconcile_agent_share_delete_pending(storage))
 
 
 def _StartupHook(inner):

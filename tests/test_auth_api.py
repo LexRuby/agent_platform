@@ -11,7 +11,7 @@ import pytest
 
 from app import auth as auth_mod
 
-from tests.helpers import login
+from tests.helpers import PASSWORD, login
 
 
 class TestLoginApi:
@@ -62,6 +62,16 @@ class TestMiddlewareAccess:
 
     def test_post_without_login_401(self, client):
         assert client.post("/echo").status_code == 401
+
+    def test_correct_basic_does_not_authenticate_regular_api(self, client):
+        response = client.get("/echo", auth=("alice", PASSWORD))
+        assert response.status_code == 401
+
+    def test_cookie_still_authenticates_regular_api(self, client):
+        login(client)
+        response = client.get("/echo")
+        assert response.status_code == 200
+        assert response.json()["x_user_id"] == "alice"
 
     def test_page_without_login_redirects(self, client):
         resp = client.get("/", follow_redirects=False, headers={"Accept": "text/html"})

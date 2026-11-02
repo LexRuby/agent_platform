@@ -12,12 +12,33 @@ export function credentialLabel(credential: CredentialView): string {
  * @returns A promise that resolves to true if the copy succeeds; false otherwise.
  */
 export const copyToClipboard = async (text: string): Promise<boolean> => {
+	if (navigator.clipboard?.writeText) {
+		try {
+			await navigator.clipboard.writeText(text);
+			return true;
+		} catch (err) {
+			console.warn('Clipboard API 不可用，改用兼容复制方式：', err);
+		}
+	}
+
+	// Clipboard API 仅允许 HTTPS 或 localhost。Agent Forge 经常通过
+	// http://<server-ip>:30000 访问，因此保留基于文本选区的兼容方式。
+	const textarea = document.createElement('textarea');
+	textarea.value = text;
+	textarea.setAttribute('readonly', '');
+	textarea.style.position = 'fixed';
+	textarea.style.opacity = '0';
+	textarea.style.pointerEvents = 'none';
+	document.body.appendChild(textarea);
+	textarea.select();
+	textarea.setSelectionRange(0, textarea.value.length);
 	try {
-		await navigator.clipboard.writeText(text);
-		return true;
+		return document.execCommand('copy');
 	} catch (err) {
-		console.error('Failed to copy text: ', err);
+		console.error('复制文本失败：', err);
 		return false;
+	} finally {
+		textarea.remove();
 	}
 };
 

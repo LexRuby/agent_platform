@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .env
 data/
+blobs/
 .pytest_cache/
 .studio-data/
 .DS_Store

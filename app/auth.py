@@ -11,10 +11,14 @@
 - 官方 Web UI 前端零改动：同源部署浏览器自动携带 cookie
 """
 
+import base64
+import binascii
+import hashlib
 import json
 import os
 import re
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 
 import redis.asyncio as aioredis
@@ -30,6 +34,9 @@ SESSION_TTL = 7 * 24 * 3600
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_-]{2,32}$")
 
 SESS_PREFIX = "agentforge:sess:"
+MCP_TOKEN_PREFIX = "agentforge:mcp-token:"
+MCP_TOKEN_USER_PREFIX = "agentforge:mcp-token-user:"
+MCP_TOKEN_VALUE_PREFIX = "af_mcp_"
 
 # 放行规则：认证端点、登录页与静态资源（未登录可访问）
 STATIC_EXACT = {"/login", "/health", "/agentforge.svg", "/favicon.ico"}
@@ -95,15 +102,145 @@ async def logout(response: Response) -> dict:
     return {"ok": True}
 
 
-@auth_router.get("/me", summary="当前登录用户（未登录返回 401）")
-async def me(request: Request) -> dict:
+async def require_cookie_user(request: Request) -> str:
+    """仅接受 Cookie session；供所有凭证管理/签发端点复用。"""
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
         raise HTTPException(401, "未登录")
     username = await _redis().get(SESS_PREFIX + token)
     if username is None:
         raise HTTPException(401, "未登录或会话已过期")
-    return {"username": username}
+    await _redis().expire(SESS_PREFIX + token, SESSION_TTL)
+    return username
+
+
+@auth_router.get("/me", summary="当前登录用户（未登录返回 401）")
+async def me(request: Request) -> dict:
+    return {"username": await require_cookie_user(request)}
+
+
+@auth_router.get("/mcp-tokens/status", summary="当前账号 MCP 凭证状态")
+async def mcp_tokens_status(request: Request) -> dict:
+    username = await require_cookie_user(request)
+    active = await _active_mcp_token_records(username)
+    return {"active_count": len(active)}
+
+
+@auth_router.delete("/mcp-tokens", summary="吊销当前账号全部 MCP 凭证")
+async def revoke_mcp_tokens(request: Request) -> dict:
+    username = await require_cookie_user(request)
+    redis = _redis()
+    index_key = MCP_TOKEN_USER_PREFIX + username
+    hashes = await redis.smembers(index_key)
+    if hashes:
+        await redis.delete(*(MCP_TOKEN_PREFIX + item for item in hashes))
+    await redis.delete(index_key)
+    return {"ok": True, "revoked_count": len(hashes)}
+
+
+def _mcp_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+async def _active_mcp_token_records(username: str) -> dict[str, dict]:
+    """读取用户 token 索引，同时清理丢失、损坏或串账号的记录。"""
+    redis = _redis()
+    index_key = MCP_TOKEN_USER_PREFIX + username
+    records: dict[str, dict] = {}
+    invalid: list[str] = []
+    for digest in await redis.smembers(index_key):
+        raw = await redis.get(MCP_TOKEN_PREFIX + digest)
+        try:
+            record = json.loads(raw) if raw else None
+        except (TypeError, ValueError):
+            record = None
+        if not isinstance(record, dict) or record.get("user") != username:
+            invalid.append(digest)
+            continue
+        records[digest] = record
+    if invalid:
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.srem(index_key, *invalid)
+            for digest in invalid:
+                pipe.delete(MCP_TOKEN_PREFIX + digest)
+            await pipe.execute()
+    return records
+
+
+async def create_scoped_mcp_token(username: str, published_id: str) -> str:
+    """签发高熵 scoped token；同账号同发布物仅保留一个，Redis 不存明文。"""
+    redis = _redis()
+    records = await _active_mcp_token_records(username)
+    old = [
+        digest for digest, record in records.items()
+        if record.get("published_id") == published_id
+    ]
+    token = MCP_TOKEN_VALUE_PREFIX + secrets.token_urlsafe(32)
+    digest = _mcp_token_hash(token)
+    record = {
+        "user": username,
+        "published_id": published_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    async with redis.pipeline(transaction=True) as pipe:
+        if old:
+            pipe.srem(MCP_TOKEN_USER_PREFIX + username, *old)
+            for old_digest in old:
+                pipe.delete(MCP_TOKEN_PREFIX + old_digest)
+        pipe.set(MCP_TOKEN_PREFIX + digest, json.dumps(record))
+        pipe.sadd(MCP_TOKEN_USER_PREFIX + username, digest)
+        await pipe.execute()
+    return token
+
+
+async def revoke_published_mcp_tokens(
+    published_id: str,
+    redis: aioredis.Redis | None = None,
+) -> int:
+    """吊销绑定发布物的全部 token，并同步移除各用户摘要索引。
+
+    ``redis`` 允许删除级联复用其注入的 storage client，避免另开连接，
+    并确保共享索引与 token 在同一 Redis/事件循环中完成补偿。
+    """
+    redis = redis or _redis()
+    revoked: list[tuple[str, str]] = []
+    invalid: list[str] = []
+    async for key in redis.scan_iter(match=MCP_TOKEN_PREFIX + "*"):
+        raw = await redis.get(key)
+        try:
+            record = json.loads(raw) if raw else None
+        except (TypeError, ValueError):
+            record = None
+        digest = key[len(MCP_TOKEN_PREFIX):]
+        if not isinstance(record, dict):
+            invalid.append(digest)
+        elif record.get("published_id") == published_id:
+            revoked.append((digest, record.get("user") or ""))
+    if revoked or invalid:
+        async with redis.pipeline(transaction=True) as pipe:
+            for digest, username in revoked:
+                pipe.delete(MCP_TOKEN_PREFIX + digest)
+                if username:
+                    pipe.srem(MCP_TOKEN_USER_PREFIX + username, digest)
+            for digest in invalid:
+                pipe.delete(MCP_TOKEN_PREFIX + digest)
+            await pipe.execute()
+    return len(revoked)
+
+
+async def resolve_scoped_mcp_token(token: str, published_id: str) -> str | None:
+    if not token.startswith(MCP_TOKEN_VALUE_PREFIX):
+        return None
+    raw = await _redis().get(MCP_TOKEN_PREFIX + _mcp_token_hash(token))
+    if not raw:
+        return None
+    try:
+        record = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if record.get("published_id") != published_id:
+        return None
+    return record.get("user") or None
 
 
 _LOGIN_HTML = (Path(__file__).parent / "login.html").read_text(encoding="utf-8")
@@ -137,7 +274,19 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        username = await self._session_user(scope)
+        mcp_parts = path.split("/")
+        is_mcp_protocol = (
+            len(mcp_parts) == 5 and mcp_parts[1:3] == ["agent-share", "mcp"]
+            and bool(mcp_parts[3]) and not mcp_parts[4]
+        ) or (
+            len(mcp_parts) == 4 and mcp_parts[1:3] == ["agent-share", "mcp"]
+            and bool(mcp_parts[3])
+        )
+        username = await self._session_user(
+            scope,
+            allow_mcp=is_mcp_protocol,
+            published_id=mcp_parts[3] if is_mcp_protocol else "",
+        )
         if username is None:
             # 浏览器导航（GET + Accept: text/html）一律 307 → /login：
             # 只跳 / 的话，未登录直接打开/刷新 /chat、/mcp 等深链接会看到
@@ -164,7 +313,31 @@ class AuthMiddleware:
         scope["headers"] = headers
         await self.app(scope, receive, send)
 
-    async def _session_user(self, scope) -> str | None:
+    async def _session_user(
+        self, scope, *, allow_mcp: bool = False, published_id: str = "",
+    ) -> str | None:
+        if allow_mcp:
+            for key, value in scope.get("headers", []):
+                if key != b"authorization":
+                    continue
+                scheme, _, credential = value.decode("latin-1").partition(" ")
+                if scheme.lower() == "bearer" and credential:
+                    return await resolve_scoped_mcp_token(
+                        credential, published_id,
+                    )
+                if scheme.lower() != "basic" or not credential:
+                    return None
+                try:
+                    decoded = base64.b64decode(
+                        credential, validate=True,
+                    ).decode("utf-8")
+                except (binascii.Error, UnicodeDecodeError):
+                    return None
+                username, sep, password = decoded.partition(":")
+                if sep and _check_password(username, password):
+                    return username
+                return None
+
         cookies = {}
         for key, value in scope.get("headers", []):
             if key == b"cookie":

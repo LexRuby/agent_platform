@@ -50,6 +50,7 @@ from app.agent_share import (  # noqa: E402
     AgentShareDeleteCleanupMiddleware,
     RedisAgentSharePolicy,
     agent_share_router,
+    reconcile_agent_share_delete_pending,
 )
 
 
@@ -539,6 +540,9 @@ class TestVersionedPublish:
         assert body["display_name"] == "文科志愿专家"
         assert body["source_agent_id"] == "a-leader"
         assert body["source_version"] == 2
+        assert body["mcp_url"] == "http://testserver/agent-share/mcp/pub1"
+        assert body["mcp_transport"] == "streamable-http"
+        assert body["mcp_tools"] == ["run_task", "get_run"]
         pub_id = body["agent_id"]
         # 被共享账号授权成立（复用 v1 共享机制）
         assert asyncio.run(
@@ -567,6 +571,9 @@ class TestVersionedPublish:
         by_name = {p["display_name"]: p for p in pubs}
         assert by_name["文科志愿专家"]["source_version"] == 2
         assert by_name["理科志愿专家"]["source_version"] == 3
+        assert by_name["文科志愿专家"]["mcp_url"].endswith(
+            f"/agent-share/mcp/{id2}",
+        )
 
     def test_publish_requires_existing_version(self, pub_env):
         _, client = pub_env
@@ -656,6 +663,9 @@ class TestAgentDeleteShareCleanup:
     def delete_app(self, storage):
         async def inner(scope, receive, send):
             status = 404 if scope["path"] == "/agent/failed" else 200
+            if status == 200:
+                agent_id = scope["path"].rsplit("/", 1)[-1]
+                storage.agents.pop(("alice", agent_id), None)
             await send({
                 "type": "http.response.start",
                 "status": status,
@@ -686,6 +696,9 @@ class TestAgentDeleteShareCleanup:
     async def test_successful_delete_cleans_share_and_publication(
         self, storage, delete_app,
     ):
+        storage.agents[("alice", "pub1")] = _make_agent(
+            "alice", "pub1", "发布物",
+        )
         rec = {
             "owner": "alice", "mode": "users", "users": ["bob", "carol"],
             "agent_name": "发布物", "shared_at": "t",
@@ -731,3 +744,163 @@ class TestAgentDeleteShareCleanup:
         assert await storage._client.exists(
             "agentforge:share:agent:failed",
         ) == 1
+        assert not await storage._client.exists(
+            "agentforge:share:delete-pending:alice:failed",
+        )
+
+    async def test_cleanup_failure_keeps_pending_for_404_retry(
+        self, storage, monkeypatch,
+    ):
+        calls = {"inner": 0, "cleanup": 0}
+
+        async def inner(scope, receive, send):
+            calls["inner"] += 1
+            existed = storage.agents.pop(("alice", "pub1"), None) is not None
+            await send({
+                "type": "http.response.start",
+                "status": 200 if existed else 404, "headers": [],
+            })
+            await send({"type": "http.response.body", "body": b"{}"})
+
+        from app import agent_share as mod
+        real = mod.cleanup_deleted_agent_share
+
+        async def fail_once(*args, **kwargs):
+            calls["cleanup"] += 1
+            if calls["cleanup"] == 1:
+                raise RuntimeError("redis down")
+            await real(*args, **kwargs)
+
+        monkeypatch.setattr(mod, "cleanup_deleted_agent_share", fail_once)
+        storage.agents[("alice", "pub1")] = _make_agent(
+            "alice", "pub1", "发布物",
+        )
+        app = AgentShareDeleteCleanupMiddleware(inner, storage)
+        assert await self._delete(app, "/agent/pub1") == 200
+        assert await storage._client.exists(
+            "agentforge:share:delete-pending:alice:pub1",
+        )
+        assert await self._delete(app, "/agent/pub1") == 404
+        assert calls["cleanup"] == 2
+        assert not await storage._client.exists(
+            "agentforge:share:delete-pending:alice:pub1",
+        )
+
+    @pytest.mark.parametrize("status", [404, 500])
+    async def test_error_after_delete_compensates_cleanup(self, storage, status):
+        c = storage._client
+        storage.agents[("alice", "pub1")] = _make_agent(
+            "alice", "pub1", "发布物",
+        )
+        await _publish_users(c, "alice", "pub1", ["bob"])
+
+        async def inner(scope, receive, send):
+            storage.agents.pop(("alice", "pub1"), None)
+            await send({"type": "http.response.start", "status": status, "headers": []})
+            await send({"type": "http.response.body", "body": b"{}"})
+
+        app = AgentShareDeleteCleanupMiddleware(inner, storage)
+        assert await self._delete(app, "/agent/pub1") == status
+        assert not await c.exists("agentforge:share:agent:pub1")
+        assert not await c.exists("agentforge:share:delete-pending:alice:pub1")
+
+    async def test_500_with_existing_agent_drops_pending_without_cleanup(self, storage):
+        c = storage._client
+        storage.agents[("alice", "pub1")] = _make_agent(
+            "alice", "pub1", "发布物",
+        )
+        await _publish_users(c, "alice", "pub1", ["bob"])
+
+        async def inner(scope, receive, send):
+            await send({"type": "http.response.start", "status": 500, "headers": []})
+            await send({"type": "http.response.body", "body": b"{}"})
+
+        app = AgentShareDeleteCleanupMiddleware(inner, storage)
+        assert await self._delete(app, "/agent/pub1") == 500
+        assert await c.exists("agentforge:share:agent:pub1")
+        assert not await c.exists("agentforge:share:delete-pending:alice:pub1")
+
+    async def test_error_status_recheck_failure_keeps_pending(
+        self, storage, monkeypatch,
+    ):
+        c = storage._client
+        storage.agents[("alice", "pub1")] = _make_agent(
+            "alice", "pub1", "发布物",
+        )
+        await _publish_users(c, "alice", "pub1", ["bob"])
+        calls = 0
+        original = storage.get_agent
+
+        async def flaky_get_agent(owner, agent_id):
+            nonlocal calls
+            calls += 1
+            if calls > 1:
+                raise RuntimeError("storage unavailable")
+            return await original(owner, agent_id)
+
+        monkeypatch.setattr(storage, "get_agent", flaky_get_agent)
+
+        async def inner(scope, receive, send):
+            await send({"type": "http.response.start", "status": 500, "headers": []})
+            await send({"type": "http.response.body", "body": b"{}"})
+
+        app = AgentShareDeleteCleanupMiddleware(inner, storage)
+        assert await self._delete(app, "/agent/pub1") == 500
+        assert await c.exists("agentforge:share:agent:pub1")
+        assert await c.exists("agentforge:share:delete-pending:alice:pub1")
+
+    async def test_plain_404_and_cross_user_do_not_cleanup(self, storage):
+        await _publish_users(storage._client, "alice", "a-leader", ["bob"])
+
+        async def missing(scope, receive, send):
+            await send({"type": "http.response.start", "status": 404, "headers": []})
+            await send({"type": "http.response.body", "body": b"{}"})
+
+        app = AgentShareDeleteCleanupMiddleware(missing, storage)
+        assert await self._delete(app, "/agent/ghost") == 404
+        assert await storage._client.exists("agentforge:share:agent:a-leader")
+
+        sent = []
+        async def send(message):
+            sent.append(message)
+        async def receive():
+            return {"type": "http.request", "body": b""}
+        await app({
+            "type": "http", "method": "DELETE", "path": "/agent/a-leader",
+            "headers": [(b"x-user-id", b"bob")],
+        }, receive, send)
+        assert sent[0]["status"] == 404
+        assert await storage._client.exists("agentforge:share:agent:a-leader")
+
+    async def test_pending_write_failure_never_calls_inner(self, storage, monkeypatch):
+        called = False
+        async def inner(scope, receive, send):
+            nonlocal called
+            called = True
+        app = AgentShareDeleteCleanupMiddleware(inner, storage)
+        original = storage._client.set
+        async def fail_pending(key, *args, **kwargs):
+            if "delete-pending" in key:
+                raise RuntimeError("redis down")
+            return await original(key, *args, **kwargs)
+        monkeypatch.setattr(storage._client, "set", fail_pending)
+        assert await self._delete(app, "/agent/a-leader") == 503
+        assert called is False
+
+    async def test_startup_reconciles_deleted_and_drops_stale_existing(self, storage):
+        c = storage._client
+        await _publish_users(c, "alice", "a-leader", ["bob"])
+        await c.set(
+            "agentforge:share:delete-pending:alice:a-leader",
+            json.dumps({"owner": "alice", "agent_id": "a-leader"}),
+        )
+        await _publish_users(c, "alice", "gone", ["bob"])
+        await c.set(
+            "agentforge:share:delete-pending:alice:gone",
+            json.dumps({"owner": "alice", "agent_id": "gone"}),
+        )
+        await reconcile_agent_share_delete_pending(storage)
+        assert await c.exists("agentforge:share:agent:a-leader")
+        assert not await c.exists("agentforge:share:delete-pending:alice:a-leader")
+        assert not await c.exists("agentforge:share:agent:gone")
+        assert not await c.exists("agentforge:share:delete-pending:alice:gone")

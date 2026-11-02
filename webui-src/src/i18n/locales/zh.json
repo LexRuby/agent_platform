@@ -1142,7 +1142,7 @@
     "pub-name-hint": "同一智能体的不同版本可发布为不同产品（如文科版/理科版各自命名）",
     "pub-no-versions": "该智能体还没有版本快照，请先在「版本管理」中保存新版本",
     "pub-submit": "发布",
-    "pub-toast": "已发布「{{name}}」",
+    "pub-toast": "已发布「{{name}}」，MCP 地址：{{url}}",
     "pub-team-mode-label": "团队形态",
     "pub-team-mode-blueprint-label": "固定团队（推荐）",
     "pub-team-mode-blueprint-desc": "产品组队时按快照的 {{count}} 名成员定义原样重建（名字与职责保持一致），培育成果随版本走",
@@ -1167,6 +1167,17 @@
     "model-detail": "按模型",
     "team-breakdown": "团队成本构成（大A + 各成员小A）",
     "expand-detail": "展开团队明细",
-    "collapse-detail": "收起团队明细"
+    "collapse-detail": "收起团队明细",
+    "pub-success": "发布成功",
+    "pub-finish": "完成",
+    "mcp-endpoint": "MCP 地址",
+    "mcp-transport": "传输方式",
+    "mcp-tools": "工具",
+    "mcp-copy": "复制地址",
+    "mcp-copy-config": "复制 MCP 配置",
+    "mcp-copy-title": "复制完整 MCP 配置（自动包含当前账号专属 API Key）",
+    "mcp-copied": "MCP 地址已复制",
+    "mcp-config-copied": "完整 MCP 配置已复制",
+    "mcp-copy-error": "签发或复制 MCP 配置失败"
   }
 }

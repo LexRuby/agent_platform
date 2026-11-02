@@ -20,15 +20,14 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { agentApi, agentShareApi, agentVersionApi } from '@/api';
-import type { VersionBrief } from '@/api/agentVersion';
 import type {
 	AgentView,
 	PublicationInfo,
 	PublicationUsage,
 	ShareInfo,
 } from '@/api';
+import type { VersionBrief } from '@/api/agentVersion';
 import { getUserId } from '@/api/client';
-import { formatNumber } from '@/utils/common';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
 import { AgentVersionDialog } from '@/components/dialog/AgentVersionDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
@@ -72,6 +71,7 @@ import {
 	TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import { copyToClipboard, formatNumber } from '@/utils/common';
 
 type ShareMode = 'private' | 'users' | 'public';
 
@@ -401,9 +401,11 @@ function PublishDialog({
 	const [input, setInput] = useState('');
 	const [teamMode, setTeamMode] = useState<'blueprint' | 'auto'>('blueprint');
 	const [submitting, setSubmitting] = useState(false);
+	const [publication, setPublication] = useState<PublicationInfo | null>(null);
 
 	useEffect(() => {
 		if (!open) return;
+		setPublication(null);
 		setUsers([]);
 		setInput('');
 		setMode('users');
@@ -455,8 +457,8 @@ function PublishDialog({
 				mode === 'users' ? users : [],
 				teamMode,
 			);
-			toast.success(t('account.pub-toast', { name: res.display_name }));
-			onOpenChange(false);
+			setPublication(res);
+			toast.success(t('account.pub-toast', { name: res.display_name, url: res.mcp_url }));
 			onDone();
 		} finally {
 			setSubmitting(false);
@@ -467,6 +469,18 @@ function PublishDialog({
 		!!version &&
 		displayName.trim().length > 0 &&
 		(mode === 'public' || users.length > 0);
+
+	const copyMcpConfig = async (publishedId: string) => {
+		try {
+			const { config } = await agentShareApi.createMcpConfig(publishedId);
+			if (!(await copyToClipboard(JSON.stringify(config, null, 2)))) {
+				throw new Error('copy failed');
+			}
+			toast.success(t('account.mcp-config-copied'));
+		} catch {
+			toast.error(t('account.mcp-copy-error'));
+		}
+	};
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -479,12 +493,46 @@ function PublishDialog({
 					<DialogDescription>{t('account.pub-description')}</DialogDescription>
 				</DialogHeader>
 
-				{versions.length === 0 ? (
-					<div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
-						{t('account.pub-no-versions')}
-					</div>
+				{publication ? (
+					<>
+						<div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-4">
+							<div className="flex items-center gap-2 font-medium text-emerald-700">
+								<Check className="size-4" />
+								{t('account.pub-success')}
+							</div>
+							<div className="space-y-1">
+								<Label>{t('account.mcp-endpoint')}</Label>
+								<div className="break-all rounded-md border bg-background px-3 py-2 font-mono text-xs">
+									{publication.mcp_url}
+								</div>
+							</div>
+							<div className="grid grid-cols-2 gap-3 text-sm">
+								<div>
+									<div className="text-xs text-muted-foreground">{t('account.mcp-transport')}</div>
+									<div>{publication.mcp_transport}</div>
+								</div>
+								<div>
+									<div className="text-xs text-muted-foreground">{t('account.mcp-tools')}</div>
+									<div className="break-words">{publication.mcp_tools.join(', ')}</div>
+								</div>
+							</div>
+						</div>
+						<DialogFooter>
+							<Button onClick={() => void copyMcpConfig(publication.agent_id)}>
+								<Copy className="size-3.5" />
+								{t('account.mcp-copy-config')}
+							</Button>
+							<Button onClick={() => onOpenChange(false)}>{t('account.pub-finish')}</Button>
+						</DialogFooter>
+					</>
 				) : (
-					<div className="flex flex-col gap-4">
+					<>
+						{versions.length === 0 ? (
+							<div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+								{t('account.pub-no-versions')}
+							</div>
+						) : (
+							<div className="flex flex-col gap-4">
 						<div className="flex flex-col gap-1.5">
 							<Label>{t('account.pub-version-label')}</Label>
 							<Select value={version} onValueChange={(v) => {
@@ -627,17 +675,19 @@ function PublishDialog({
 							</RadioGroup>
 						</div>
 					)}
-				</div>
-			)}
+							</div>
+						)}
 
-				<DialogFooter>
-					<Button variant="outline" onClick={() => onOpenChange(false)}>
-						{t('common.cancel')}
-					</Button>
-					<Button onClick={submit} disabled={submitting || !canSubmit}>
-						{submitting ? t('common.saving') : t('account.pub-submit')}
-					</Button>
-				</DialogFooter>
+						<DialogFooter>
+							<Button variant="outline" onClick={() => onOpenChange(false)}>
+								{t('common.cancel')}
+							</Button>
+							<Button onClick={submit} disabled={submitting || !canSubmit}>
+								{submitting ? t('common.saving') : t('account.pub-submit')}
+							</Button>
+						</DialogFooter>
+					</>
+				)}
 			</DialogContent>
 		</Dialog>
 	);
@@ -666,6 +716,18 @@ export function AgentManagement() {
 	const [publications, setPublications] = useState<PublicationInfo[]>([]);
 	const [pubUsage, setPubUsage] = useState<Map<string, PublicationUsage>>(new Map());
 	const [loading, setLoading] = useState(true);
+
+	const copyMcpConfig = async (publishedId: string) => {
+		try {
+			const { config } = await agentShareApi.createMcpConfig(publishedId);
+			if (!(await copyToClipboard(JSON.stringify(config, null, 2)))) {
+				throw new Error('copy failed');
+			}
+			toast.success(t('account.mcp-config-copied'));
+		} catch {
+			toast.error(t('account.mcp-copy-error'));
+		}
+	};
 
 	// 对话框目标
 	const [editing, setEditing] = useState<AgentView | null>(null);
@@ -936,6 +998,15 @@ export function AgentManagement() {
 											</span>
 										</div>
 									)}
+									<Button
+										size="sm"
+										variant="outline"
+										title={t('account.mcp-copy-title')}
+										onClick={() => void copyMcpConfig(p.agent_id)}
+									>
+										<Copy className="size-3.5" />
+										{t('account.mcp-copy-config')}
+									</Button>
 									<Button
 										size="sm"
 										variant="ghost"

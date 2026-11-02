@@ -65,10 +65,16 @@ _OWNER_KEY = "agentforge:share:owner:{owner}"
 # 发布物元数据（版本化发布，2026-09-08）
 _PUBMETA_KEY = "agentforge:share:pubmeta:{published_id}"
 _PUBS_KEY = "agentforge:share:pubs:{owner}"
+_DELETE_PENDING_KEY = "agentforge:share:delete-pending:{owner}:{agent_id}"
+_DELETE_PENDING_PATTERN = "agentforge:share:delete-pending:*"
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _mcp_url(request: Request, published_id: str) -> str:
+    return str(request.base_url).rstrip("/") + f"/agent-share/mcp/{published_id}"
 
 
 class RedisAgentSharePolicy(ResourceAccessPolicyBase):
@@ -169,6 +175,9 @@ class PublicationInfo(BaseModel):
     users: list[str] = []
     published_at: str = ""
     team_mode: str = "blueprint"
+    mcp_url: str = ""
+    mcp_transport: str = "streamable-http"
+    mcp_tools: list[str] = ["run_task", "get_run"]
 
 
 class MyPublicationsResponse(BaseModel):
@@ -253,7 +262,11 @@ async def cleanup_deleted_agent_share(
     agent_id: str,
     owner_hint: str = "",
 ) -> None:
-    """删除智能体本体后，清理共享及版本化发布的全部关联索引。"""
+    """删除智能体本体后，清理共享、发布元数据及 scoped token。"""
+    from .auth import revoke_published_mcp_tokens  # noqa: PLC0415
+
+    # 凭证清理失败必须向上抛出，让 durable pending 保留并在启动/重试时补偿。
+    await revoke_published_mcp_tokens(agent_id, client)
     # 删除是低频操作。扫描索引可处理主记录损坏、旧版本漏写 owner/users
     # 等历史数据，保证不会留下仍引用已删除本体的 Set 成员。
     index_patterns = (
@@ -262,7 +275,8 @@ async def cleanup_deleted_agent_share(
         "agentforge:share:pubs:*",
     )
     for pattern in index_patterns:
-        async for key in client.scan_iter(match=pattern):
+        keys = [key async for key in client.scan_iter(match=pattern)]
+        for key in keys:
             await client.srem(key, agent_id)
 
     await client.srem(_PUBLIC_KEY, agent_id)
@@ -275,11 +289,48 @@ async def cleanup_deleted_agent_share(
     )
 
 
+async def reconcile_agent_share_delete_pending(storage: StorageBase) -> None:
+    """恢复删除本体与共享索引清理之间中断的 durable pending。"""
+    client = storage._client  # noqa: SLF001 - 与共享策略共用 Redis
+    prefix = _DELETE_PENDING_KEY.split("{owner}", 1)[0]
+    async for key in client.scan_iter(match=_DELETE_PENDING_PATTERN):
+        try:
+            raw = await client.get(key)
+            rec = json.loads(raw) if raw else {}
+            owner = rec.get("owner") or ""
+            agent_id = rec.get("agent_id") or ""
+            if not owner or not agent_id:
+                suffix = key[len(prefix):]
+                owner, sep, agent_id = suffix.partition(":")
+                if not sep:
+                    continue
+            if await storage.get_agent(owner, agent_id) is not None:
+                await client.delete(key)
+                continue
+            await cleanup_deleted_agent_share(client, agent_id, owner_hint=owner)
+            await client.delete(key)
+        except Exception:  # noqa: BLE001 - 单条失败保留 pending，继续恢复其他条目
+            _logger.exception("恢复智能体共享删除 pending 失败: %s", key)
+
+
+async def _send_service_unavailable(send) -> None:
+    body = json.dumps(
+        {"detail": "删除准备失败，请稍后重试"}, ensure_ascii=False,
+    ).encode()
+    await send({
+        "type": "http.response.start",
+        "status": 503,
+        "headers": [(b"content-type", b"application/json; charset=utf-8")],
+    })
+    await send({"type": "http.response.body", "body": body})
+
+
 class AgentShareDeleteCleanupMiddleware:
-    """成功删除 ``/agent/{id}`` 后同步清理共享和发布物元数据。"""
+    """用 durable pending 保证本体删除后最终清理共享和发布物元数据。"""
 
     def __init__(self, app: Any, storage: StorageBase) -> None:
         self.app = app
+        self.storage = storage
         self.client = storage._client  # noqa: SLF001 - 与共享策略共用 Redis
 
     async def __call__(self, scope, receive, send) -> None:
@@ -290,10 +341,41 @@ class AgentShareDeleteCleanupMiddleware:
         path = (scope.get("path") or "").rstrip("/")
         method = scope.get("method", "")
         prefix = "/agent/"
-        rest = path[len(prefix):] if path.startswith(prefix) else ""
-        if method != "DELETE" or not rest or "/" in rest:
+        agent_id = path[len(prefix):] if path.startswith(prefix) else ""
+        if method != "DELETE" or not agent_id or "/" in agent_id:
             await self.app(scope, receive, send)
             return
+
+        owner = ""
+        for key, value in scope.get("headers") or []:
+            if key.lower() == b"x-user-id":
+                owner = value.decode("utf-8", errors="ignore")
+                break
+        if not owner:
+            await self.app(scope, receive, send)
+            return
+
+        pending_key = _DELETE_PENDING_KEY.format(owner=owner, agent_id=agent_id)
+        try:
+            exists = await self.storage.get_agent(owner, agent_id) is not None
+            had_pending = bool(await self.client.exists(pending_key))
+        except Exception:  # noqa: BLE001 - 无法判定本体/pending 时严禁进入删除
+            _logger.exception("读取智能体共享删除状态失败: %s", agent_id)
+            await _send_service_unavailable(send)
+            return
+        if exists:
+            try:
+                await self.client.set(
+                    pending_key,
+                    json.dumps({
+                        "owner": owner, "agent_id": agent_id,
+                        "created_at": _now_iso(),
+                    }, ensure_ascii=False),
+                )
+            except Exception:  # noqa: BLE001 - pending 不 durable 时严禁删本体
+                _logger.exception("写智能体共享删除 pending 失败: %s", agent_id)
+                await _send_service_unavailable(send)
+                return
 
         status = 500
 
@@ -301,22 +383,35 @@ class AgentShareDeleteCleanupMiddleware:
             nonlocal status
             if message["type"] == "http.response.start":
                 status = message.get("status", 500)
-            if (
-                message["type"] == "http.response.body"
-                and not message.get("more_body")
-                and status in (200, 204)
-            ):
-                owner = ""
-                for key, value in scope.get("headers") or []:
-                    if key.lower() == b"x-user-id":
-                        owner = value.decode("utf-8", errors="ignore")
-                        break
-                try:
-                    await cleanup_deleted_agent_share(
-                        self.client, rest, owner_hint=owner,
-                    )
-                except Exception:  # noqa: BLE001 - 本体已删，不能篡改成功响应
-                    _logger.exception("删除智能体后的共享索引清理失败: %s", rest)
+            if message["type"] == "http.response.body" and not message.get("more_body"):
+                has_proof = exists or had_pending
+                should_cleanup = status in (200, 204) and has_proof
+                if status not in (200, 204) and has_proof:
+                    try:
+                        still_exists = (
+                            await self.storage.get_agent(owner, agent_id) is not None
+                        )
+                    except Exception:  # noqa: BLE001 - 状态不明时保留 pending
+                        _logger.exception("删除响应后复核本体失败: %s", agent_id)
+                    else:
+                        should_cleanup = not still_exists
+                        if still_exists:
+                            try:
+                                await self.client.delete(pending_key)
+                            except Exception:  # noqa: BLE001 - 保留待启动恢复
+                                _logger.exception(
+                                    "删除失败后清 pending 失败: %s", agent_id,
+                                )
+                if should_cleanup:
+                    try:
+                        await cleanup_deleted_agent_share(
+                            self.client, agent_id, owner_hint=owner,
+                        )
+                        await self.client.delete(pending_key)
+                    except Exception:  # noqa: BLE001 - 失败时必须保留 pending
+                        _logger.exception(
+                            "删除智能体后的共享索引清理失败: %s", agent_id,
+                        )
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
@@ -500,6 +595,7 @@ async def publish_version(body: PublishRequest, request: Request) -> Publication
         users=users if mode == "users" else [],
         published_at=pubmeta["published_at"],
         team_mode=body.team_mode,
+        mcp_url=_mcp_url(request, published_id),
     )
 
 
@@ -544,6 +640,7 @@ async def list_my_publications(request: Request) -> MyPublicationsResponse:
                 users=(share or {}).get("users") or [],
                 published_at=meta.get("published_at") or "",
                 team_mode=meta.get("team_mode") or "blueprint",
+                mcp_url=_mcp_url(request, pid),
             ),
         )
     pubs.sort(key=lambda p: p.published_at, reverse=True)

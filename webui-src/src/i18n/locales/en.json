@@ -1142,7 +1142,7 @@
     "pub-name-hint": "Different versions of the same agent can be published as separate products",
     "pub-no-versions": "No version snapshots yet — save a new version in \"Versions\" first",
     "pub-submit": "Publish",
-    "pub-toast": "Published \"{{name}}\"",
+    "pub-toast": "Published \"{{name}}\". MCP endpoint: {{url}}",
     "pub-team-mode-label": "Team Mode",
     "pub-team-mode-blueprint-label": "Fixed team (recommended)",
     "pub-team-mode-blueprint-desc": "Rebuild the {{count}} members exactly as snapshotted (same names and roles) when the product forms a team",
@@ -1167,6 +1167,17 @@
     "model-detail": "By model",
     "team-breakdown": "Team cost breakdown (Big-A + member small-As)",
     "expand-detail": "Expand team detail",
-    "collapse-detail": "Collapse team detail"
+    "collapse-detail": "Collapse team detail",
+    "pub-success": "Published successfully",
+    "pub-finish": "Done",
+    "mcp-endpoint": "MCP endpoint",
+    "mcp-transport": "Transport",
+    "mcp-tools": "Tools",
+    "mcp-copy": "Copy address",
+    "mcp-copy-config": "Copy MCP config",
+    "mcp-copy-title": "Copy the complete MCP config with your account API key",
+    "mcp-copied": "MCP endpoint copied",
+    "mcp-config-copied": "Complete MCP config copied",
+    "mcp-copy-error": "Could not issue or copy the MCP config"
   }
 }

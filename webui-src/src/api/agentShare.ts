@@ -1,5 +1,10 @@
 import { client } from './client';
-import type { PublicationInfo, PublicationUsage, ShareInfo } from './types';
+import type {
+        MCPPublicationConfig,
+        PublicationInfo,
+        PublicationUsage,
+        ShareInfo,
+} from './types';
 
 /**
  * 智能体共享（账号 → 智能体可见性，2026-09-07 共享 v1）。
@@ -47,7 +52,14 @@ export const agentShareApi = {
         publications: () =>
                 client.get<{ publications: PublicationInfo[] }>('/agent-share/pubs'),
 
-        /** 我的发布物使用统计（发布者视角：跨用户聚合大A及团队消耗）。 */
+        /** 签发当前账号、当前发布物 scoped token 并返回完整 MCP 配置。 */
+        createMcpConfig: (publishedId: string) =>
+                client.post<MCPPublicationConfig>(
+                        `/agent-share/mcp/${publishedId}/config`,
+                        undefined,
+                ),
+
+        /** 我的发布物使用统计（发布者视角：跨用户聚合「大A及团队」整体消耗）。 */
         publicationsUsage: (days: number = 30) =>
                 client.get<{ publications: PublicationUsage[] }>(
                         `/agent-share/pubs/usage?days=${days}`,

@@ -1301,6 +1301,16 @@ export interface ShareInfo {
 }
 
 /** 发布物（对外产品）：从源智能体的版本快照复制出的独立个体。 */
+export interface MCPPublicationConfig {
+   endpoint: string;
+   config: {
+      mcpServers: Record<string, {
+         url: string;
+         headers: Record<string, string>;
+      }>;
+   };
+}
+
 export interface PublicationInfo {
    /** 发布物智能体 id（独立个体，可被共享账号使用）。 */
    agent_id: string;
@@ -1314,6 +1324,9 @@ export interface PublicationInfo {
    published_at: string;
    /** 团队形态：blueprint=固定团队（快照图纸重建）| auto=自动组建。 */
    team_mode: 'blueprint' | 'auto';
+   mcp_url: string;
+   mcp_transport: 'streamable-http';
+   mcp_tools: string[];
 }
 
 /** 发布物使用统计（发布者视角：跨用户聚合「大A及团队」整体消耗）。 */
