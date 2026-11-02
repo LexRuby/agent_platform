@@ -21,6 +21,7 @@ import type { SessionRecord, SessionSource } from '@/api';
 import { clearFreshlyForked, isFreshlyForked } from '@/api/session';
 import { AgentDialog } from '@/components/dialog/AgentDialog';
 import { AgentVersionDialog } from '@/components/dialog/AgentVersionDialog';
+import { CreateSessionDialog } from '@/components/dialog/CreateSessionDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
 import { EditAgentDialog } from '@/components/dialog/EditAgentDialog';
 import { RenameSessionDialog } from '@/components/dialog/RenameSessionDialog';
@@ -191,11 +192,12 @@ const ChatPageInner = () => {
 	 * whatever ChatViewport's auto-pick happens to land on. Navigates
 	 * to the freshly created session.
 	 */
-	const handleCreateSession = async () => {
+	const handleCreateSession = async (workspaceId?: string) => {
 		if (!urlAgentId) return;
 		const seedConfig = currentView?.session.config ?? sessions[0]?.session.config;
 		const res = await createSession({
 			agent_id: urlAgentId,
+			...(workspaceId ? { workspace_id: workspaceId } : {}),
 			...(seedConfig?.chat_model_config
 				? { chat_model_config: seedConfig.chat_model_config }
 				: {}),
@@ -333,10 +335,10 @@ const ChatPageInner = () => {
 						<SidebarGroupContent className="flex min-h-0 flex-1 flex-col">
 							<SidebarGroup>
 								<SidebarMenu className="mb-2">
-									<Button id="tour-create-session" onClick={handleCreateSession}>
-										<Plus />
-										{t('chat.newSession')}
-									</Button>
+									<CreateSessionDialog
+										onCreate={handleCreateSession}
+										disabled={!urlAgentId}
+									/>
 								</SidebarMenu>
 							</SidebarGroup>
 

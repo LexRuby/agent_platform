@@ -28,7 +28,6 @@ from agentscope.app.hub import GitHubMCPHub
 from agentscope.app.message_bus import InMemoryMessageBus
 from agentscope.app.rag.knowledge_base_manager import CollectionPerKbManager
 from agentscope.app.storage import RedisStorage
-from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.rag import ApproxTokenChunker, QdrantStore
 from fastapi.responses import HTMLResponse
 
@@ -40,9 +39,15 @@ from app.agent_share import (
 )
 from app.agent_share_mcp import agent_share_mcp_router
 from app.agent_type import AgentTypeMiddleware
+from app.account_workspace import AccountWorkspaceManager
 from app.agent_version import AgentVersionMiddleware, agent_version_router
-from app.auth import AuthMiddleware, _LOGIN_HTML, auth_router
-from app.ark_credential import ArkCredential
+from app.auth import (
+    AuthMiddleware,
+    _LOGIN_HTML,
+    auth_router,
+    register_login_hook,
+)
+from app.ark_credential import ArkCredential, sync_ark_models
 from app.leader_team import LeaderTeamMiddleware, leader_team_router
 from app.local_skill_hub import LocalSkillHub
 from app.prompt_templates import (
@@ -51,12 +56,18 @@ from app.prompt_templates import (
 )
 from app.spa_static import SPAStaticFiles
 from app.session_flow import session_flow_router
+from app.session_defaults import patch_session_defaults
 from app.skill_solidify import make_solidify_factory, patch_runtime_sop
 from app.team_fork import team_fork_router
 from app.startup_hook import StartupHook
 from app.team_archive import team_archive_router
 from app.team_preserve import patch_team_protection, team_history_router
 from app.usage_metering import backfill_usage, patch_usage_metering, usage_router
+from app.workspace_boundary import (
+    WorkspaceBoundaryMiddleware,
+    patch_chat_first_workspace_instructions,
+)
+from app.workspace_projects import workspace_project_router
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -71,10 +82,29 @@ vector_store = QdrantStore(location=":memory:")
 # （workspace_manager 官方单例，create_app 返回后注入工厂）
 _solidify_factory = make_solidify_factory(storage)
 
+# 普通对话拥有随会话删除的临时空间；显式项目空间长期保留。
+patch_chat_first_workspace_instructions()
+patch_session_defaults()
+
+
+async def _refresh_ark_on_login(username: str) -> None:
+    """Refresh ARK model cards using the account's current credential."""
+    records = await storage.list_credentials(username)
+    for record in records:
+        if record.data.get("type") != "ark_credential":
+            continue
+        api_key = record.data.get("api_key")
+        if isinstance(api_key, str) and api_key:
+            await sync_ark_models(api_key)
+            return
+
+
+register_login_hook(_refresh_ark_on_login)
+
 app = create_app(
     storage=storage,
     message_bus=InMemoryMessageBus(),
-    workspace_manager=LocalWorkspaceManager(
+    workspace_manager=AccountWorkspaceManager(
         basedir=str(BASE_DIR / "data" / "workspaces"),
     ),
     knowledge_base_manager=CollectionPerKbManager(
@@ -138,6 +168,7 @@ app.include_router(agent_share_mcp_router)
 # 会话流程控制：任意位置重新对话（truncate）/ 流程重启（restart）/
 # 团队暂停继续（team-flow pause/resume）/ 截断归档查询（2026-09-08 v3）
 app.include_router(session_flow_router)
+app.include_router(workspace_project_router)
 
 # 工作流节点级分支：fork 新会话保留旧结果、团队调度权移交（2026-09-08）
 app.include_router(team_fork_router)
@@ -209,16 +240,21 @@ from app.spa_static import SPAPageFallbackMiddleware  # noqa: E402
 # API 路径冲突的前端页面时返回 index.html 而不是 JSON；未登录仍先跳 /login
 app = _StartupHook(
     AuthMiddleware(
-        SPAPageFallbackMiddleware(
-            PromptTemplateSchemaMiddleware(
-                AgentVersionMiddleware(
-                    AgentShareDeleteCleanupMiddleware(
-                        LeaderTeamMiddleware(AgentTypeMiddleware(app)),
-                        storage,
+        WorkspaceBoundaryMiddleware(
+            SPAPageFallbackMiddleware(
+                PromptTemplateSchemaMiddleware(
+                    AgentVersionMiddleware(
+                        AgentShareDeleteCleanupMiddleware(
+                            LeaderTeamMiddleware(AgentTypeMiddleware(app)),
+                            storage,
+                        ),
                     ),
                 ),
+                index_path=str(_web_dir / "index.html"),
             ),
-            index_path=str(_web_dir / "index.html"),
+            # WorkspaceService is attached by AgentScope's lifespan, after
+            # this middleware stack is constructed. Resolve it per request.
+            lambda: _official_app.state.workspace_service,
         ),
     ),
 )

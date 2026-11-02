@@ -5,6 +5,14 @@ import { initReactI18next } from 'react-i18next';
 import enTranslations from './locales/en.json';
 import zhTranslations from './locales/zh.json';
 
+export const LANGUAGE_PREFERENCE_KEY = 'agentforge-language-selected';
+const hasExplicitLanguage = localStorage.getItem(LANGUAGE_PREFERENCE_KEY) === '1';
+
+// Older builds cached browser-detected or accidentally toggled English in
+// i18nextLng without recording user intent. Migrate those clients to the
+// product default once; later explicit choices remain persistent.
+if (!hasExplicitLanguage) localStorage.setItem('i18nextLng', 'zh');
+
 i18n.use(LanguageDetector)
 	.use(initReactI18next)
 	.init({
@@ -18,6 +26,7 @@ i18n.use(LanguageDetector)
 		// 界面"的产品规范（2026-09-04 E2E 发现 TeamFlowPanel 渲染成
 		// "Leader / No role descrip"）。
 		fallbackLng: 'zh',
+		lng: hasExplicitLanguage ? undefined : 'zh',
 		interpolation: {
 			escapeValue: false,
 		},

@@ -67,3 +67,30 @@ class TestSession:
     async def test_tokens_are_unique(self, fake_redis):
         tokens = {await _new_session("alice") for _ in range(20)}
         assert len(tokens) == 20
+
+
+class TestLoginHooks:
+    async def test_register_is_idempotent_and_runs_with_username(self, monkeypatch):
+        calls = []
+
+        async def hook(username):
+            calls.append(username)
+
+        monkeypatch.setattr(auth_mod, "_login_hooks", [])
+        auth_mod.register_login_hook(hook)
+        auth_mod.register_login_hook(hook)
+        await auth_mod._run_login_hooks("alice")
+        assert calls == ["alice"]
+
+    async def test_failed_hook_does_not_block_following_refresh(self, monkeypatch):
+        calls = []
+
+        async def failed(username):
+            raise RuntimeError("provider unavailable")
+
+        async def healthy(username):
+            calls.append(username)
+
+        monkeypatch.setattr(auth_mod, "_login_hooks", [failed, healthy])
+        await auth_mod._run_login_hooks("alice")
+        assert calls == ["alice"]

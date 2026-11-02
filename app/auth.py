@@ -13,11 +13,14 @@
 
 import base64
 import binascii
+import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,6 +46,24 @@ STATIC_EXACT = {"/login", "/health", "/agentforge.svg", "/favicon.ico"}
 STATIC_PREFIX = ("/assets/",)
 
 _pool: aioredis.Redis | None = None
+_login_hooks: list[Callable[[str], Awaitable[None]]] = []
+
+
+def register_login_hook(hook: Callable[[str], Awaitable[None]]) -> None:
+    """Register non-blocking account refresh work triggered after login."""
+    if hook not in _login_hooks:
+        _login_hooks.append(hook)
+
+
+async def _run_login_hooks(username: str) -> None:
+    for hook in tuple(_login_hooks):
+        try:
+            await hook(username)
+        except Exception:  # noqa: BLE001 - refresh must never break login
+            logging.getLogger("agentforge.auth").exception(
+                "登录后刷新任务失败: %s",
+                username,
+            )
 
 
 def _redis() -> aioredis.Redis:
@@ -93,6 +114,8 @@ async def login(body: AuthBody, response: Response) -> dict:
         raise HTTPException(401, "用户名或密码错误")
     token = await _new_session(body.username)
     _set_session_cookie(response, token)
+    if _login_hooks:
+        asyncio.create_task(_run_login_hooks(body.username))
     return {"username": body.username}
 
 

@@ -6,12 +6,10 @@ import {
 	type TextBlock,
 	type ToolCallBlock,
 } from '@agentscope-ai/agentscope/message';
-import { AlertTriangle, GitBranch, Play, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, KeyRound, Play, TriangleAlert } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { Button } from '../ui/button';
-import { DiffStats } from './tool-renderers/_shared';
-import type { GitStatus } from '@/api';
 import {
         ASMessageBubble,
         TeamHintCompactContext,
@@ -94,12 +92,14 @@ interface ChatContentProps {
 	sessionId: string | null;
 	/** Current working directory, relative to the workspace root. */
 	cwd: string | null;
+	/** Human-readable project name shown instead of a server path. */
+	projectName: string;
 	/** Persists a new working directory. */
 	onCwdChange: (cwd: string | null) => void | Promise<void>;
-	/** Git state of {@link cwd}; `null` hides the branch badge entirely. */
-	git?: GitStatus | null;
-	/** Re-reads the git state, since nothing polls for it. */
-	onRefreshGit?: () => void | Promise<void>;
+	/** True when chatting is blocked because the account has no usable model. */
+	modelUnavailable?: boolean;
+	/** Opens the model-credential setup flow. */
+	onConfigureModel?: () => void;
 }
 
 const ChatContentComponent: React.FC<ChatContentProps> = ({
@@ -121,9 +121,10 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	compactTeamHints = false,
 	sessionId,
 	cwd,
+	projectName,
 	onCwdChange,
-	git,
-	onRefreshGit,
+	modelUnavailable = false,
+	onConfigureModel,
 }) => {
 	const { t } = useTranslation();
 	// Only a session that finished loading with nothing in it is empty.
@@ -239,6 +240,18 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 
 			{loading ? null : (
 				<div className="relative min-w-full max-w-full w-full">
+					{modelUnavailable ? (
+						<Alert className="mb-2 border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-50">
+							<KeyRound />
+							<AlertTitle>{t('chat.noModel.title')}</AlertTitle>
+							<AlertDescription>{t('chat.noModel.description')}</AlertDescription>
+							<AlertAction>
+								<Button size="sm" onClick={onConfigureModel}>
+									{t('chat.noModel.action')}
+								</Button>
+							</AlertAction>
+						</Alert>
+					) : null}
 					<FlipCard
 						visible={toConfirmedToolCalls.length > 0 || footerSlot !== null}
 						className="absolute bottom-full left-0 right-0 mb-2 z-50"
@@ -290,6 +303,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 										agentId={agentId}
 										sessionId={sessionId}
 										value={cwd}
+										projectName={projectName}
 										onChange={onCwdChange}
 									/>
 									{/* 继续（2026-09-08 v3）：wake 语义，从当前
@@ -307,39 +321,6 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 										</Button>
 									)}
 								</div>
-								{git && (
-									<Button
-										className="font-mono"
-										variant="secondary"
-										size="sm"
-										onClick={() => void onRefreshGit?.()}
-										title={t('workdir.gitTooltip', {
-											staged: git.staged,
-											unstaged: git.unstaged,
-											untracked: git.untracked,
-										})}
-									>
-										<GitBranch />
-										{/* A detached HEAD has no branch to name, so
-										    fall back to the commit it sits on. The
-										    server sends no git at all when it has
-										    neither. */}
-										{git.branch ?? git.head?.slice(0, 7)}
-										{git.ahead !== null && git.ahead > 0 && (
-											<span className="text-xs">↑{git.ahead}</span>
-										)}
-										{git.behind !== null && git.behind > 0 && (
-											<span className="text-xs">↓{git.behind}</span>
-										)}
-										{/* Renders nothing when both are zero, so a
-										    clean tree shows just the branch. */}
-										<DiffStats
-											className="text-xs font-mono"
-											insertions={git.insertions}
-											deletions={git.deletions}
-										/>
-									</Button>
-								)}
 							</div>
 						}
 					/>

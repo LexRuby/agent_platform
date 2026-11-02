@@ -69,11 +69,20 @@ export function LlmSelect({
 		onChange?.({ type, credential_id: credentialId, model, parameters: {} });
 	};
 
+	const selectedCard = value
+		? groups[value.type]
+				?.find((item) => item.credential.id === value.credential_id)
+				?.models.find((model) => model.name === value.model)
+		: undefined;
 	const displayLabel = value?.model
-		? value.model
+		? (selectedCard?.label || value.model)
 		: loading
 			? t('llm-select.loading')
 			: (placeholder ?? t('llm-select.placeholder'));
+	const providerLabel = (type: string) =>
+		type === 'ark_credential'
+			? '豆包 ARK'
+			: type.replace(/_credential$/, '').replaceAll('_', ' ');
 
 	return (
 		<DropdownMenu>
@@ -81,14 +90,17 @@ export function LlmSelect({
 				<Button
 					variant="outline"
 					size="sm"
-					className={cn('justify-between gap-1 font-normal', className)}
+					className={cn('w-64 justify-between gap-2 font-normal', className)}
 					{...props}
 				>
 					<span className="truncate">{displayLabel}</span>
 					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" className="min-w-48 max-h-72 overflow-y-auto">
+			<DropdownMenuContent
+				align="end"
+				className="w-[min(30rem,calc(100vw-2rem))] max-h-[60vh] overflow-y-auto p-1.5"
+			>
 				{!loading && !hasOptions ? (
 					<div className="px-2 py-3 text-center text-sm text-muted-foreground">
 						<p className="font-medium">{t('llm-select.empty.title')}</p>
@@ -101,7 +113,7 @@ export function LlmSelect({
 							<DropdownMenuGroup key={type}>
 								{idx > 0 && <DropdownMenuSeparator />}
 								<DropdownMenuLabel>
-									{type.replace(/_credential$/, '')}
+									{providerLabel(type)}
 								</DropdownMenuLabel>
 								{isSingle
 									? usable[0].models.map((m) => (
@@ -115,7 +127,7 @@ export function LlmSelect({
 													)
 												}
 											>
-												{m.name}
+												{m.label || m.name}
 											</DropdownMenuItem>
 										))
 									: usable.map(({ credential, models }) => (
@@ -124,7 +136,7 @@ export function LlmSelect({
 													{credentialLabel(credential)}
 												</DropdownMenuSubTrigger>
 												<DropdownMenuPortal>
-													<DropdownMenuSubContent className="max-h-60 overflow-y-auto">
+													<DropdownMenuSubContent className="w-96 max-h-[60vh] overflow-y-auto">
 														{models.map((m) => (
 															<DropdownMenuItem
 																key={m.name}

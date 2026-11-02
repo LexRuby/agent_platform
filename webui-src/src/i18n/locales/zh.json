@@ -140,6 +140,11 @@
   },
   "chat": {
     "inputPlaceholder": "输入消息...",
+    "noModel": {
+      "title": "还没有可用模型",
+      "description": "当前账号尚未配置可用的模型凭证，因此暂时无法发送消息。",
+      "action": "配置模型凭证"
+    },
     "confirmToolCall": "允许此操作？",
     "subagentConfirmTitle": "{{name}} 请求确认",
     "newSession": "新会话",
@@ -235,6 +240,15 @@
     "agentPrompt": "系统提示词",
     "addAgent": "添加 agent",
     "confirm": "确认封档"
+  },
+  "workspaceProject": {
+    "title": "新建对话",
+    "description": "临时对话中的文件随对话删除；项目中的文件会长期保留。",
+    "temporary": "临时对话",
+    "temporaryHint": "可以直接创建文件，删除对话时一并清理",
+    "namePlaceholder": "新项目名称",
+    "create": "创建项目",
+    "start": "开始对话"
   },
   "agent-form": {
     "identity": {
@@ -1094,15 +1108,15 @@
     "empty": "尚无版本。研发迭代到满意后，点「发布新版本」生成 v1。"
   },
   "workdir": {
-    "title": "工作目录",
-    "description": "选择智能体的工作目录。",
-    "root": "工作区根目录",
+    "title": "项目空间",
+    "description": "选择当前项目内的文件夹。访问范围仅限此项目空间。",
+    "root": "项目根目录",
+    "unnamedProject": "未命名项目",
     "parent": "上一级",
     "errorTitle": "无法列出该文件夹",
-    "pathPlaceholder": "输入或粘贴路径",
+    "pathPlaceholder": "输入项目内的相对路径",
     "empty": "此文件夹为空",
-    "pressEnter": "先按回车校验该路径",
-    "gitTooltip": "{{staged}} 已暂存 · {{unstaged}} 已修改 · {{untracked}} 未跟踪\n行数不含未跟踪文件"
+    "pressEnter": "先按回车校验该路径"
   },
   "user-menu": {
     "account": "账号",

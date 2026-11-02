@@ -8,7 +8,7 @@ import {
 	PanelRightClose,
 	RotateCw,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
@@ -19,8 +19,9 @@ import type {
 	SessionKnowledgeConfig,
 	TTSModelConfig,
 	UpdateSessionRequest,
+	WorkspaceProject,
 } from '@/api';
-import { sessionApi } from '@/api';
+import { sessionApi, workspaceProjectApi } from '@/api';
 import MCPSvg from '@/assets/images/mcp.svg?react';
 import { ChatContent } from '@/components/chat/ChatContent.tsx';
 import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
@@ -58,7 +59,6 @@ import { useKnowledgeBases } from '@/hooks/useKnowledgeBases';
 import { useMessages } from '@/hooks/useMessages';
 import { useSessions } from '@/hooks/useSessions';
 import { useWorkspace } from '@/hooks/useWorkspace.ts';
-import { useWorkspaceStatus } from '@/hooks/useWorkspaceStatus';
 import { useTranslation } from '@/i18n/useI18n';
 import { uuid } from '@/utils/uuid';
 
@@ -201,7 +201,11 @@ export function ChatViewport({
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const { sessions, refetch: refetchSessions } = useSessions(agentId);
-	const { groups } = useAvailableModels();
+	const {
+		groups,
+		loading: modelsLoading,
+		refetch: refetchModels,
+	} = useAvailableModels();
 
 	const [selectedModel, setSelectedModel] = useState<ChatModelConfig | null>(null);
 	const [selectedFallbackModel, setSelectedFallbackModel] = useState<ChatModelConfig | null>(
@@ -214,8 +218,17 @@ export function ChatViewport({
 	const [credentialOpen, setCredentialOpen] = useState(false);
 	const [credentialRefetchTrigger, setCredentialRefetchTrigger] = useState(0);
 	const [configPending, setConfigPending] = useState(false);
+	const [workspaceProjects, setWorkspaceProjects] = useState<WorkspaceProject[]>([]);
+	useEffect(() => {
+		void workspaceProjectApi.list().then(setWorkspaceProjects).catch(() => undefined);
+	}, []);
 	// 任务归档对话框（仅主理人会话显示入口）
 	const [archiveOpen, setArchiveOpen] = useState(false);
+	/** Team run snapshot used by the live status poll and flow panel. */
+	const [teamLive, setTeamLive] = useState<{
+		leaderRunning: boolean;
+		members: { agent_id: string; session_id: string; running: boolean }[];
+	} | null>(null);
 	// Dock layout: columns laid out left→right, each holding up to 2
 	// panels stacked top→bottom. Open order determines placement.
 	// Persisted so leaving and returning to /chat keeps the same panels.
@@ -355,6 +368,9 @@ export function ChatViewport({
 	// eagerly on first render, so a later `const` would still be in
 	// the temporal dead zone.
 	const view = sessions.find((v) => v.session.id === sessionId) ?? null;
+	const workspaceProjectName = workspaceProjects.find(
+		(project) => project.workspace_id === view?.session.config.workspace_id,
+	)?.name;
 
 	// 当前 agent 的记录：判定主理人（大A）/成员（小A）并取显示名。
 	// `useAgents` 在此独立拉取全量列表，与外层页面的实例互不影响。
@@ -496,23 +512,6 @@ export function ChatViewport({
 		},
 		[navigate, agentId, sessionId],
 	);
-
-	const { status: workspaceStatus, refetch: refetchWorkspaceStatus } = useWorkspaceStatus(
-		agentId,
-		sessionId,
-		view?.session.config.cwd ?? null,
-	);
-
-	// A finished reply is the one moment the agent may have changed the
-	// working tree, and it is why nothing polls for git status. Watching
-	// `phase` rather than the REPLY_END event also covers the interrupt
-	// timeout, which reaches idle without one.
-	const prevPhaseRef = useRef(phase);
-	useEffect(() => {
-		const wasRunning = prevPhaseRef.current !== 'idle';
-		prevPhaseRef.current = phase;
-		if (wasRunning && phase === 'idle') void refetchWorkspaceStatus();
-	}, [phase, refetchWorkspaceStatus]);
 
 	// 三类资源面板的内容节点：经典布局的 dock 与专注布局的右侧
 	// 资源面板共用（JSX 只定义一次，数据变化时同步重建）。
@@ -811,12 +810,6 @@ export function ChatViewport({
 	const [restartOpen, setRestartOpen] = useState(false);
     /** 解散团队确认对话框（用户主动解散的唯一入口）。 */
     const [dissolveOpen, setDissolveOpen] = useState(false);
-    /** 团队实时运行快照（2026-09-09：区分「运行中」与「休息中」）。
-     *  在册团队时每 4s 轮询 live-status（主理人+成员运行锁）。 */
-    const [teamLive, setTeamLive] = useState<{
-        leaderRunning: boolean;
-        members: { agent_id: string; session_id: string; running: boolean }[];
-    } | null>(null);
 	/** 截断（从这里重开）确认：待截断的锚点消息 id */
 	const [truncateTarget, setTruncateTarget] = useState<string | null>(null);
 
@@ -1031,7 +1024,7 @@ export function ChatViewport({
 									<LlmSelect
 										id="tour-llm-select"
 										variant="ghost"
-										className="font-mono text-muted-foreground hover:text-foreground"
+										className="text-muted-foreground hover:text-foreground"
 										value={selectedModel}
 										onChange={handleLlmChange}
 										onAddCredential={() => setCredentialOpen(true)}
@@ -1191,11 +1184,19 @@ export function ChatViewport({
 									compactTeamHints={isLeader}
 									sessionId={sessionId}
 									cwd={view?.session.config.cwd ?? null}
+									projectName={
+										workspaceProjectName ??
+										(view?.session.config.workspace_id.startsWith('project_')
+											? t('workdir.unnamedProject')
+											: t('workspaceProject.temporary'))
+									}
 									onCwdChange={handleCwdChange}
-									git={workspaceStatus?.git ?? null}
-									onRefreshGit={refetchWorkspaceStatus}
 									phase={phase}
 									disabled={selectedModel === null}
+									modelUnavailable={
+										view !== null && !modelsLoading && selectedModel === null
+									}
+									onConfigureModel={() => setCredentialOpen(true)}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}
@@ -1342,7 +1343,10 @@ export function ChatViewport({
 			<CreateCredentialDialog
 				open={credentialOpen}
 				onOpenChange={setCredentialOpen}
-				onCreated={() => setCredentialRefetchTrigger((n) => n + 1)}
+				onCreated={() => {
+					setCredentialRefetchTrigger((n) => n + 1);
+					void refetchModels();
+				}}
 			/>
 			{isLeader && sessionId && agentId ? (
 				<ArchiveDialog

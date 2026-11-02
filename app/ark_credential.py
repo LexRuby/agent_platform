@@ -235,7 +235,7 @@ def _chat_card(m: dict) -> dict:
     }
 
 
-async def sync_ark_models(api_key: str | None = None) -> int:
+async def _sync_ark_models_unlocked(api_key: str | None = None) -> int:
     """从 ARK 拉取真实可用模型列表并刷新模型卡。
 
     过滤：仅保留可用（未下架/未退役）的对话模型，且通过真实调用
@@ -275,6 +275,20 @@ async def sync_ark_models(api_key: str | None = None) -> int:
     _write_chat_cards([_chat_card(m) for m in usable])
     _logger.info("ARK 模型同步完成：%d 个可用对话模型", len(usable))
     return len(usable)
+
+
+_sync_lock = None
+
+
+async def sync_ark_models(api_key: str | None = None) -> int:
+    """Serialize model-card refreshes from startup, heartbeat and logins."""
+    import asyncio
+
+    global _sync_lock
+    if _sync_lock is None:
+        _sync_lock = asyncio.Lock()
+    async with _sync_lock:
+        return await _sync_ark_models_unlocked(api_key)
 
 
 _VERIFY_CONCURRENCY = 8

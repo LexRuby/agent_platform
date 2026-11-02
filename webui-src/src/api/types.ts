@@ -190,6 +190,13 @@ export interface CreateSessionResponse {
 	session_id: string;
 }
 
+export interface WorkspaceProject {
+	id: string;
+	name: string;
+	workspace_id: string;
+	created_at: string;
+}
+
 export interface InterruptSessionResponse {
 	session_id: string;
 }

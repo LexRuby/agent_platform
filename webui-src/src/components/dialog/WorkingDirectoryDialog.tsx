@@ -45,6 +45,8 @@ interface WorkingDirectoryDialogProps {
 	 * the workspace root; `null` is the root itself.
 	 */
 	value: string | null;
+	/** Current agent/project name; the workspace root is presented as this. */
+	projectName: string;
 	/**
 	 * Called with the newly picked directory. Rejections are the caller's
 	 * to surface; the dialog only closes once the promise settles.
@@ -68,13 +70,8 @@ function basename(path: string): string {
  * is read. Only directories are listed, since a file is never a valid
  * answer.
  *
- * Browsing is not confined to the workspace root: the picker walks
- * wherever `GET /workspace/directories` can reach, which is the sandbox
- * on a container backend and the host on a local one. Because the root
- * is backend-dependent, the browser never knows where it is until the
- * server says so — hence every listing is addressed by the absolute path
- * the previous response echoed back, and only the initial "open at the
- * session's directory" request uses the stored (possibly relative) value.
+ * Every path is relative to the account's current project root. The server
+ * enforces this boundary and never returns its host filesystem path.
  *
  * A dialog rather than a popover: finding a folder anywhere on the
  * filesystem is a task, not a quick toggle, so it earns the room and the
@@ -92,6 +89,7 @@ export function WorkingDirectoryDialog({
 	agentId,
 	sessionId,
 	value,
+	projectName,
 	onChange,
 	disabled = false,
 	className,
@@ -139,9 +137,7 @@ export function WorkingDirectoryDialog({
 				// lie for a folder that is merely all files. Order is the
 				// backend's; the icon already says which is which.
 				setEntries(listing.entries);
-				// Adopt the resolved path: the server normalises `..` and
-				// turns a relative request absolute, so this is also how the
-				// input learns where the workspace root actually is.
+				// Adopt the normalized project-relative path returned by the server.
 				setPath(listing.path);
 				setListedPath(listing.path);
 			} catch (e) {
@@ -186,7 +182,7 @@ export function WorkingDirectoryDialog({
 		}
 	};
 
-	const label = value ? basename(value) : t('workdir.root');
+	const label = value ? basename(value) : projectName;
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
@@ -196,7 +192,7 @@ export function WorkingDirectoryDialog({
 					size="sm"
 					disabled={disabled || !agentId || !sessionId}
 					className={className}
-					title={value ?? t('workdir.root')}
+					title={value ? `${projectName}/${value}` : projectName}
 				>
 					<Folder />
 					<span className="truncate max-w-40">{label}</span>
@@ -243,7 +239,7 @@ export function WorkingDirectoryDialog({
 											<Home />
 										</InputGroupButton>
 									</TooltipTrigger>
-									<TooltipContent>{t('workdir.root')}</TooltipContent>
+										<TooltipContent>{projectName}</TooltipContent>
 								</Tooltip>
 							</InputGroupAddon>
 							<InputGroupAddon align="inline-end">
@@ -276,10 +272,7 @@ export function WorkingDirectoryDialog({
 							</Empty>
 						) : (
 							<>
-								{/* Always offered: the server resolves `..` against
-							    wherever we are, so there is no floor to
-							    special-case. */}
-								<Button
+								{listedPath ? <Button
 									variant="ghost"
 									size="sm"
 									className="w-full justify-start gap-2 font-normal"
@@ -287,7 +280,7 @@ export function WorkingDirectoryDialog({
 								>
 									<CornerLeftUp className="size-3.5 shrink-0" />
 									{t('workdir.parent')}
-								</Button>
+								</Button> : null}
 								{entries.length === 0 ? (
 									<p className="px-2 py-3 text-center text-xs text-muted-foreground">
 										{t('workdir.empty')}

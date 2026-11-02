@@ -14,6 +14,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 
 import AgentForge from '@/assets/images/agentforge_mono.svg?react';
 import MCPSvg from '@/assets/images/mcp.svg?react';
+import { UserMenu } from '@/components/layout/UserMenu';
 import { CHAT_TOUR_NAME } from '@/components/tour/chatTourSteps';
 import {
 	Sidebar,
@@ -26,9 +27,8 @@ import {
 	SidebarMenuButton,
 	SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import i18n from '@/i18n';
+import i18n, { LANGUAGE_PREFERENCE_KEY } from '@/i18n';
 import { useTranslation } from '@/i18n/useI18n';
-import { UserMenu } from '@/components/layout/UserMenu';
 
 export function AppSidebar() {
 	const navigate = useNavigate();
@@ -49,6 +49,7 @@ export function AppSidebar() {
 
 	const handleToggleLanguage = () => {
 		const next = i18n.language.startsWith('zh') ? 'en' : 'zh';
+		localStorage.setItem(LANGUAGE_PREFERENCE_KEY, '1');
 		i18n.changeLanguage(next);
 	};
 

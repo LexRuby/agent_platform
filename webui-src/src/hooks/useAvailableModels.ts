@@ -48,7 +48,22 @@ export function useAvailableModels() {
 	}, []);
 
 	useEffect(() => {
-		refetch();
+		void refetch();
+		// Login-triggered provider refresh runs in the background. Follow up
+		// shortly so newly enabled models appear without a manual reload.
+		const quick = window.setTimeout(() => void refetch(), 2000);
+		const settled = window.setTimeout(() => void refetch(), 8000);
+		const refreshWhenVisible = () => {
+			if (document.visibilityState === 'visible') void refetch();
+		};
+		window.addEventListener('focus', refreshWhenVisible);
+		document.addEventListener('visibilitychange', refreshWhenVisible);
+		return () => {
+			window.clearTimeout(quick);
+			window.clearTimeout(settled);
+			window.removeEventListener('focus', refreshWhenVisible);
+			document.removeEventListener('visibilitychange', refreshWhenVisible);
+		};
 	}, [refetch]);
 
 	return { groups, loading, error, refetch };

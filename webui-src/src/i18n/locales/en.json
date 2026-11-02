@@ -140,6 +140,11 @@
   },
   "chat": {
     "inputPlaceholder": "Type a message...",
+    "noModel": {
+      "title": "No model available",
+      "description": "This account has no usable model credential, so messages cannot be sent yet.",
+      "action": "Configure model credential"
+    },
     "confirmToolCall": "Allow this action?",
     "subagentConfirmTitle": "{{name}} requests confirmation",
     "newSession": "New Session",
@@ -235,6 +240,15 @@
     "agentPrompt": "System prompt",
     "addAgent": "Add agent",
     "confirm": "Confirm archive"
+  },
+  "workspaceProject": {
+    "title": "New conversation",
+    "description": "Files in a temporary conversation are deleted with it. Project files are retained.",
+    "temporary": "Temporary conversation",
+    "temporaryHint": "Create files freely; they are cleaned up with the conversation",
+    "namePlaceholder": "New project name",
+    "create": "Create project",
+    "start": "Start conversation"
   },
   "agent-form": {
     "identity": {
@@ -1073,15 +1087,15 @@
     "delete": "Delete agent"
   },
   "workdir": {
-    "title": "Working directory",
-    "description": "Pick the agent's working directory.",
-    "root": "Workspace root",
+    "title": "Project space",
+    "description": "Choose a folder inside this project. Access is confined to this project space.",
+    "root": "Project root",
+    "unnamedProject": "Untitled project",
     "parent": "Up one level",
     "errorTitle": "Could not list this folder",
-    "pathPlaceholder": "Type or paste a path",
+    "pathPlaceholder": "Enter a project-relative path",
     "empty": "This folder is empty",
-    "pressEnter": "Press Enter to check this path first",
-    "gitTooltip": "{{staged}} staged · {{unstaged}} modified · {{untracked}} untracked\nLine counts exclude untracked files"
+    "pressEnter": "Press Enter to check this path first"
   },
   "dialog-agent-version": {
     "title": "Versions · {{name}}",

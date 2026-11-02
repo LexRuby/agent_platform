@@ -5,6 +5,7 @@ export type { TeamHistoryEntry, FlowOpResponse, FlowArchiveEntry } from './sessi
 export { credentialApi } from './credential';
 export { chatApi } from './chat';
 export { workspaceApi } from './workspace';
+export { workspaceProjectApi } from './workspaceProject';
 export { hubApi } from './hub';
 export { mcpApi } from './mcp';
 export { skillApi } from './skill';
