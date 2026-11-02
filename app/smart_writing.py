@@ -39,6 +39,8 @@ AgentScope/mcp_data/2026-09-03_MCP注册规格-智能写作.json）。
 import json
 import logging
 import os
+import asyncio
+import time
 from pathlib import Path
 
 import httpx
@@ -56,6 +58,25 @@ PROTOCOL_VERSION = "2025-03-26"
 _SLOW_TOOLS = {"extract_solutions", "filter_solutions"}
 _SLOW_TIMEOUT = 320.0
 _DEFAULT_TIMEOUT = 60.0
+
+# 30020 是共享的远端写作服务。详情接口单次返回体很大，必须在平台
+# 入口收敛数量、字段和频率，不能依赖模型每次都自觉控制。
+_DETAIL_MAX_IDS = 3
+_DETAIL_MAX_FIELDS = 8
+_DETAIL_DEFAULT_FIELDS = [
+    "pubid",
+    "title",
+    "abst",
+    "claimsIndList",
+    "desc_detail",
+]
+_DETAIL_MIN_INTERVAL = 2.0
+_DETAIL_LOCK = asyncio.Lock()
+_DETAIL_LAST_CALL = 0.0
+
+
+class RequestLimitError(RuntimeError):
+    """A local request-shape limit, not a remote backend failure."""
 
 # 条件必填（注意事项 2）：工具名 → (参数名, 触发校验的入参条件, 报错文案)
 _CONDITIONAL_REQUIRED = {
@@ -164,6 +185,29 @@ def validate_conditional_required(tool_name: str, arguments: dict) -> str | None
     return None
 
 
+def normalize_backend_arguments(tool_name: str, arguments: dict) -> dict:
+    """Apply hard load limits before building the remote request envelope."""
+    normalized = dict(arguments)
+    if tool_name != "get_patent_details":
+        return normalized
+    pubids = list(dict.fromkeys(normalized.get("pubids") or []))
+    if not pubids:
+        raise RequestLimitError("get_patent_details 至少需要一个专利公开号")
+    if len(pubids) > _DETAIL_MAX_IDS:
+        raise RequestLimitError(
+            f"get_patent_details 单次最多 {_DETAIL_MAX_IDS} 个公开号；"
+            "请先按相关性收敛后再查询",
+        )
+    fields = list(dict.fromkeys(normalized.get("data_source") or []))
+    if len(fields) > _DETAIL_MAX_FIELDS:
+        raise RequestLimitError(
+            f"get_patent_details 单次最多 {_DETAIL_MAX_FIELDS} 个返回字段",
+        )
+    normalized["pubids"] = pubids
+    normalized["data_source"] = fields or list(_DETAIL_DEFAULT_FIELDS)
+    return normalized
+
+
 def parse_response(tool_name: str, body: dict) -> dict:
     """后端响应 → 业务载荷。error_msg 原文透传（注意事项 3）。
 
@@ -193,6 +237,7 @@ async def call_backend(
     ``client`` 可注入（测试用 MockTransport）；默认按工具超时配置
     新建一次性连接。
     """
+    arguments = normalize_backend_arguments(tool["name"], arguments)
     err = validate_conditional_required(tool["name"], arguments)
     if err:
         raise RuntimeError(err)
@@ -202,8 +247,20 @@ async def call_backend(
         resp = await client.post(routing["endpoint"], json=envelope)
     else:
         timeout = _SLOW_TIMEOUT if tool["name"] in _SLOW_TOOLS else _DEFAULT_TIMEOUT
-        async with httpx.AsyncClient(timeout=timeout) as one_shot:
-            resp = await one_shot.post(routing["endpoint"], json=envelope)
+        if tool["name"] == "get_patent_details":
+            global _DETAIL_LAST_CALL
+            async with _DETAIL_LOCK:
+                delay = _DETAIL_MIN_INTERVAL - (time.monotonic() - _DETAIL_LAST_CALL)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                try:
+                    async with httpx.AsyncClient(timeout=timeout) as one_shot:
+                        resp = await one_shot.post(routing["endpoint"], json=envelope)
+                finally:
+                    _DETAIL_LAST_CALL = time.monotonic()
+        else:
+            async with httpx.AsyncClient(timeout=timeout) as one_shot:
+                resp = await one_shot.post(routing["endpoint"], json=envelope)
     if resp.status_code >= 400:
         raise RuntimeError(
             f"后端 HTTP {resp.status_code}: {resp.text[:300]}",

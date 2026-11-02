@@ -170,6 +170,27 @@ class TestEnvelope:
 
 
 class TestConditionalRequired:
+    def test_patent_details_limits_and_default_fields(self):
+        normalized = sw.normalize_backend_arguments(
+            "get_patent_details",
+            {"pubids": ["CN1", "CN1", "CN2"], "patent_source": "cn"},
+        )
+        assert normalized["pubids"] == ["CN1", "CN2"]
+        assert normalized["data_source"] == [
+            "pubid", "title", "abst", "claimsIndList", "desc_detail",
+        ]
+
+        with pytest.raises(sw.RequestLimitError, match="单次最多 3 个"):
+            sw.normalize_backend_arguments(
+                "get_patent_details",
+                {"pubids": ["CN1", "CN2", "CN3", "CN4"]},
+            )
+        with pytest.raises(sw.RequestLimitError, match="最多 8 个返回字段"):
+            sw.normalize_backend_arguments(
+                "get_patent_details",
+                {"pubids": ["CN1"], "data_source": [f"f{i}" for i in range(9)]},
+            )
+
     def test_filter_requires_query(self, registry):
         err = sw.validate_conditional_required(
             "filter_solutions", {"action": "filter", "method_df": []},

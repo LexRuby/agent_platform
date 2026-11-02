@@ -1,5 +1,6 @@
 """专利写作三智能体：模板约束与默认检索工具装配。"""
 
+import asyncio
 import json
 from dataclasses import dataclass
 
@@ -99,7 +100,10 @@ async def test_registry_tool_reuses_existing_backend_router(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_details_failure_uses_search_evidence_from_same_session(monkeypatch):
+    detail_calls = 0
+
     async def fake_call_backend(spec, arguments):
+        nonlocal detail_calls
         if spec["name"] == "search_patents":
             return {
                 "data": [{
@@ -109,6 +113,7 @@ async def test_details_failure_uses_search_evidence_from_same_session(monkeypatc
                     "desc_detail": "说明书原文",
                 }],
             }
+        detail_calls += 1
         return {"data": {"patents": [], "err_msg": "访问数据库异常"}}
 
     monkeypatch.setattr(pst, "call_backend", fake_call_backend)
@@ -127,6 +132,42 @@ async def test_details_failure_uses_search_evidence_from_same_session(monkeypatc
     assert result["evidence_level"] == "search_result_fallback"
     assert result["data"]["patents"][0]["desc_detail"] == "说明书原文"
     assert "访问数据库异常" in result["warning"]
+
+    second = await details.call(
+        pubids=["CN112131387A"],
+        patent_source="cn",
+    )
+    second_result = json.loads(second.content[0].text)
+    assert detail_calls == 1
+    assert second_result["circuit_open"] is True
+    assert "停止继续请求 30020" in second_result["warning"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_detail_calls_stop_after_first_database_failure(monkeypatch):
+    calls = 0
+
+    async def fake_call_backend(spec, arguments):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.01)
+        return {"data": {"patents": [], "err_msg": "访问数据库异常"}}
+
+    monkeypatch.setattr(pst, "call_backend", fake_call_backend)
+    details = pst.PatentRegistrySearchTool(
+        pst._tool_specs()["get_patent_details"],
+        {},
+    )
+    results = await asyncio.gather(
+        details.call(pubids=["CN1A"], patent_source="cn"),
+        details.call(pubids=["CN2A"], patent_source="cn"),
+    )
+
+    assert calls == 1
+    assert all(
+        json.loads(result.content[0].text)["circuit_open"] is True
+        for result in results
+    )
 
 
 @pytest.mark.asyncio

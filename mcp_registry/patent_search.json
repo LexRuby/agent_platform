@@ -259,12 +259,14 @@
     },
     {
       "name": "get_patent_details",
-      "description": "按专利公开号批量获取专利完整数据。用户在检索结果中勾选专利后取详情、或做技术方案抽取前补全字段时使用。patent_source 区分中美专利库；data_source 传空数组返回库内全部字段（含背景技术、四句摘要、权利要求、申请人、IPC/CPC 分类、FOP 数组等）。",
+      "description": "按专利公开号获取专利详情。该接口连接共享远端数据库，只查询检索结果中相关性最高且确有必要核验的专利：单次最多 3 个公开号，不得并发或为试探参数重复调用。patent_source 区分中美专利库；data_source 省略或传空数组时，平台只返回公开号、标题、摘要、权利要求和说明书正文 5 个必要字段；确需其他字段时显式指定，单次最多 8 个字段。",
       "inputSchema": {
         "type": "object",
         "properties": {
           "pubids": {
             "type": "array",
+            "minItems": 1,
+            "maxItems": 3,
             "items": {
               "type": "string"
             },
@@ -280,6 +282,7 @@
           },
           "data_source": {
             "type": "array",
+            "maxItems": 8,
             "items": {
               "type": "string"
             },

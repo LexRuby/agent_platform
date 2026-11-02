@@ -76,7 +76,7 @@ Content-Type: application/json
 2. **条件必填的校验**：`filter_solutions.query`（filter 时）、`user_results.name/time/info`（按 action）是 JSON Schema 表达不了的运行时校验，注册层或后端需兜底报错。
 3. **错误透传**：后端报错原文返回给 Agent，便于其自行修正参数重试（如 user\_results 保存重名、prompt\_id 不存在）。
 4. **超时设置**：`extract_solutions`、`filter_solutions` 是批量 LLM 并发任务，MCP 调用超时建议 ≥ 300s；其余常规即可。
-5. **上下文体量**：`search_patents` size 默认 500、`get_patent_details` 返回全字段时，单次返回可能很大。若 MCP 层有会话状态能力，建议加结果缓存/引用机制（可选增强，不阻塞注册）。
+5. **上下文与负载控制**：`get_patent_details` 单次最多 3 个公开号、8 个字段；空 `data_source` 由平台收敛为 5 个必要字段，全局调用间隔至少 2 秒。专利小A会话首次遇到详情库异常后熔断，后续使用同轮检索缓存，不再请求 30020。
 6. **参数值类型**：`generate_with_prompt` 的模板参数值必须全部为 string（模板传参约束），schema 已用 `additionalProperties: {"type": "string"}` 表达，后端会再校验。
 7. **数据衔接链**：`extract_solutions.patent_df` ← `search_patents`/`get_patent_details` 返回；`filter_solutions.method_df` ← `extract_solutions` 返回。字段不可裁剪，注册层如做结果转换务必保留原字段。
 
