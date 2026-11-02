@@ -1109,14 +1109,15 @@
   },
   "workdir": {
     "title": "项目空间",
-    "description": "选择当前项目内的文件夹。访问范围仅限此项目空间。",
+    "description": "浏览当前项目的文件，点击文件可直接下载；选择文件夹可切换工作目录。",
     "root": "项目根目录",
     "unnamedProject": "未命名项目",
     "parent": "上一级",
     "errorTitle": "无法列出该文件夹",
     "pathPlaceholder": "输入项目内的相对路径",
     "empty": "此文件夹为空",
-    "pressEnter": "先按回车校验该路径"
+    "pressEnter": "先按回车校验该路径",
+    "download": "下载文件"
   },
   "user-menu": {
     "account": "账号",
@@ -1139,6 +1140,12 @@
     "act-duplicate": "复制",
     "act-publish": "发布版本",
     "act-delete": "删除",
+    "act-capabilities": "能力与使用记录",
+    "capabilities-title": "能力与使用记录",
+    "capabilities-description": "以下为平台实际装配的基础能力，会话内临时能力另行追加",
+    "observation-sessions": "已保存会话",
+    "observation-messages": "已保存消息",
+    "observation-failures": "工具失败",
     "dup-suffix": "副本",
     "dup-title": "复制智能体",
     "dup-description": "从当前配置或任意历史版本分叉出一个新智能体，两者互不影响",

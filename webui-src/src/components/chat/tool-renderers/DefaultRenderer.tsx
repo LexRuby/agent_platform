@@ -2,7 +2,7 @@ import type { ToolCallBlock } from '@agentscope-ai/agentscope/message';
 import * as mime from 'mime-types';
 import type { ReactNode } from 'react';
 
-import { getResultText, toolArgClass, toolLabelClass } from './_shared';
+import { getResultText, sanitizeWorkspacePath, toolArgClass, toolLabelClass } from './_shared';
 import type { TFunction, ToolCallWithResult } from './types';
 
 export function defaultGetDisplayName(call: ToolCallBlock): string {
@@ -12,7 +12,7 @@ export function defaultGetDisplayName(call: ToolCallBlock): string {
 export function defaultRenderConfirmBody(call: ToolCallBlock): ReactNode {
 	return (
 		<div className="w-full max-w-full overflow-hidden break-words">
-			<div className="text-secondary-foreground">{call.input}</div>
+			<div className="text-secondary-foreground">{sanitizeWorkspacePath(call.input)}</div>
 		</div>
 	);
 }
@@ -60,11 +60,11 @@ export function defaultRenderBody(pair: ToolCallWithResult, t: TFunction): React
 	// TODO: render multimodal outputs
 	let text: string;
 	if (typeof result.output === 'string') {
-		text = result.output;
+		text = sanitizeWorkspacePath(result.output);
 	} else {
 		text = result.output
 			.map((b) => {
-				if (b.type === 'text') return b.text;
+				if (b.type === 'text') return sanitizeWorkspacePath(b.text);
 				const mainType = b.source.media_type.split('/')[0].toUpperCase();
 				const ext = (mime.extension(b.source.media_type) || 'bin').toLowerCase();
 				return `[${mainType}.${ext}]`;

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from urllib.parse import parse_qsl, urlencode
 
 
@@ -27,8 +28,29 @@ Default behavior:
   a project they remain in the project workspace.
 - Work directly in the current root. Do not create a date-prefixed task
   directory or README unless the user specifically asks for one.
-- Never reveal or attempt to access the host path behind the project space.
+- Every tool path must be relative to the current workspace. Use "." for its
+  root. Never reveal, infer, or attempt to access the host path behind it.
+- Do not run pwd, ls /, find /, or inspect framework data such as sessions/
+  and .mcp. Use Read, Write, Edit, Glob, and Grep for document operations;
+  do not wrap routine file work in cd, Python, or shell scripts.
 </workspace>"""
+
+_HOST_WORKSPACE_RE = re.compile(
+    r"/data/[^/\s]+/AgentScope/agentforge/data/workspaces/"
+    r"[a-f0-9]{32}/(?:conversations|projects)/[a-f0-9]{32}"
+)
+_INTERNAL_WORKSPACE_ENTRIES = {".mcp", "data", "sessions", "skills"}
+
+
+def sanitize_workspace_paths(value):
+    """Remove persisted physical workspace roots from API payloads."""
+    if isinstance(value, str):
+        return _HOST_WORKSPACE_RE.sub(".", value)
+    if isinstance(value, list):
+        return [sanitize_workspace_paths(item) for item in value]
+    if isinstance(value, dict):
+        return {key: sanitize_workspace_paths(item) for key, item in value.items()}
+    return value
 
 
 def patch_chat_first_workspace_instructions() -> None:
@@ -207,6 +229,13 @@ class WorkspaceBoundaryMiddleware:
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             receive = _body_receive(body)
 
+        elif (
+            path.startswith("/sessions/")
+            and path.endswith("/messages")
+            and method == "GET"
+        ):
+            response_kind = "messages"
+
         if response_kind is None:
             await self.app(scope, receive, send)
             return
@@ -229,6 +258,15 @@ class WorkspaceBoundaryMiddleware:
             payload = json.loads(raw_body)
             if response_kind == "directories" and isinstance(payload, dict):
                 payload["path"] = normalized_path
+                if normalized_path == "" and isinstance(payload.get("entries"), list):
+                    payload["entries"] = [
+                        entry
+                        for entry in payload["entries"]
+                        if not (
+                            isinstance(entry, dict)
+                            and entry.get("name") in _INTERNAL_WORKSPACE_ENTRIES
+                        )
+                    ]
             elif response_kind == "status" and isinstance(payload, dict):
                 cwd = payload.get("cwd")
                 payload = {
@@ -238,6 +276,8 @@ class WorkspaceBoundaryMiddleware:
                     else "",
                     "git": None,
                 }
+            elif response_kind == "messages":
+                payload = sanitize_workspace_paths(payload)
             rewritten = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         except (TypeError, ValueError, OSError):
             for message in messages:

@@ -87,7 +87,7 @@ async def test_registry_tool_reuses_existing_backend_router(monkeypatch):
 
     monkeypatch.setattr(pst, "call_backend", fake_call_backend)
     spec = pst._tool_specs()["search_patents"]
-    tool = pst.PatentRegistrySearchTool(spec)
+    tool = pst.PatentRegistrySearchTool(spec, {})
     chunk = await tool.call(mode="natural", query="教育游戏", size=10)
 
     assert captured == {
@@ -95,6 +95,38 @@ async def test_registry_tool_reuses_existing_backend_router(monkeypatch):
         "arguments": {"mode": "natural", "query": "教育游戏", "size": 10},
     }
     assert json.loads(chunk.content[0].text)["data"][0]["pubid"] == "CN-test"
+
+
+@pytest.mark.asyncio
+async def test_details_failure_uses_search_evidence_from_same_session(monkeypatch):
+    async def fake_call_backend(spec, arguments):
+        if spec["name"] == "search_patents":
+            return {
+                "data": [{
+                    "pubid": "CN112131387A",
+                    "title": "教育游戏",
+                    "abst": "检索摘要",
+                    "desc_detail": "说明书原文",
+                }],
+            }
+        return {"data": {"patents": [], "err_msg": "访问数据库异常"}}
+
+    monkeypatch.setattr(pst, "call_backend", fake_call_backend)
+    cache = {}
+    specs = pst._tool_specs()
+    search = pst.PatentRegistrySearchTool(specs["search_patents"], cache)
+    details = pst.PatentRegistrySearchTool(specs["get_patent_details"], cache)
+
+    await search.call(mode="natural", query="教育游戏", size=10)
+    chunk = await details.call(
+        pubids=["CN112131387A"],
+        patent_source="cn",
+    )
+    result = json.loads(chunk.content[0].text)
+
+    assert result["evidence_level"] == "search_result_fallback"
+    assert result["data"]["patents"][0]["desc_detail"] == "说明书原文"
+    assert "访问数据库异常" in result["warning"]
 
 
 @pytest.mark.asyncio

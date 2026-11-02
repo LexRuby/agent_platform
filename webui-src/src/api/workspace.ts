@@ -4,6 +4,7 @@ import type {
 	AddFromLibraryResponse,
 	AddSkillRequest,
 	DirectoryListing,
+	WorkspaceDownloadToken,
 	WorkspaceStatus,
 	MCPClient,
 	MCPClientStatus,
@@ -102,12 +103,7 @@ function uploadSkillXhr(
 export const workspaceApi = {
 	/**
 	 * List one directory level inside the session's workspace.
-	 *
-	 * `path` may be absolute or relative to the workspace root; empty
-	 * lists the root itself. Not confined to the root — for a sandboxed
-	 * backend the reachable filesystem is the sandbox, and for a local
-	 * one the caller is already trusted with the host. The response
-	 * echoes the resolved absolute path.
+	 * `path` is project-relative; empty lists the project root.
 	 */
 	directories: (agentId: string, sessionId: string, path = '') =>
 		client.get<DirectoryListing>('/workspace/directories', {
@@ -115,6 +111,27 @@ export const workspaceApi = {
 			session_id: sessionId,
 			path,
 		}),
+
+	/** Start a browser-native download without exposing the physical path. */
+	download: async (agentId: string, sessionId: string, path: string) => {
+		const { token } = await client.post<WorkspaceDownloadToken>(
+			'/workspace/files/download-token',
+			undefined,
+			{ agent_id: agentId, session_id: sessionId, path },
+		);
+		const url = new URL('/workspace/files', getBaseUrl());
+		url.searchParams.set('agent_id', agentId);
+		url.searchParams.set('session_id', sessionId);
+		url.searchParams.set('path', path);
+		url.searchParams.set('download', 'true');
+		url.searchParams.set('token', token);
+		const anchor = document.createElement('a');
+		anchor.href = url.toString();
+		anchor.download = path.split('/').pop() || 'download';
+		document.body.appendChild(anchor);
+		anchor.click();
+		anchor.remove();
+	},
 
 	/**
 	 * Where the session is pointed, plus the git state of that place.

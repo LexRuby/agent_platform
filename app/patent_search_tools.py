@@ -43,9 +43,10 @@ class PatentRegistrySearchTool(ToolBase):
     is_concurrency_safe = True
     is_read_only = True
 
-    def __init__(self, spec: dict) -> None:
+    def __init__(self, spec: dict, evidence_cache: dict[str, dict]) -> None:
         super().__init__()
         self._spec = spec
+        self._evidence_cache = evidence_cache
         self.name = spec["name"]
         self.description = spec["description"]
         self.input_schema = spec["inputSchema"]
@@ -62,6 +63,37 @@ class PatentRegistrySearchTool(ToolBase):
 
     async def call(self, **kwargs: Any) -> ToolChunk:
         payload = await call_backend(self._spec, kwargs)
+        if self.name == "search_patents":
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if isinstance(data, list):
+                for patent in data:
+                    if not isinstance(patent, dict):
+                        continue
+                    pubid = str(patent.get("pubid") or "")
+                    if pubid:
+                        self._evidence_cache[pubid.upper()] = patent
+        elif self.name == "get_patent_details":
+            data = payload.get("data") if isinstance(payload, dict) else None
+            err = data.get("err_msg") if isinstance(data, dict) else None
+            if err:
+                requested = [str(item).upper() for item in kwargs.get("pubids", [])]
+                fallback = []
+                for pubid in requested:
+                    candidates = (pubid, pubid.removesuffix("A"), f"{pubid}A")
+                    cached = next(
+                        (self._evidence_cache[key] for key in candidates if key in self._evidence_cache),
+                        None,
+                    )
+                    if cached is not None:
+                        fallback.append(cached)
+                payload = {
+                    "data": {"patents": fallback},
+                    "warning": (
+                        f"专利详情库返回“{err}”。已降级使用本轮 search_patents "
+                        "返回的摘要、权利要求和说明书字段；这些材料只能作为检索初筛证据。"
+                    ),
+                    "evidence_level": "search_result_fallback",
+                }
         text = json.dumps(payload, ensure_ascii=False)
         return ToolChunk(content=[TextBlock(text=text)])
 
@@ -80,9 +112,13 @@ async def patent_search_tools_for_agent(
     if PATENT_AGENT_PROFILE_MARKER not in (prompt or ""):
         return []
     specs = _tool_specs()
+    evidence_cache: dict[str, dict] = {}
     from .patent_quality_tools import patent_quality_tools
 
     return [
-        *(PatentRegistrySearchTool(specs[name]) for name in _DEFAULT_TOOL_NAMES),
+        *(
+            PatentRegistrySearchTool(specs[name], evidence_cache)
+            for name in _DEFAULT_TOOL_NAMES
+        ),
         *patent_quality_tools(),
     ]

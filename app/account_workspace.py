@@ -17,12 +17,25 @@ import time
 from agentscope.app.workspace_manager import IsolationPolicy, LocalWorkspaceManager
 from agentscope.workspace import LocalWorkspace
 
+from app.workspace_tools import WorkspaceLocalBackend, build_workspace_tools
+
 
 PROJECT_WORKSPACE_PREFIX = "project_"
 
 
 def _safe_component(value: str) -> str:
     return hashlib.blake2b(value.encode("utf-8"), digest_size=16).hexdigest()
+
+
+class AgentForgeLocalWorkspace(LocalWorkspace):
+    """Local workspace whose agent-facing tools expose relative paths only."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._backend = WorkspaceLocalBackend()
+
+    async def list_tools(self):
+        return build_workspace_tools(self.workdir, self.get_backend())
 
 
 class AccountWorkspaceManager(LocalWorkspaceManager):
@@ -107,7 +120,7 @@ class AccountWorkspaceManager(LocalWorkspaceManager):
             )
             os.makedirs(workdir, mode=0o700, exist_ok=True)
             os.chmod(workdir, 0o700)
-            workspace = LocalWorkspace(
+            workspace = AgentForgeLocalWorkspace(
                 workspace_id=workspace_id,
                 workdir=workdir,
                 default_mcps=self._default_mcps,

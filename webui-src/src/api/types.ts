@@ -107,6 +107,34 @@ export interface AgentListResponse {
 	total: number;
 }
 
+export interface CapabilityTool {
+	name: string;
+	description: string;
+	source: string;
+}
+
+export interface CapabilityGroup {
+	id: string;
+	name: string;
+	tools: CapabilityTool[];
+}
+
+export interface AgentCapabilities {
+	agent_id: string;
+	agent_name: string;
+	groups: CapabilityGroup[];
+	web_search_enabled: boolean;
+	notes: string[];
+}
+
+export interface AgentObservationSummary {
+	agent_id: string;
+	sessions: number;
+	messages: number;
+	tool_failures: number;
+	records: unknown[];
+}
+
 /**
  * @deprecated Superseded by {@link AgentSchemaV2Response}. Kept only for
  * legacy consumers still calling `GET /agent/schema`. The new form flow
@@ -267,12 +295,15 @@ export interface DirectoryEntry {
 /** One directory level, plus the path it actually resolved to. */
 export interface DirectoryListing {
 	/**
-	 * Absolute path of the directory that was listed. The only way to
-	 * learn where a relative request landed — the workspace root is
-	 * backend-dependent and unknowable client-side.
+	 * Project-relative path of the directory that was listed.
 	 */
 	path: string;
 	entries: DirectoryEntry[];
+}
+
+export interface WorkspaceDownloadToken {
+	token: string;
+	expires_at: number;
 }
 
 /** Git state of one directory. */

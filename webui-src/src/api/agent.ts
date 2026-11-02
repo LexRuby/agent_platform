@@ -1,6 +1,8 @@
 import { client } from './client';
 import type {
 	AgentListResponse,
+	AgentCapabilities,
+	AgentObservationSummary,
 	AgentView,
 	AgentSchemaV2Response,
 	CreateAgentRequest,
@@ -20,4 +22,10 @@ export const agentApi = {
 		client.patch<AgentView>(`/agent/${agentId}`, body, undefined, options),
 
 	delete: (agentId: string) => client.delete(`/agent/${agentId}`),
+
+	capabilities: (agentId: string) =>
+		client.get<AgentCapabilities>(`/agent-capabilities/${agentId}`),
+
+	observations: (agentId: string) =>
+		client.get<AgentObservationSummary>(`/agent-observations/${agentId}`, { limit: '1' }),
 };

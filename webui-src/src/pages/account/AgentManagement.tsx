@@ -14,6 +14,7 @@ import {
 	Users,
 	X,
 	Activity,
+	Wrench,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -22,6 +23,8 @@ import { toast } from 'sonner';
 import { agentApi, agentShareApi, agentVersionApi } from '@/api';
 import type {
 	AgentView,
+	AgentCapabilities,
+	AgentObservationSummary,
 	PublicationInfo,
 	PublicationUsage,
 	ShareInfo,
@@ -74,6 +77,69 @@ import { cn } from '@/lib/utils';
 import { copyToClipboard, formatNumber } from '@/utils/common';
 
 type ShareMode = 'private' | 'users' | 'public';
+
+function CapabilitiesDialog({
+	agent,
+	onClose,
+}: {
+	agent: AgentView | null;
+	onClose: () => void;
+}) {
+	const { t } = useTranslation();
+	const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
+	const [observations, setObservations] = useState<AgentObservationSummary | null>(null);
+
+	useEffect(() => {
+		setCapabilities(null);
+		setObservations(null);
+		if (!agent) return;
+		void Promise.all([
+			agentApi.capabilities(agent.id),
+			agentApi.observations(agent.id),
+		]).then(([capabilityData, observationData]) => {
+			setCapabilities(capabilityData);
+			setObservations(observationData);
+		});
+	}, [agent]);
+
+	return (
+		<Dialog open={agent !== null} onOpenChange={(open) => !open && onClose()}>
+			<DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+				<DialogHeader>
+					<DialogTitle>{t('account.capabilities-title')}</DialogTitle>
+					<DialogDescription>
+						{agent?.data.name} · {t('account.capabilities-description')}
+					</DialogDescription>
+				</DialogHeader>
+				{!capabilities ? (
+					<Skeleton className="h-40 w-full" />
+				) : (
+					<div className="space-y-5">
+						<div className="grid grid-cols-3 gap-3 border-y py-3 text-center">
+							<div><div className="text-lg font-semibold">{observations?.sessions ?? 0}</div><div className="text-xs text-muted-foreground">{t('account.observation-sessions')}</div></div>
+							<div><div className="text-lg font-semibold">{observations?.messages ?? 0}</div><div className="text-xs text-muted-foreground">{t('account.observation-messages')}</div></div>
+							<div><div className="text-lg font-semibold">{observations?.tool_failures ?? 0}</div><div className="text-xs text-muted-foreground">{t('account.observation-failures')}</div></div>
+						</div>
+						{capabilities.groups.map((group) => (
+							<section key={group.id} className="space-y-2">
+								<h3 className="text-sm font-semibold">{group.name}</h3>
+								<div className="divide-y rounded-md border">
+									{group.tools.map((tool) => (
+										<div key={tool.name} className="grid gap-1 px-3 py-2 sm:grid-cols-[180px_1fr]">
+											<div><span className="font-mono text-sm">{tool.name}</span><div className="text-xs text-muted-foreground">{tool.source}</div></div>
+											<p className="text-sm text-muted-foreground">{tool.description}</p>
+										</div>
+									))}
+								</div>
+							</section>
+						))}
+						{capabilities.notes.map((note) => <p key={note} className="text-xs text-muted-foreground">{note}</p>)}
+					</div>
+				)}
+			</DialogContent>
+		</Dialog>
+	);
+}
 
 // ─── 徽标 ────────────────────────────────────────────────────────────────────
 
@@ -736,6 +802,7 @@ export function AgentManagement() {
 	const [publishing, setPublishing] = useState<AgentView | null>(null);
 	const [settingShare, setSettingShare] = useState<AgentView | null>(null);
 	const [deleting, setDeleting] = useState<AgentView | null>(null);
+	const [viewingCapabilities, setViewingCapabilities] = useState<AgentView | null>(null);
 
 	const load = useCallback(async () => {
 		setLoading(true);
@@ -806,6 +873,7 @@ export function AgentManagement() {
 
 	return (
 		<div className="flex flex-col gap-6">
+			<CapabilitiesDialog agent={viewingCapabilities} onClose={() => setViewingCapabilities(null)} />
 			{/* 我的智能体：完整增删改查 */}
 			<Card className="gap-3">
 				<CardHeader className="flex-row items-center justify-between space-y-0">
@@ -883,6 +951,10 @@ export function AgentManagement() {
 														</Button>
 													</DropdownMenuTrigger>
 													<DropdownMenuContent align="end" className="w-auto">
+													<DropdownMenuItem onClick={() => setViewingCapabilities(a)}>
+														<Wrench />
+														{t('account.act-capabilities')}
+													</DropdownMenuItem>
 														<DropdownMenuItem onClick={() => setEditing(a)}>
 															<Pencil />
 															{t('account.act-edit')}

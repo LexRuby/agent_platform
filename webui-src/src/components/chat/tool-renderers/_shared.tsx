@@ -8,6 +8,13 @@ import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { formatNumber } from '@/utils/common.ts';
 
+const HOST_WORKSPACE_PATH =
+	/\/data\/[^/\s]+\/AgentScope\/agentforge\/data\/workspaces\/[a-f0-9]{32}\/(?:conversations|projects)\/[a-f0-9]{32}/gi;
+
+export function sanitizeWorkspacePath(text: string): string {
+	return text.replace(HOST_WORKSPACE_PATH, '.');
+}
+
 export function ToolStateIcon({ state }: { state: ToolResultBlock['state'] | undefined }) {
 	if (state === 'success') {
 		return <Check className="size-3 text-emerald-600 dark:text-emerald-400 shrink-0" />;
@@ -29,9 +36,11 @@ export function ToolStateIcon({ state }: { state: ToolResultBlock['state'] | und
  */
 export function getResultText(result?: ToolResultBlock): string {
 	if (!result) return '';
-	if (typeof result.output === 'string') return result.output;
+	if (typeof result.output === 'string') return sanitizeWorkspacePath(result.output);
 	if (Array.isArray(result.output)) {
-		return result.output.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+		return sanitizeWorkspacePath(
+			result.output.map((b) => (b.type === 'text' ? b.text : '')).join('\n'),
+		);
 	}
 	return '';
 }
@@ -116,7 +125,7 @@ export function ToolCallRow({
  */
 export function parseInput(input: string): Record<string, unknown> {
 	try {
-		const parsed = JSON.parse(input);
+		const parsed = JSON.parse(sanitizeWorkspacePath(input));
 		return parsed && typeof parsed === 'object' ? parsed : {};
 	} catch {
 		return {};
@@ -133,7 +142,9 @@ export function parseInput(input: string): Record<string, unknown> {
  */
 export function tryGetFilePath(input: string): string | undefined {
 	const { file_path } = parseInput(input) as { file_path?: unknown };
-	return typeof file_path === 'string' && file_path.length > 0 ? file_path : undefined;
+	return typeof file_path === 'string' && file_path.length > 0
+		? sanitizeWorkspacePath(file_path)
+		: undefined;
 }
 
 /**

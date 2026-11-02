@@ -14,6 +14,7 @@ from app.workspace_boundary import (
     WorkspaceBoundaryMiddleware,
     _relative_path,
     patch_chat_first_workspace_instructions,
+    sanitize_workspace_paths,
 )
 
 
@@ -43,7 +44,11 @@ def _app(tmp_path):
         if scope["path"] == "/workspace/directories":
             body = json.dumps({
                 "path": str(tmp_path / query.get("path", [""])[0]),
-                "entries": [],
+                "entries": [
+                    {"name": "deliverable.md", "is_dir": False},
+                    {"name": "sessions", "is_dir": True},
+                    {"name": "skills", "is_dir": True},
+                ],
             }).encode()
         elif scope["path"] == "/workspace/status":
             body = json.dumps({
@@ -129,6 +134,19 @@ def test_relative_path_rejects_symlink_escape(tmp_path):
         _relative_path(str(tmp_path), "link")
 
 
+def test_sanitize_workspace_paths_handles_nested_message_payloads():
+    physical = (
+        "/data/zhaohongyu/AgentScope/agentforge/data/workspaces/"
+        "3e037862f67083f048cd1cd611adfdea/conversations/"
+        "d97264527127e078c3d97264527127e0"
+    )
+    payload = {"messages": [{"input": f"cd {physical} && pwd"}]}
+
+    sanitized = sanitize_workspace_paths(payload)
+
+    assert sanitized == {"messages": [{"input": "cd . && pwd"}]}
+
+
 @pytest.mark.asyncio
 async def test_directory_listing_returns_only_relative_path(tmp_path):
     app, service = _app(tmp_path)
@@ -137,9 +155,27 @@ async def test_directory_listing_returns_only_relative_path(tmp_path):
         params=_params("drafts/../claims"),
     )
     assert status == 200
-    assert payload == {"path": "claims", "entries": []}
+    assert payload["path"] == "claims"
+    assert len(payload["entries"]) == 3
     assert service.calls == [("alice", "agent-1", "session-1")]
     assert str(tmp_path) not in text
+
+
+@pytest.mark.asyncio
+async def test_root_listing_hides_framework_directories(tmp_path):
+    app, _ = _app(tmp_path)
+
+    status, payload, text = await _request(
+        app, "GET", "/workspace/directories", params=_params(""),
+    )
+
+    assert status == 200
+    assert payload == {
+        "path": "",
+        "entries": [{"name": "deliverable.md", "is_dir": False}],
+    }
+    assert "sessions" not in text
+    assert "skills" not in text
 
 
 @pytest.mark.asyncio

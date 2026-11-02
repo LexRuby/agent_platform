@@ -9,6 +9,7 @@ import {
 	Home,
 	Loader2,
 	CornerDownLeft,
+	Download,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -114,6 +115,7 @@ export function WorkingDirectoryDialog({
 	// list — one home for both, so nothing is reported twice.
 	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
+	const [downloading, setDownloading] = useState<string | null>(null);
 	// Bumped by every browse, so an overtaken listing cannot land.
 	const reqId = useRef(0);
 
@@ -179,6 +181,19 @@ export function WorkingDirectoryDialog({
 			setError(formatApiErrorForAlert(e));
 		} finally {
 			setSaving(false);
+		}
+	};
+
+	const handleDownload = async (filePath: string) => {
+		if (!agentId || !sessionId) return;
+		setDownloading(filePath);
+		setError(null);
+		try {
+			await workspaceApi.download(agentId, sessionId, filePath);
+		} catch (e) {
+			setError(formatApiErrorForAlert(e));
+		} finally {
+			setDownloading(null);
 		}
 	};
 
@@ -291,18 +306,18 @@ export function WorkingDirectoryDialog({
 											key={entry.name}
 											variant="ghost"
 											size="sm"
-											// A file is context, never an answer: it is
-											// listed so the folder is recognisable, but
-											// only a directory can be picked.
-											disabled={!entry.is_dir}
+											disabled={downloading !== null}
 											// `min-w-0` is what makes the child's
 											// `truncate` work: a flex item defaults to
 											// min-width:auto, so a long name widens the
 											// row instead of eliding inside it.
 											className="w-full min-w-0 justify-start gap-2 font-normal"
-											onClick={() =>
-												void load(`${listedPath ?? ''}/${entry.name}`)
-											}
+											onClick={() => {
+												const entryPath = [listedPath, entry.name].filter(Boolean).join('/');
+												if (entry.is_dir) void load(entryPath);
+												else void handleDownload(entryPath);
+											}}
+											title={entry.is_dir ? undefined : t('workdir.download')}
 										>
 											{entry.is_dir ? (
 												<Folder className="size-3.5 shrink-0" />
@@ -310,6 +325,13 @@ export function WorkingDirectoryDialog({
 												<File className="size-3.5 shrink-0" />
 											)}
 											<span className="min-w-0 truncate">{entry.name}</span>
+											{!entry.is_dir && (
+												downloading === [listedPath, entry.name].filter(Boolean).join('/') ? (
+													<Loader2 className="ml-auto size-3.5 shrink-0 animate-spin" />
+												) : (
+													<Download className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
+												)
+											)}
 										</Button>
 									))
 								)}

@@ -1088,14 +1088,15 @@
   },
   "workdir": {
     "title": "Project space",
-    "description": "Choose a folder inside this project. Access is confined to this project space.",
+    "description": "Browse project files. Click a file to download it, or select a folder as the working directory.",
     "root": "Project root",
     "unnamedProject": "Untitled project",
     "parent": "Up one level",
     "errorTitle": "Could not list this folder",
     "pathPlaceholder": "Enter a project-relative path",
     "empty": "This folder is empty",
-    "pressEnter": "Press Enter to check this path first"
+    "pressEnter": "Press Enter to check this path first",
+    "download": "Download file"
   },
   "dialog-agent-version": {
     "title": "Versions · {{name}}",
@@ -1139,6 +1140,12 @@
     "act-duplicate": "Duplicate",
     "act-publish": "Publish Version",
     "act-delete": "Delete",
+    "act-capabilities": "Capabilities & Records",
+    "capabilities-title": "Capabilities & Usage Records",
+    "capabilities-description": "Platform-managed capabilities; session-specific tools are added separately",
+    "observation-sessions": "Saved sessions",
+    "observation-messages": "Saved messages",
+    "observation-failures": "Tool failures",
     "dup-suffix": "Copy",
     "dup-title": "Duplicate Agent",
     "dup-description": "Fork a new agent from the current config or any historical version; they evolve independently",

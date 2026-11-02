@@ -38,6 +38,10 @@ from app.agent_share import (
     reconcile_agent_share_delete_pending,
 )
 from app.agent_share_mcp import agent_share_mcp_router
+from app.agent_capabilities import (
+    agent_capabilities_router,
+    init_agent_capabilities,
+)
 from app.agent_type import AgentTypeMiddleware
 from app.account_workspace import AccountWorkspaceManager
 from app.agent_version import AgentVersionMiddleware, agent_version_router
@@ -64,6 +68,11 @@ from app.startup_hook import StartupHook
 from app.team_archive import team_archive_router
 from app.team_preserve import patch_team_protection, team_history_router
 from app.usage_metering import backfill_usage, patch_usage_metering, usage_router
+from app.patent_observations import (
+    backfill_patent_observations,
+    patch_patent_observations,
+    patent_observations_router,
+)
 from app.workspace_boundary import (
     WorkspaceBoundaryMiddleware,
     patch_chat_first_workspace_instructions,
@@ -166,6 +175,9 @@ app.include_router(agent_version_router)
 # 智能体共享管理：发布/取消/我的发布列表 API（策略已注入 create_app）
 app.include_router(agent_share_router)
 app.include_router(agent_share_mcp_router)
+init_agent_capabilities(storage)
+app.include_router(agent_capabilities_router)
+app.include_router(patent_observations_router)
 
 # 会话流程控制：任意位置重新对话（truncate）/ 流程重启（restart）/
 # 团队暂停继续（team-flow pause/resume）/ 截断归档查询（2026-09-08 v3）
@@ -180,6 +192,7 @@ app.include_router(team_fork_router)
 from app.chat_safety import patch_chat_safety  # noqa: E402
 
 patch_chat_safety()
+patch_patent_observations(storage)
 
 # 运行时技能沉淀 SOP 注入：所有 agent（大A/小A/AgentCreate 成员/
 # 存量）聊天时 system_prompt 自动带技能沉淀环节——不污染存储提示词
@@ -205,6 +218,7 @@ def _start_ark_heartbeat() -> None:
     # 存量回填与删除 pending 恢复均后台执行，不阻塞启动
     loop = asyncio.get_running_loop()
     loop.create_task(backfill_usage(storage))
+    loop.create_task(backfill_patent_observations(storage))
     loop.create_task(reconcile_agent_share_delete_pending(storage))
 
 
