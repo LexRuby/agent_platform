@@ -48,6 +48,7 @@ from app.auth import (
     register_login_hook,
 )
 from app.ark_credential import ArkCredential, sync_ark_models
+from app.chat_error_diagnostics import patch_chat_setup_diagnostics
 from app.leader_team import LeaderTeamMiddleware, leader_team_router
 from app.local_skill_hub import LocalSkillHub
 from app.prompt_templates import (
@@ -85,6 +86,7 @@ _solidify_factory = make_solidify_factory(storage)
 # 普通对话拥有随会话删除的临时空间；显式项目空间长期保留。
 patch_chat_first_workspace_instructions()
 patch_session_defaults()
+patch_chat_setup_diagnostics()
 
 
 async def _refresh_ark_on_login(username: str) -> None:
@@ -262,4 +264,7 @@ app = _StartupHook(
 if __name__ == "__main__":
     # 端口从环境变量读取（.env AGENTFORGE_SVC_PORT），默认 30000（对外开放段）
     port = int(os.environ.get("AGENTFORGE_SVC_PORT", "30000"))
-    uvicorn.run("agent_service_app:app", host="0.0.0.0", port=port, reload=False)
+    # 直接传 app，避免以脚本启动时 uvicorn 再导入一次本模块。重复导入会
+    # 注册两套登录钩子，其中 __main__ 那套 storage 未进入 lifespan，导致
+    # 登录刷新模型时报 ``RedisStorage._client is None``。
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=False)

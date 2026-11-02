@@ -119,7 +119,11 @@ async function streamRequest(path: string, options: RequestOptions = {}): Promis
 			window.location.assign('/login');
 			throw error;
 		}
-		if (!silent) toast.error(detail);
+		if (!silent) {
+			toast.error(detail, {
+				description: `${method} ${url.pathname} · HTTP ${res.status}`,
+			});
+		}
 		throw error;
 	}
 

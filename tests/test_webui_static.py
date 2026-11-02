@@ -260,6 +260,11 @@ class TestSrcSameOrigin:
         client = _src("api/client.ts")
         assert "window.location.assign('/login');" in client, "丢失 401 → /login 跳转"
 
+    def test_api_error_toast_contains_request_context(self):
+        """Generic backend details such as 'Not Found' must identify the request."""
+        client = _src("api/client.ts")
+        assert "description: `${method} ${url.pathname} · HTTP ${res.status}`" in client
+
 
 class TestSrcNoSetupGate:
     """前端源码不得再有"连接服务器"引导页（同源部署不该出现）。"""
