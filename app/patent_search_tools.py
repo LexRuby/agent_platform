@@ -18,7 +18,12 @@ from agentscope.permission import (
 )
 from agentscope.tool import ToolBase, ToolChunk
 
-from .smart_writing import RequestLimitError, call_backend, load_tools
+from .smart_writing import (
+    RequestLimitError,
+    call_backend,
+    load_tools,
+    normalize_backend_arguments,
+)
 
 PATENT_AGENT_PROFILE_MARKER = "agentforge-profile: patent-drafting"
 
@@ -50,6 +55,7 @@ class PatentRegistrySearchTool(ToolBase):
         self._evidence_cache = evidence_cache
         self._backend_unavailable = False
         self._detail_lock = asyncio.Lock()
+        self._detail_cache: dict[tuple[str, str], dict] = {}
         self.name = spec["name"]
         self.description = spec["description"]
         self.input_schema = spec["inputSchema"]
@@ -77,20 +83,36 @@ class PatentRegistrySearchTool(ToolBase):
                         self._evidence_cache[pubid.upper()] = patent
         elif self.name == "get_patent_details":
             async with self._detail_lock:
+                normalized = normalize_backend_arguments(self.name, kwargs)
+                requested_fields = set(normalized["data_source"])
+                source = str(normalized.get("patent_source") or "")
+                requested_ids = [str(item) for item in normalized["pubids"]]
+                cached, missing = self._split_cached_details(
+                    source,
+                    requested_ids,
+                    requested_fields,
+                )
                 if self._backend_unavailable:
                     payload = self._fallback_details(
-                        kwargs,
+                        normalized,
                         "本会话此前已确认专利详情库不可用，已停止继续请求 30020",
                     )
+                elif not missing:
+                    payload = {
+                        "data": {"patents": self._ordered_patents(requested_ids, cached)},
+                        "cache_hit": True,
+                    }
                 else:
                     try:
-                        payload = await call_backend(self._spec, kwargs)
+                        remote_args = dict(normalized)
+                        remote_args["pubids"] = missing
+                        payload = await call_backend(self._spec, remote_args)
                     except RequestLimitError:
                         raise
                     except Exception as exc:  # noqa: BLE001 - 熔断远端详情服务
                         self._backend_unavailable = True
                         payload = self._fallback_details(
-                            kwargs,
+                            normalized,
                             f"专利详情服务调用失败：{exc}",
                         )
                 data = payload.get("data") if isinstance(payload, dict) else None
@@ -98,18 +120,72 @@ class PatentRegistrySearchTool(ToolBase):
                 if err:
                     self._backend_unavailable = True
                     payload = self._fallback_details(
-                        kwargs,
+                        normalized,
                         f"专利详情库返回“{err}”",
                     )
+                elif missing:
+                    fresh = self._cache_detail_payload(source, payload)
+                    combined = {**cached, **fresh}
+                    if isinstance(data, dict) and isinstance(data.get("patents"), list):
+                        payload = dict(payload)
+                        payload["data"] = dict(data)
+                        payload["data"]["patents"] = self._ordered_patents(
+                            requested_ids,
+                            combined,
+                        )
         else:
             payload = await call_backend(self._spec, kwargs)
         text = json.dumps(payload, ensure_ascii=False)
         return ToolChunk(content=[TextBlock(text=text)])
 
+    def _split_cached_details(
+        self,
+        source: str,
+        pubids: list[str],
+        requested_fields: set[str],
+    ) -> tuple[dict[str, dict], list[str]]:
+        cached: dict[str, dict] = {}
+        missing: list[str] = []
+        for pubid in pubids:
+            patent = self._detail_cache.get((source, pubid.upper()))
+            if patent is not None and requested_fields <= patent.keys():
+                cached[pubid.upper()] = patent
+            else:
+                missing.append(pubid)
+        return cached, missing
+
+    def _cache_detail_payload(self, source: str, payload: dict) -> dict[str, dict]:
+        data = payload.get("data") if isinstance(payload, dict) else None
+        patents = data.get("patents") if isinstance(data, dict) else None
+        cached: dict[str, dict] = {}
+        if not isinstance(patents, list):
+            return cached
+        for patent in patents:
+            if not isinstance(patent, dict):
+                continue
+            pubid = str(patent.get("pubid") or "").upper()
+            if not pubid:
+                continue
+            key = (source, pubid)
+            merged = {**self._detail_cache.get(key, {}), **patent}
+            self._detail_cache[key] = merged
+            cached[pubid] = merged
+        return cached
+
+    @staticmethod
+    def _ordered_patents(pubids: list[str], patents: dict[str, dict]) -> list[dict]:
+        return [patents[item.upper()] for item in pubids if item.upper() in patents]
+
     def _fallback_details(self, kwargs: dict, reason: str) -> dict:
         requested = [str(item).upper() for item in kwargs.get("pubids", [])]
         fallback = []
         for pubid in requested:
+            detail = self._detail_cache.get(
+                (str(kwargs.get("patent_source") or ""), pubid),
+            )
+            if detail is not None:
+                fallback.append(detail)
+                continue
             candidates = (pubid, pubid.removesuffix("A"), f"{pubid}A")
             cached = next(
                 (

@@ -171,6 +171,41 @@ async def test_concurrent_detail_calls_stop_after_first_database_failure(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_details_reuses_cached_patents_and_only_fetches_missing_ids(monkeypatch):
+    calls = []
+
+    async def fake_call_backend(spec, arguments):
+        calls.append(list(arguments["pubids"]))
+        return {
+            "data": {
+                "patents": [
+                    {
+                        "pubid": pubid,
+                        "title": f"title-{pubid}",
+                        "abst": f"abstract-{pubid}",
+                        "claimsIndList": [],
+                        "desc_detail": f"detail-{pubid}",
+                    }
+                    for pubid in arguments["pubids"]
+                ],
+            },
+        }
+
+    monkeypatch.setattr(pst, "call_backend", fake_call_backend)
+    details = pst.PatentRegistrySearchTool(
+        pst._tool_specs()["get_patent_details"],
+        {},
+    )
+
+    await details.call(pubids=["CN1", "CN2"], patent_source="cn")
+    chunk = await details.call(pubids=["CN2", "CN3"], patent_source="cn")
+    result = json.loads(chunk.content[0].text)
+
+    assert calls == [["CN1", "CN2"], ["CN3"]]
+    assert [item["pubid"] for item in result["data"]["patents"]] == ["CN2", "CN3"]
+
+
+@pytest.mark.asyncio
 async def test_claim_structure_reports_broken_references_and_missing_number():
     chunk = await ValidateClaimStructure().call(claims="""\
 1. 一种检测系统，包括传感器。

@@ -59,9 +59,11 @@ _SLOW_TOOLS = {"extract_solutions", "filter_solutions"}
 _SLOW_TIMEOUT = 320.0
 _DEFAULT_TIMEOUT = 60.0
 
-# 30020 是共享的远端写作服务。详情接口单次返回体很大，必须在平台
-# 入口收敛数量、字段和频率，不能依赖模型每次都自觉控制。
-_DETAIL_MAX_IDS = 3
+# 30020 是共享的远端写作服务。按字段体量动态控制批量：说明书正文最重，
+# 权利要求次之，标题/摘要等轻量字段可以一次多取，减少模型拆批往返。
+_DETAIL_LIGHT_MAX_IDS = 15
+_DETAIL_CLAIMS_MAX_IDS = 10
+_DETAIL_FULL_TEXT_MAX_IDS = 6
 _DETAIL_MAX_FIELDS = 8
 _DETAIL_DEFAULT_FIELDS = [
     "pubid",
@@ -77,6 +79,16 @@ _DETAIL_LAST_CALL = 0.0
 
 class RequestLimitError(RuntimeError):
     """A local request-shape limit, not a remote backend failure."""
+
+
+def patent_detail_id_limit(fields: list[str]) -> int:
+    """Return a batch limit sized to the heaviest requested detail field."""
+    lowered = {field.lower() for field in fields}
+    if "desc_detail" in lowered:
+        return _DETAIL_FULL_TEXT_MAX_IDS
+    if lowered & {"claimsindlist", "claims", "claim"}:
+        return _DETAIL_CLAIMS_MAX_IDS
+    return _DETAIL_LIGHT_MAX_IDS
 
 # 条件必填（注意事项 2）：工具名 → (参数名, 触发校验的入参条件, 报错文案)
 _CONDITIONAL_REQUIRED = {
@@ -193,18 +205,21 @@ def normalize_backend_arguments(tool_name: str, arguments: dict) -> dict:
     pubids = list(dict.fromkeys(normalized.get("pubids") or []))
     if not pubids:
         raise RequestLimitError("get_patent_details 至少需要一个专利公开号")
-    if len(pubids) > _DETAIL_MAX_IDS:
-        raise RequestLimitError(
-            f"get_patent_details 单次最多 {_DETAIL_MAX_IDS} 个公开号；"
-            "请先按相关性收敛后再查询",
-        )
     fields = list(dict.fromkeys(normalized.get("data_source") or []))
     if len(fields) > _DETAIL_MAX_FIELDS:
         raise RequestLimitError(
             f"get_patent_details 单次最多 {_DETAIL_MAX_FIELDS} 个返回字段",
         )
+    fields = fields or list(_DETAIL_DEFAULT_FIELDS)
+    id_limit = patent_detail_id_limit(fields)
+    if len(pubids) > id_limit:
+        raise RequestLimitError(
+            f"get_patent_details 当前字段组合单次最多 {id_limit} 个公开号；"
+            "包含说明书正文时最多 6 个、包含权利要求时最多 10 个、"
+            "轻量字段最多 15 个，请在一次调用内选择最相关的一批",
+        )
     normalized["pubids"] = pubids
-    normalized["data_source"] = fields or list(_DETAIL_DEFAULT_FIELDS)
+    normalized["data_source"] = fields
     return normalized
 
 

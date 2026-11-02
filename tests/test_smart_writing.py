@@ -180,15 +180,43 @@ class TestConditionalRequired:
             "pubid", "title", "abst", "claimsIndList", "desc_detail",
         ]
 
-        with pytest.raises(sw.RequestLimitError, match="单次最多 3 个"):
+        with pytest.raises(sw.RequestLimitError, match="单次最多 6 个"):
             sw.normalize_backend_arguments(
                 "get_patent_details",
-                {"pubids": ["CN1", "CN2", "CN3", "CN4"]},
+                {"pubids": [f"CN{i}" for i in range(7)]},
             )
         with pytest.raises(sw.RequestLimitError, match="最多 8 个返回字段"):
             sw.normalize_backend_arguments(
                 "get_patent_details",
                 {"pubids": ["CN1"], "data_source": [f"f{i}" for i in range(9)]},
+            )
+
+    def test_patent_details_adapts_batch_limit_to_field_weight(self):
+        claims = sw.normalize_backend_arguments(
+            "get_patent_details",
+            {
+                "pubids": [f"CN{i}" for i in range(10)],
+                "data_source": ["pubid", "claimsIndList"],
+            },
+        )
+        assert len(claims["pubids"]) == 10
+
+        light = sw.normalize_backend_arguments(
+            "get_patent_details",
+            {
+                "pubids": [f"CN{i}" for i in range(15)],
+                "data_source": ["pubid", "title", "abst"],
+            },
+        )
+        assert len(light["pubids"]) == 15
+
+        with pytest.raises(sw.RequestLimitError, match="单次最多 10 个"):
+            sw.normalize_backend_arguments(
+                "get_patent_details",
+                {
+                    "pubids": [f"CN{i}" for i in range(11)],
+                    "data_source": ["pubid", "claimsIndList"],
+                },
             )
 
     def test_filter_requires_query(self, registry):
