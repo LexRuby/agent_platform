@@ -258,7 +258,7 @@ def make_solidify_factory(storage):
         if wm is None:  # 未注入（异常部署）——静默跳过比炸会话好
             _logger.error("SolidifySkill 未注入 workspace_manager，跳过装配")
             return []
-        return [
+        tools: list[ToolBase] = [
             SolidifySkill(
                 storage=storage,
                 workspace_manager=wm,
@@ -267,6 +267,14 @@ def make_solidify_factory(storage):
                 session_id=session_id,
             ),
         ]
+        # 专利写作小A的检索能力必须随新会话自动装配，不能依赖用户
+        # 每次从 MCP 库手动添加。profile 标识随复制/发布保留。
+        from .patent_search_tools import patent_search_tools_for_agent
+
+        tools.extend(
+            await patent_search_tools_for_agent(storage, user_id, agent_id),
+        )
+        return tools
 
     factory.services = services  # type: ignore[attr-defined]
     return factory

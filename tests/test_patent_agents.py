@@ -1,0 +1,167 @@
+"""专利写作三智能体：模板约束与默认检索工具装配。"""
+
+import json
+from dataclasses import dataclass
+
+import pytest
+
+from app import patent_search_tools as pst
+from app.patent_quality_tools import (
+    CheckClaimSupport,
+    CheckPatentTerminology,
+    ValidateClaimStructure,
+)
+from app.prompt_templates import list_prompt_templates
+
+
+@dataclass
+class _AgentData:
+    system_prompt: str
+
+
+@dataclass
+class _Record:
+    data: _AgentData
+
+
+class _Storage:
+    def __init__(self, prompt: str) -> None:
+        self.record = _Record(_AgentData(prompt))
+
+    async def get_agent(self, user_id: str, agent_id: str):
+        return self.record
+
+
+def test_three_patent_agent_templates_have_search_contract():
+    templates = {
+        item["name"]: item
+        for item in list_prompt_templates()
+        if item["name"].startswith("专利")
+    }
+    expected = {
+        "专利权利要求智能体",
+        "专利背景与发明内容智能体",
+        "专利具体实施方式智能体",
+    }
+    assert expected <= templates.keys()
+    for name in expected:
+        content = templates[name]["content"]
+        assert pst.PATENT_AGENT_PROFILE_MARKER in content
+        assert "必须" in content
+        assert "search_patents" in content
+        assert "get_patent_details" in content
+        assert "不得" in content and "不重复" in content
+
+
+@pytest.mark.asyncio
+async def test_profile_agent_gets_patent_search_and_quality_tools():
+    tools = await pst.patent_search_tools_for_agent(
+        _Storage(pst.PATENT_AGENT_PROFILE_MARKER), "admin", "agent-1",
+    )
+    assert [tool.name for tool in tools] == [
+        "search_patents",
+        "get_patent_details",
+        "search_journals",
+        "validate_claim_structure",
+        "check_patent_terminology",
+        "check_claim_support",
+    ]
+    assert all(tool.is_read_only for tool in tools)
+
+
+@pytest.mark.asyncio
+async def test_regular_agent_does_not_get_patent_search_tools():
+    tools = await pst.patent_search_tools_for_agent(
+        _Storage("普通助手"), "admin", "agent-2",
+    )
+    assert tools == []
+
+
+@pytest.mark.asyncio
+async def test_registry_tool_reuses_existing_backend_router(monkeypatch):
+    captured = {}
+
+    async def fake_call_backend(spec, arguments):
+        captured.update({"name": spec["name"], "arguments": arguments})
+        return {"data": [{"pubid": "CN-test"}]}
+
+    monkeypatch.setattr(pst, "call_backend", fake_call_backend)
+    spec = pst._tool_specs()["search_patents"]
+    tool = pst.PatentRegistrySearchTool(spec)
+    chunk = await tool.call(mode="natural", query="教育游戏", size=10)
+
+    assert captured == {
+        "name": "search_patents",
+        "arguments": {"mode": "natural", "query": "教育游戏", "size": 10},
+    }
+    assert json.loads(chunk.content[0].text)["data"][0]["pubid"] == "CN-test"
+
+
+@pytest.mark.asyncio
+async def test_claim_structure_reports_broken_references_and_missing_number():
+    chunk = await ValidateClaimStructure().call(claims="""\
+1. 一种检测系统，包括传感器。
+3. 根据权利要求4所述的检测系统，其特征在于还包括控制器。
+4. 根据权利要求9所述的检测系统，其特征在于还包括显示器。
+""")
+    result = json.loads(chunk.content[0].text)
+    assert result["passed"] is False
+    assert {issue["code"] for issue in result["issues"]} == {
+        "MISSING_NUMBERS",
+        "SELF_OR_FORWARD_REFERENCE",
+        "REFERENCE_NOT_FOUND",
+    }
+
+
+@pytest.mark.asyncio
+async def test_claim_structure_accepts_independent_and_dependent_claims():
+    chunk = await ValidateClaimStructure().call(claims="""\
+1. 一种检测系统，包括传感器和控制器。
+2. 根据权利要求1所述的检测系统，其特征在于，所述传感器为温度传感器。
+3. 一种使用权利要求1所述检测系统的检测方法。
+""")
+    result = json.loads(chunk.content[0].text)
+    assert result["passed"] is True
+    assert result["claim_numbers"] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_terminology_check_reports_alias_and_missing_section():
+    chunk = await CheckPatentTerminology().call(
+        documents={"权利要求": "温度传感器采集数据", "实施方式": "探头采集数据"},
+        terminology=[{"canonical": "温度传感器", "aliases": ["探头"]}],
+    )
+    result = json.loads(chunk.content[0].text)
+    assert result["passed"] is False
+    assert {issue["code"] for issue in result["issues"]} == {
+        "CANONICAL_TERM_MISSING",
+        "ALIAS_USED",
+    }
+
+
+@pytest.mark.asyncio
+async def test_claim_support_builds_evidence_matrix_for_each_section():
+    chunk = await CheckClaimSupport().call(
+        features=[
+            {"claim": 1, "feature": "温度传感器"},
+            {"claim": 2, "feature": "无线通信模块", "alternatives": ["无线收发器"]},
+        ],
+        documents={
+            "发明内容": "系统包括温度传感器和无线通信模块。",
+            "具体实施方式": "温度传感器连接无线收发器。",
+        },
+    )
+    result = json.loads(chunk.content[0].text)
+    assert result["passed"] is True
+    assert result["coverage_matrix"][1]["hits"]["具体实施方式"] == ["无线收发器"]
+
+
+@pytest.mark.asyncio
+async def test_claim_support_reports_uncovered_feature():
+    chunk = await CheckClaimSupport().call(
+        features=[{"claim": 2, "feature": "校准模块"}],
+        documents={"发明内容": "包括传感器。", "具体实施方式": "传感器采样。"},
+    )
+    result = json.loads(chunk.content[0].text)
+    assert result["passed"] is False
+    assert result["issues"][0]["sections"] == ["发明内容", "具体实施方式"]
