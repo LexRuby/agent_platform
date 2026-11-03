@@ -63,6 +63,7 @@ async def test_paper_agent_journal_search_is_visible():
         for group in body["groups"]
         for tool in group["tools"]
     }
-    assert "search_journals" in names
+    assert {"search_journals", "anysearch_search"} <= names
     assert "check_claim_support" not in names
+    assert body["web_search_enabled"] is True
     assert any("期刊检索" in note for note in body["notes"])

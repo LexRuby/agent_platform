@@ -37,6 +37,10 @@ python -m pytest tests/ -q
 python agent_service_app.py   # 默认 :30000
 ```
 
+论文写作小 A 会自动获得有界的期刊检索和 `anysearch_search` 联网搜索。
+AnySearch 当前可免 Key 调用；如服务端要求鉴权，在 `.env` 配置可选的
+`ANYSEARCH_API_KEY`。每种检索在单个会话内最多请求两次，首次失败后熔断。
+
 ## 前端
 
 ```bash

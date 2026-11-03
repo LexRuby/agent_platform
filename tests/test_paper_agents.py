@@ -37,6 +37,7 @@ def test_seven_paper_templates_have_profile_and_fact_boundaries():
         content = templates[name]["content"]
         assert PAPER_AGENT_PROFILE_MARKER in content
         assert "search_journals" in content
+        assert "anysearch_search" in content
         assert "不得" in content
         assert "内部思维链" in content
 
@@ -48,7 +49,7 @@ async def test_paper_agent_gets_bounded_journal_search():
         "admin",
         "agent-1",
     )
-    assert [tool.name for tool in tools] == ["search_journals"]
+    assert [tool.name for tool in tools] == ["search_journals", "anysearch_search"]
     assert all(tool.is_read_only for tool in tools)
 
 
