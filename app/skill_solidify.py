@@ -274,6 +274,11 @@ def make_solidify_factory(storage):
         tools.extend(
             await patent_search_tools_for_agent(storage, user_id, agent_id),
         )
+        from .paper_writing_tools import paper_writing_tools_for_agent
+
+        tools.extend(
+            await paper_writing_tools_for_agent(storage, user_id, agent_id),
+        )
         return tools
 
     factory.services = services  # type: ignore[attr-defined]

@@ -6,6 +6,7 @@ import pytest
 
 from app import patent_observations as observations
 from app.patent_search_tools import PATENT_AGENT_PROFILE_MARKER
+from app.paper_writing_tools import PAPER_AGENT_PROFILE_MARKER
 
 
 @dataclass
@@ -36,12 +37,17 @@ class _Message:
 
 
 class _Storage:
-    def __init__(self):
+    def __init__(self, prompt=PATENT_AGENT_PROFILE_MARKER):
         self._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
         self.messages = []
+        self.prompt = prompt
 
     async def get_agent(self, user_id, agent_id):
-        return _Agent(_Data()) if (user_id, agent_id) == ("alice", "a1") else None
+        return (
+            _Agent(_Data(system_prompt=self.prompt))
+            if (user_id, agent_id) == ("alice", "a1")
+            else None
+        )
 
     async def list_messages(self, user_id, session_id, limit=100):
         return self.messages[:limit], len(self.messages) > limit
@@ -76,6 +82,27 @@ async def test_non_patent_or_unknown_session_is_not_archived():
     assert not await observations.archive_message(
         storage, "alice", "missing", _Message("m1"),
     )
+
+
+@pytest.mark.asyncio
+async def test_paper_agent_session_is_archived_for_later_optimization():
+    storage = _Storage(PAPER_AGENT_PROFILE_MARKER)
+    await storage._client.set(
+        "agentscope:user:alice:session:s-paper",
+        json.dumps({"agent_id": "a1"}),
+    )
+
+    assert await observations.archive_message(
+        storage,
+        "alice",
+        "s-paper",
+        _Message("m-paper", content=[{"type": "text", "text": "研究现状"}]),
+    )
+    records = await storage._client.hvals(
+        "agentforge:patent-observation:alice:a1",
+    )
+    assert len(records) == 1
+    assert json.loads(records[0])["session_id"] == "s-paper"
 
 
 def test_public_record_redacts_physical_workspace_path():

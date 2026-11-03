@@ -1,7 +1,7 @@
-"""Durable usage records for patent-drafting agents.
+"""Durable usage records for drafting agents under active optimization.
 
 Conversation deletion is a user-facing lifecycle operation.  Product
-improvement evidence has a different lifecycle, so patent-agent messages are
+improvement evidence has a different lifecycle, so marked agent messages are
 mirrored into account-scoped Redis hashes before a conversation can be
 removed.
 """
@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Query
 
 from .patent_search_tools import PATENT_AGENT_PROFILE_MARKER
+from .paper_writing_tools import PAPER_AGENT_PROFILE_MARKER
 
 
 _logger = logging.getLogger("agentforge.patent_observations")
@@ -49,7 +50,7 @@ def _public_value(value: Any) -> Any:
     return value
 
 
-async def _patent_agent(storage: Any, user_id: str, session_id: str) -> tuple[str, str] | None:
+async def _observed_agent(storage: Any, user_id: str, session_id: str) -> tuple[str, str] | None:
     raw = await storage._client.get(f"agentscope:user:{user_id}:session:{session_id}")
     if not raw:
         return None
@@ -58,13 +59,17 @@ async def _patent_agent(storage: Any, user_id: str, session_id: str) -> tuple[st
     if not agent_id:
         return None
     agent = await storage.get_agent(user_id, agent_id)
-    if agent is None or PATENT_AGENT_PROFILE_MARKER not in (agent.data.system_prompt or ""):
+    prompt = (agent.data.system_prompt or "") if agent is not None else ""
+    if not any(
+        marker in prompt
+        for marker in (PATENT_AGENT_PROFILE_MARKER, PAPER_AGENT_PROFILE_MARKER)
+    ):
         return None
     return agent_id, agent.data.name
 
 
 async def archive_message(storage: Any, user_id: str, session_id: str, msg: Any) -> bool:
-    resolved = await _patent_agent(storage, user_id, session_id)
+    resolved = await _observed_agent(storage, user_id, session_id)
     if resolved is None:
         return False
     agent_id, agent_name = resolved
@@ -96,7 +101,7 @@ def patch_patent_observations(storage: Any) -> None:
         try:
             await archive_message(self, user_id, session_id, msg)
         except Exception:  # noqa: BLE001 - observation must never break chat
-            _logger.exception("专利小A使用记录保存失败: session=%s", session_id)
+            _logger.exception("优化中小A使用记录保存失败: session=%s", session_id)
 
     type(storage).upsert_message = observed_upsert
     _PATCHED = True
@@ -119,7 +124,7 @@ async def backfill_patent_observations(storage: Any) -> int:
             if len(parts) != 5:
                 continue
             user_id, session_id = parts[2], parts[4]
-            if await _patent_agent(storage, user_id, session_id) is None:
+            if await _observed_agent(storage, user_id, session_id) is None:
                 continue
             messages, _ = await storage.list_messages(user_id, session_id, limit=10_000)
             for message in messages:

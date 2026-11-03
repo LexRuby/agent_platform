@@ -711,6 +711,26 @@ Redis seed 5 条消息 → truncate 保留 3 归档 2 → flow-archive 副本
 `test_agent_share.py::TestShareApi::test_publish_users_mode` 挂起，单独运行同样挂起，
 未得到全量完成结论。
 
+### 42. 论文细节优化七小A（2026-11-03，12 例）
+
+> 按“研究现状 → 科学问题 → 方法论 → 实验与结果 → 讨论 → 结论”组织
+> 主链，关键词在摘要完成后独立处理。带
+> `agentforge-profile: paper-drafting` 标记的智能体在新会话自动获得
+> 有界的 `search_journals`，并进入长期使用观察档案。
+
+| 组 | 覆盖点 |
+|---|---|
+| 模板契约 | 七份模板名称完整；均含论文 profile、检索能力、事实边界和思维链保护 |
+| 条件装配 | 论文 profile 仅获得只读期刊检索；普通 Agent 不受影响 |
+| 能力展示 | 管理页显示学术文献检索，不误显示专利质量工具 |
+| 使用观察 | 论文小A消息按账号和 Agent 长期归档，删除会话后仍可用于优化分析 |
+| 幂等安装 | 首次按名称新增；同名提示词更新时保留 Agent ID；重复运行不产生副本 |
+| 账号边界 | 不存在的账号明确跳过，不向近似用户名误安装 |
+
+验证：新增及直接相关回归 24 项通过；真实 Redis 回读确认 `admin`、
+`zhaohongyu` 各有 7 个论文小A，二次预演均为“新增 0、未变化 7”；
+`:30000` 服务重启后状态为 `active`。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量

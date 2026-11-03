@@ -4,6 +4,7 @@ import pytest
 
 from app import agent_capabilities as capabilities
 from app.patent_search_tools import PATENT_AGENT_PROFILE_MARKER
+from app.paper_writing_tools import PAPER_AGENT_PROFILE_MARKER
 
 
 @dataclass
@@ -48,3 +49,20 @@ async def test_capabilities_do_not_cross_accounts():
     with pytest.raises(Exception) as exc:
         await capabilities.get_agent_capabilities("a1", "bob")
     assert getattr(exc.value, "status_code", None) == 404
+
+
+@pytest.mark.asyncio
+async def test_paper_agent_journal_search_is_visible():
+    capabilities.init_agent_capabilities(
+        _Storage(PAPER_AGENT_PROFILE_MARKER),
+    )
+    response = await capabilities.get_agent_capabilities("a1", "alice")
+    body = response.model_dump()
+    names = {
+        tool["name"]
+        for group in body["groups"]
+        for tool in group["tools"]
+    }
+    assert "search_journals" in names
+    assert "check_claim_support" not in names
+    assert any("期刊检索" in note for note in body["notes"])
