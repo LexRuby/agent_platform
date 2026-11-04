@@ -42,6 +42,21 @@ def test_seven_paper_templates_have_profile_and_fact_boundaries():
         assert "内部思维链" in content
 
 
+def test_paper_agents_publish_auditable_summaries_without_hidden_chain():
+    templates = {item["name"]: item["content"] for item in list_prompt_templates()}
+    for name in PAPER_TEMPLATE_NAMES:
+        content = templates[name]
+        assert "公开可审计摘要" in content
+        assert "不展示逐步内部思维链" in content
+
+    assert "5-8 个主要痛点" in templates["论文科学问题智能体"]
+    assert "target_pain" in templates["论文方法论智能体"]
+    assert "实验设计模式" in templates["论文实验与结果智能体"]
+    assert "观察结果、统计结果和预期结果" in templates["论文讨论智能体"]
+    assert "300-500 字结论正文" in templates["论文结论智能体"]
+    assert "3+2+1" in templates["论文关键词智能体"]
+
+
 def test_research_status_prompt_matches_journal_search_contract():
     templates = {item["name"]: item for item in list_prompt_templates()}
     content = templates["论文研究现状智能体"]["content"]
