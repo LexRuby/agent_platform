@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from typing import Any
 
 from agentscope.message import TextBlock
@@ -23,6 +24,7 @@ PAPER_TEMPLATE_NAMES = (
     "论文关键词智能体",
 )
 _PAPER_TOOL_NAMES = ("search_journals", ANYSEARCH_TOOL_NAME)
+_JOURNAL_QUERY_FIELD = re.compile(r"(?:title|abst|keywords):[^\s()]+")
 
 
 class BoundedJournalSearchTool(PatentRegistrySearchTool):
@@ -40,7 +42,23 @@ class BoundedJournalSearchTool(PatentRegistrySearchTool):
         return ToolChunk(content=[TextBlock(text=json.dumps(payload, ensure_ascii=False))])
 
     async def call(self, **kwargs: Any) -> ToolChunk:
-        cache_key = json.dumps(kwargs, ensure_ascii=False, sort_keys=True, default=str)
+        normalized = dict(kwargs)
+        query = " ".join(str(normalized.get("query") or "").split())
+        if not query or not _JOURNAL_QUERY_FIELD.search(query):
+            return self._chunk({
+                "error": (
+                    "search_journals 只接受中文布尔检索式，必须包含 "
+                    "title:/abst:/keywords: 字段，例如 keywords:联邦学习 AND keywords:隐私保护"
+                ),
+                "request_sent": False,
+            })
+        try:
+            requested_size = int(normalized.get("size", 20))
+        except (TypeError, ValueError):
+            return self._chunk({"error": "search_journals 的 size 必须是整数", "request_sent": False})
+        normalized["query"] = query
+        normalized["size"] = max(1, min(requested_size, 20))
+        cache_key = json.dumps(normalized, ensure_ascii=False, sort_keys=True, default=str)
         async with self._journal_lock:
             if cache_key in self._journal_cache:
                 return self._chunk({**self._journal_cache[cache_key], "cache_hit": True})
@@ -58,7 +76,7 @@ class BoundedJournalSearchTool(PatentRegistrySearchTool):
                 })
             self._journal_calls += 1
             try:
-                chunk = await super().call(**kwargs)
+                chunk = await super().call(**normalized)
             except Exception as exc:  # noqa: BLE001 - fail closed for this session
                 self._journal_circuit_open = True
                 return self._chunk({

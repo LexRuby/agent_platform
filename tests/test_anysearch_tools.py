@@ -98,8 +98,8 @@ async def test_journal_failure_opens_circuit(monkeypatch):
         paper._tool_specs()["search_journals"],
         {},
     )
-    first = await tool.call(query="first", size=10)
-    second = await tool.call(query="second", size=10)
+    first = await tool.call(query="keywords:联邦学习", size=10)
+    second = await tool.call(query="keywords:隐私保护", size=10)
 
     assert calls == 1
     assert json.loads(first.content[0].text)["circuit_open"] is True
@@ -120,11 +120,38 @@ async def test_journal_caches_duplicates_and_enforces_budget(monkeypatch):
         paper._tool_specs()["search_journals"],
         {},
     )
-    await tool.call(query="first", size=10)
-    cached = await tool.call(query="first", size=10)
-    await tool.call(query="second", size=10)
-    blocked = await tool.call(query="third", size=10)
+    await tool.call(query="keywords:联邦学习", size=10)
+    cached = await tool.call(query="keywords:联邦学习", size=10)
+    await tool.call(query="keywords:隐私保护", size=10)
+    blocked = await tool.call(query="keywords:知识蒸馏", size=10)
 
     assert calls == 2
     assert json.loads(cached.content[0].text)["cache_hit"] is True
     assert json.loads(blocked.content[0].text)["budget_exhausted"] is True
+
+
+@pytest.mark.asyncio
+async def test_journal_rejects_invalid_query_and_caps_result_count(monkeypatch):
+    calls = []
+
+    async def successful(spec, arguments):
+        calls.append(arguments)
+        return {"data": []}
+
+    monkeypatch.setattr("app.patent_search_tools.call_backend", successful)
+    tool = paper.BoundedJournalSearchTool(
+        paper._tool_specs()["search_journals"],
+        {},
+    )
+    invalid = await tool.call(query="federated learning", size=500)
+    valid = await tool.call(
+        query="keywords:联邦学习 AND keywords:隐私保护",
+        size=500,
+    )
+
+    assert json.loads(invalid.content[0].text)["request_sent"] is False
+    assert calls == [{
+        "query": "keywords:联邦学习 AND keywords:隐私保护",
+        "size": 20,
+    }]
+    assert json.loads(valid.content[0].text) == {"data": []}

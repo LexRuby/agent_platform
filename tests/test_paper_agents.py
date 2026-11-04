@@ -42,6 +42,16 @@ def test_seven_paper_templates_have_profile_and_fact_boundaries():
         assert "内部思维链" in content
 
 
+def test_research_status_prompt_matches_journal_search_contract():
+    templates = {item["name"]: item for item in list_prompt_templates()}
+    content = templates["论文研究现状智能体"]["content"]
+    assert "title:" in content and "abst:" in content and "keywords:" in content
+    assert "自然语言句子或纯英文句子" in content
+    assert "size" in content and "10-20" in content
+    assert "AnySearch 线索不得直接进入正式参考文献表" in content
+    assert "不强行凑 10-15 篇" in content
+
+
 @pytest.mark.asyncio
 async def test_paper_agent_gets_bounded_journal_search():
     tools = await paper_writing_tools_for_agent(
