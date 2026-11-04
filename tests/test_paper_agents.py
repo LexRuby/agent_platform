@@ -49,6 +49,8 @@ def test_research_status_prompt_matches_journal_search_contract():
     assert "自然语言句子或纯英文句子" in content
     assert "size" in content and "10-20" in content
     assert "AnySearch 线索不得直接进入正式参考文献表" in content
+    assert "若期刊检索没有返回记录" in content
+    assert "不得从网页摘要推断作者、年份、期刊或 DOI" in content
     assert "不强行凑 10-15 篇" in content
 
 
