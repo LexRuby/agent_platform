@@ -65,20 +65,10 @@ def patch_session_defaults() -> None:
             workspace_id = record.config.workspace_id if record else None
             deleted = await _delete_orig(self, user_id, agent_id, session_id)
             manager = self._workspace_manager
-            if (
-                deleted
-                and workspace_id
-                and isinstance(manager, AccountWorkspaceManager)
-                and not await _workspace_is_referenced(
-                    self._storage, user_id, workspace_id,
+            if deleted and workspace_id and isinstance(manager, AccountWorkspaceManager):
+                await _cleanup_temporary_workspace(
+                    manager, self._storage, user_id, workspace_id,
                 )
-            ):
-                try:
-                    await manager.delete_temporary_workspace(user_id, workspace_id)
-                except Exception:
-                    logger.exception(
-                        "Failed to delete temporary workspace %s", workspace_id,
-                    )
             return deleted
 
         delete_with_workspace_cleanup._agentforge_cleanup = True
@@ -97,6 +87,27 @@ async def _workspace_is_referenced(storage: Any, user_id: str, workspace_id: str
             if session.config.workspace_id == workspace_id:
                 return True
     return False
+
+
+async def _cleanup_temporary_workspace(
+    manager: AccountWorkspaceManager,
+    storage: Any,
+    user_id: str,
+    workspace_id: str,
+) -> None:
+    """Best-effort cleanup after a session delete has already committed."""
+    try:
+        referenced = await _workspace_is_referenced(storage, user_id, workspace_id)
+    except Exception:
+        logger.exception(
+            "Failed to inspect references for temporary workspace %s", workspace_id,
+        )
+        return
+    if not referenced:
+        try:
+            await manager.delete_temporary_workspace(user_id, workspace_id)
+        except Exception:
+            logger.exception("Failed to delete temporary workspace %s", workspace_id)
 
 
 def _new_session_state() -> AgentState:

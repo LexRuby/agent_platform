@@ -8,7 +8,11 @@ import pytest
 from agentscope.permission import PermissionMode
 
 from app.account_workspace import AccountWorkspaceManager
-from app.session_defaults import _new_session_state, _workspace_is_referenced
+from app.session_defaults import (
+    _cleanup_temporary_workspace,
+    _new_session_state,
+    _workspace_is_referenced,
+)
 
 
 @pytest.mark.asyncio
@@ -68,6 +72,20 @@ async def test_reference_check_includes_team_created_agents():
             return [session] if agent_id == "worker" else []
 
     assert await _workspace_is_referenced(Storage(), "alice", "shared")
+
+
+@pytest.mark.asyncio
+async def test_post_delete_cleanup_ignores_reference_storage_failure(tmp_path):
+    manager = AccountWorkspaceManager(str(tmp_path))
+
+    class BrokenStorage:
+        async def list_agents(self, user_id):
+            raise RuntimeError("storage unavailable")
+
+    await _cleanup_temporary_workspace(
+        manager, BrokenStorage(), "alice", "temporary",
+    )
+    await manager.close_all()
 
 
 @pytest.mark.asyncio
