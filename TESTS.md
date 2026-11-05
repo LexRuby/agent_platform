@@ -807,6 +807,19 @@ Redis seed 5 条消息 → truncate 保留 3 归档 2 → flow-archive 副本
 会话删除后的临时工作区引用检查异常未被隔离。已在 `app/session_defaults.py`
 改为 best-effort 清理，并增加回归用例；该修复需要随服务重新部署后才能在线生效。
 
+### 47. 专利交底书新增两个小 A 线上真实验收（2026-11-05）
+
+使用线上 `http://116.204.102.229:30000`、`admin` 账号和豆包凭据，
+通过 `scripts/smoke_patent_agents_live.py` 串行创建临时会话并传入实际结构化数据。
+
+| Agent | 结果 |
+|---|---|
+| 专利技术信息提取智能体 | PASS；返回约 350 字符结构化结果，未调用检索工具 |
+| 专利技术方案分析智能体 | PASS；返回约 2772 字符结构化分析结果 |
+
+两个 Agent 的临时会话均实际删除；线上删除接口仍返回已知 HTTP 500，
+原因与第 46 节相同，待会话清理修复部署后消除。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量
