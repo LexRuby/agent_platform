@@ -1,4 +1,5 @@
-import { Check, ChevronDown, Lock } from 'lucide-react';
+import { Bot, Check, ChevronDown, Crown, Lock } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { AgentView } from '@/api';
 import { Badge } from '@/components/ui/badge';
@@ -39,16 +40,48 @@ interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onC
 export function AgentSelect({ agents, value, onChange, placeholder, className, ...props }: Props) {
 	const { t } = useTranslation();
 	const selected = agents.find((a) => a.id === value) ?? null;
+	const [activeType, setActiveType] = useState<'leader' | 'member'>(
+		selected?.agent_type === 'leader' ? 'leader' : 'member',
+	);
+	useEffect(() => {
+		if (selected) setActiveType(selected.agent_type === 'leader' ? 'leader' : 'member');
+	}, [selected?.id, selected?.agent_type]);
+	const sortedAgents = useMemo(() => {
+		let recent: string[] = [];
+		try {
+			recent = JSON.parse(localStorage.getItem('agentforge-agent-recent') || '[]');
+		} catch {
+			recent = [];
+		}
+		const rank = new Map((Array.isArray(recent) ? recent : []).map((id, index) => [id, index]));
+		return [...agents].sort((a, b) => {
+			const recentA = rank.get(a.id);
+			const recentB = rank.get(b.id);
+			if (recentA !== undefined || recentB !== undefined) {
+				return (recentA ?? Number.MAX_SAFE_INTEGER) - (recentB ?? Number.MAX_SAFE_INTEGER);
+			}
+			return String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at));
+		});
+	}, [agents]);
 	const displayLabel = selected
 		? selected.data.name
 		: (placeholder ?? t('chat.agent.selectPlaceholder'));
 
-	const hasShared = agents.some((a) => !a.editable);
-	const yours = agents.filter((a) => a.editable);
-	const shared = agents.filter((a) => !a.editable);
-	// 大A（leader）与小A（member）分组：无共享 agent 时按类型分组展示
-	const leaders = agents.filter((a) => a.agent_type === 'leader');
-	const members = agents.filter((a) => a.agent_type !== 'leader');
+	const leaders = sortedAgents.filter((a) => a.agent_type === 'leader');
+	const members = sortedAgents.filter((a) => a.agent_type !== 'leader');
+	const visibleAgents = activeType === 'leader' ? leaders : members;
+	const visibleYours = visibleAgents.filter((a) => a.editable);
+	const visibleShared = visibleAgents.filter((a) => !a.editable);
+	const markRecent = (agent: AgentView) => {
+		try {
+			const old = JSON.parse(localStorage.getItem('agentforge-agent-recent') || '[]');
+			const next = [agent.id, ...(Array.isArray(old) ? old : []).filter((id) => id !== agent.id)].slice(0, 100);
+			localStorage.setItem('agentforge-agent-recent', JSON.stringify(next));
+		} catch {
+			// Selection must still work when browser storage is unavailable.
+		}
+		onChange?.(agent.id);
+	};
 
 	const typeBadge = (agent: AgentView) =>
 		agent.agent_type === 'leader' ? (
@@ -72,11 +105,11 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
 	const renderItem = (agent: AgentView) => {
 		const isSelected = agent.id === value;
 		return (
-			<DropdownMenuItem key={agent.id} onSelect={() => onChange?.(agent.id)}>
+			<DropdownMenuItem key={agent.id} className="items-start py-2" onSelect={() => markRecent(agent)}>
 				<Check
 					className={`size-3.5 shrink-0 ${isSelected ? 'opacity-100' : 'opacity-0'}`}
 				/>
-				<span className="min-w-0 flex-1 truncate">{agent.data.name}</span>
+				<span className="min-w-0 flex-1 whitespace-normal break-words leading-5" title={agent.data.name}>{agent.data.name}</span>
 				{typeBadge(agent)}
 				{agent.version?.frozen && (
 					<Badge
@@ -116,42 +149,39 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
 					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" className="min-w-56 max-h-72 overflow-y-auto">
+			<DropdownMenuContent align="start" className="w-[min(30rem,calc(100vw-1rem))] max-h-[min(32rem,calc(100vh-5rem))] overflow-y-auto p-1">
 				{agents.length === 0 ? (
 					<div className="px-2 py-3 text-center text-sm text-muted-foreground">
 						<p className="font-medium">{t('chat.agent.emptyTitle')}</p>
 						<p className="text-xs mt-1">{t('chat.agent.emptyDescription')}</p>
 					</div>
-				) : leaders.length > 0 && members.length > 0 ? (
-					<>
-						<DropdownMenuGroup>
-							<DropdownMenuLabel>{t('chat.agent.groupLeader')}</DropdownMenuLabel>
-							{leaders.map(renderItem)}
-						</DropdownMenuGroup>
-						<DropdownMenuSeparator />
-						<DropdownMenuGroup>
-							<DropdownMenuLabel>{t('chat.agent.groupMember')}</DropdownMenuLabel>
-							{members.map(renderItem)}
-						</DropdownMenuGroup>
-					</>
-				) : hasShared ? (
-					<>
-						{yours.length > 0 && (
-							<DropdownMenuGroup>
-								<DropdownMenuLabel>{t('chat.agent.groupYours')}</DropdownMenuLabel>
-								{yours.map(renderItem)}
-							</DropdownMenuGroup>
-						)}
-						{yours.length > 0 && shared.length > 0 && <DropdownMenuSeparator />}
-						{shared.length > 0 && (
-							<DropdownMenuGroup>
-								<DropdownMenuLabel>{t('chat.agent.groupShared')}</DropdownMenuLabel>
-								{shared.map(renderItem)}
-							</DropdownMenuGroup>
-						)}
-					</>
 				) : (
-					agents.map(renderItem)
+					<>
+						<div className="grid grid-cols-2 gap-1 p-1" role="tablist" aria-label={t('chat.agent.typeLabel')}>
+							<button type="button" role="tab" aria-selected={activeType === 'leader'} onClick={() => setActiveType('leader')} className={cn('flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium', activeType === 'leader' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent/60')}>
+								<Crown className="size-4" />{t('chat.agent.groupLeader')}<span className="text-xs opacity-60">{leaders.length}</span>
+							</button>
+							<button type="button" role="tab" aria-selected={activeType === 'member'} onClick={() => setActiveType('member')} className={cn('flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium', activeType === 'member' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent/60')}>
+								<Bot className="size-4" />{t('chat.agent.groupMember')}<span className="text-xs opacity-60">{members.length}</span>
+							</button>
+						</div>
+						<DropdownMenuSeparator />
+						{visibleAgents.length === 0 ? (
+							<div className="px-2 py-6 text-center text-sm text-muted-foreground">{t('chat.agent.emptyType')}</div>
+						) : (
+							<>
+								{visibleYours.length > 0 && <DropdownMenuGroup>
+									<DropdownMenuLabel>{t('chat.agent.groupYours')}</DropdownMenuLabel>
+									{visibleYours.map(renderItem)}
+								</DropdownMenuGroup>}
+								{visibleYours.length > 0 && visibleShared.length > 0 && <DropdownMenuSeparator />}
+								{visibleShared.length > 0 && <DropdownMenuGroup>
+									<DropdownMenuLabel>{t('chat.agent.groupShared')}</DropdownMenuLabel>
+									{visibleShared.map(renderItem)}
+								</DropdownMenuGroup>}
+							</>
+						)}
+					</>
 				)}
 			</DropdownMenuContent>
 		</DropdownMenu>

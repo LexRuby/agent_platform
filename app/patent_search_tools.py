@@ -26,6 +26,8 @@ from .smart_writing import (
 )
 
 PATENT_AGENT_PROFILE_MARKER = "agentforge-profile: patent-drafting"
+PATENT_EXTRACTION_PROFILE_MARKER = "agentforge-profile: patent-technology-extraction"
+PATENT_ANALYSIS_PROFILE_MARKER = "agentforge-profile: patent-technology-analysis"
 
 _REGISTRY_PATH = (
     Path(__file__).resolve().parent.parent
@@ -219,16 +221,28 @@ async def patent_search_tools_for_agent(
         prompt = getattr(getattr(record, "data", None), "system_prompt", "")
     except Exception:  # noqa: BLE001 - 工具装配失败不应阻断整个会话
         return []
-    if PATENT_AGENT_PROFILE_MARKER not in (prompt or ""):
+    prompt = prompt or ""
+    if PATENT_EXTRACTION_PROFILE_MARKER in prompt:
+        # 提取小A只处理用户提交的批次，避免无关检索拖慢流式输出。
+        return []
+    if not any(marker in prompt for marker in (
+        PATENT_AGENT_PROFILE_MARKER,
+        PATENT_ANALYSIS_PROFILE_MARKER,
+    )):
         return []
     specs = _tool_specs()
     evidence_cache: dict[str, dict] = {}
     from .patent_quality_tools import patent_quality_tools
 
-    return [
+    tools = [
         *(
             PatentRegistrySearchTool(specs[name], evidence_cache)
             for name in _DEFAULT_TOOL_NAMES
         ),
         *patent_quality_tools(),
     ]
+    if PATENT_ANALYSIS_PROFILE_MARKER in prompt:
+        from .anysearch_tools import AnySearchTool
+
+        tools.append(AnySearchTool())
+    return tools

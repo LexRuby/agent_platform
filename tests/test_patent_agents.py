@@ -1,4 +1,4 @@
-"""专利写作三智能体：模板约束与默认检索工具装配。"""
+"""专利写作五智能体：模板约束与默认检索工具装配。"""
 
 import asyncio
 import json
@@ -39,19 +39,35 @@ def test_three_patent_agent_templates_have_search_contract():
         for item in list_prompt_templates()
         if item["name"].startswith("专利")
     }
-    expected = {
+    drafting = {
         "专利权利要求智能体",
         "专利背景与发明内容智能体",
         "专利具体实施方式智能体",
     }
+    expected = drafting | {
+        "专利技术信息提取智能体",
+        "专利技术方案分析智能体",
+    }
     assert expected <= templates.keys()
-    for name in expected:
+    for name in drafting:
         content = templates[name]["content"]
         assert pst.PATENT_AGENT_PROFILE_MARKER in content
         assert "必须" in content
         assert "search_patents" in content
         assert "get_patent_details" in content
         assert "不得" in content and "不重复" in content
+    assert pst.PATENT_EXTRACTION_PROFILE_MARKER in templates["专利技术信息提取智能体"]["content"]
+    assert pst.PATENT_ANALYSIS_PROFILE_MARKER in templates["专利技术方案分析智能体"]["content"]
+
+
+def test_new_patent_agents_expose_input_and_json_output_contracts():
+    templates = {item["name"]: item["content"] for item in list_prompt_templates()}
+    extraction = templates["专利技术信息提取智能体"]
+    assert all(field in extraction for field in ("content", "pubid", "tech_info"))
+    assert '"技术背景"' in extraction and "流式" in extraction
+    analysis = templates["专利技术方案分析智能体"]
+    assert all(field in analysis for field in ("problem", "cur_solution_arr", "key_solution_arr"))
+    assert '"problem_relations"' in analysis and "search_journals" in analysis
 
 
 @pytest.mark.asyncio
@@ -76,6 +92,26 @@ async def test_regular_agent_does_not_get_patent_search_tools():
         _Storage("普通助手"), "admin", "agent-2",
     )
     assert tools == []
+
+
+@pytest.mark.asyncio
+async def test_extraction_agent_stays_fast_without_search_tools():
+    tools = await pst.patent_search_tools_for_agent(
+        _Storage(pst.PATENT_EXTRACTION_PROFILE_MARKER), "admin", "agent-2",
+    )
+    assert tools == []
+
+
+@pytest.mark.asyncio
+async def test_analysis_agent_gets_extensible_patent_and_web_search():
+    tools = await pst.patent_search_tools_for_agent(
+        _Storage(pst.PATENT_ANALYSIS_PROFILE_MARKER), "admin", "agent-3",
+    )
+    assert [tool.name for tool in tools] == [
+        "search_patents", "get_patent_details", "search_journals",
+        "validate_claim_structure", "check_patent_terminology",
+        "check_claim_support", "anysearch_search",
+    ]
 
 
 @pytest.mark.asyncio

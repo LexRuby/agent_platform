@@ -158,6 +158,8 @@
       "selectPlaceholder": "选择智能体",
       "emptyTitle": "暂无智能体",
       "emptyDescription": "创建一个智能体开始使用。",
+    "emptyType": "该分类暂无智能体",
+    "typeLabel": "智能体类型",
       "groupYours": "我的",
       "groupShared": "共享给我",
       "groupLeader": "大A · 主理人",

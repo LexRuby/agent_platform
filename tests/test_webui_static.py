@@ -420,6 +420,14 @@ class TestSrcLeaderTeam:
         assert "chat.agent.groupMember" in select, "丢失小A 分组"
         assert "chat.agent.leaderBadge" in select, "丢失大A 徽章"
 
+    def test_agent_select_has_two_level_recent_picker(self):
+        """选择器先切换大A/小A，再按最近互动顺序列出完整名称。"""
+        select = _src("components/select/AgentSelect.tsx")
+        assert "role=\"tablist\"" in select
+        assert "agentforge-agent-recent" in select
+        assert "visibleYours" in select and "visibleShared" in select
+        assert "whitespace-normal" in select and "break-words" in select
+
     def test_team_panels_present(self):
         """团队互动流程图与团队面板组件必须存在。"""
         assert _src_exists("components/panel/TeamFlowPanel.tsx"), "丢失团队互动流程图组件"
