@@ -427,6 +427,11 @@ class TestSrcLeaderTeam:
         assert "agentforge-agent-recent" in select
         assert "visibleYours" in select and "visibleShared" in select
         assert "whitespace-normal" in select and "break-words" in select
+        assert "setRecentAgentIds" in select, "最近选择写入后未触发列表即时重排"
+        assert "[agents, recentAgentIds]" in select, "最近排序未绑定最近选择状态"
+        assert 'className="min-w-0 whitespace-normal break-words text-left leading-5"' in select, (
+            "当前选中的长名称仍被截断，无法完整显示"
+        )
 
     def test_team_panels_present(self):
         """团队互动流程图与团队面板组件必须存在。"""

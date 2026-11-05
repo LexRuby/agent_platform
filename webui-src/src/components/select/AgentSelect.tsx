@@ -26,6 +26,15 @@ interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onC
 	className?: string;
 }
 
+function readRecentAgentIds(): string[] {
+	try {
+		const value = JSON.parse(localStorage.getItem('agentforge-agent-recent') || '[]');
+		return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+	} catch {
+		return [];
+	}
+}
+
 /**
  * Agent picker used in the chat sidebar. Rendered on top of the
  * shadcn dropdown-menu primitives (same base as `LlmSelect`) so
@@ -40,20 +49,17 @@ interface Props extends Omit<React.ComponentPropsWithoutRef<typeof Button>, 'onC
 export function AgentSelect({ agents, value, onChange, placeholder, className, ...props }: Props) {
 	const { t } = useTranslation();
 	const selected = agents.find((a) => a.id === value) ?? null;
+	const selectedId = selected?.id;
+	const selectedType: 'leader' | 'member' = selected?.agent_type === 'leader' ? 'leader' : 'member';
 	const [activeType, setActiveType] = useState<'leader' | 'member'>(
-		selected?.agent_type === 'leader' ? 'leader' : 'member',
+		selectedType,
 	);
+	const [recentAgentIds, setRecentAgentIds] = useState<string[]>(readRecentAgentIds);
 	useEffect(() => {
-		if (selected) setActiveType(selected.agent_type === 'leader' ? 'leader' : 'member');
-	}, [selected?.id, selected?.agent_type]);
+		if (selectedId) setActiveType(selectedType);
+	}, [selectedId, selectedType]);
 	const sortedAgents = useMemo(() => {
-		let recent: string[] = [];
-		try {
-			recent = JSON.parse(localStorage.getItem('agentforge-agent-recent') || '[]');
-		} catch {
-			recent = [];
-		}
-		const rank = new Map((Array.isArray(recent) ? recent : []).map((id, index) => [id, index]));
+		const rank = new Map(recentAgentIds.map((id, index) => [id, index]));
 		return [...agents].sort((a, b) => {
 			const recentA = rank.get(a.id);
 			const recentB = rank.get(b.id);
@@ -62,7 +68,7 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
 			}
 			return String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at));
 		});
-	}, [agents]);
+	}, [agents, recentAgentIds]);
 	const displayLabel = selected
 		? selected.data.name
 		: (placeholder ?? t('chat.agent.selectPlaceholder'));
@@ -73,9 +79,9 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
 	const visibleYours = visibleAgents.filter((a) => a.editable);
 	const visibleShared = visibleAgents.filter((a) => !a.editable);
 	const markRecent = (agent: AgentView) => {
+		const next = [agent.id, ...recentAgentIds.filter((id) => id !== agent.id)].slice(0, 100);
+		setRecentAgentIds(next);
 		try {
-			const old = JSON.parse(localStorage.getItem('agentforge-agent-recent') || '[]');
-			const next = [agent.id, ...(Array.isArray(old) ? old : []).filter((id) => id !== agent.id)].slice(0, 100);
 			localStorage.setItem('agentforge-agent-recent', JSON.stringify(next));
 		} catch {
 			// Selection must still work when browser storage is unavailable.
@@ -145,7 +151,7 @@ export function AgentSelect({ agents, value, onChange, placeholder, className, .
 					className={cn('justify-between gap-1 font-normal', className)}
 					{...props}
 				>
-					<span className="truncate">{displayLabel}</span>
+					<span className="min-w-0 whitespace-normal break-words text-left leading-5">{displayLabel}</span>
 					<ChevronDown className="size-3.5 text-muted-foreground" />
 				</Button>
 			</DropdownMenuTrigger>
