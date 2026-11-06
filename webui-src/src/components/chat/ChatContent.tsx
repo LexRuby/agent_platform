@@ -166,10 +166,20 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 			.join('\n\n'),
 		[msgs],
 	);
+	const batchAssistantResults = useMemo(
+		() => batchAssistantText.split(/\n\n+/).filter(Boolean).map((text) => {
+			try {
+				return JSON.parse(text);
+			} catch {
+				return text;
+			}
+		}),
+		[batchAssistantText],
+	);
 
 	const downloadBatch = (format: 'json' | 'md') => {
 		const body = format === 'json'
-			? JSON.stringify({ result: batchAssistantText }, null, 2)
+			? JSON.stringify({ results: batchAssistantResults }, null, 2)
 			: batchAssistantText;
 		const blob = new Blob([body], { type: format === 'json' ? 'application/json' : 'text/markdown' });
 		const url = URL.createObjectURL(blob);

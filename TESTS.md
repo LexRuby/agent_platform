@@ -854,6 +854,14 @@ JSON 或 Markdown。
 字符；两个临时会话均以 HTTP 204 清理。首次运行的沙箱网络失败不计入结果，使用
 受限网络权限复测通过。
 
+### 51. 专利批处理 JSON 导出结构（2026-11-06）
+
+JSON 下载由单一 `result` 文本封装调整为 `results` 数组：每个批次会尝试
+解析为 JSON，无法解析的模型输出仍以原文字符串保留，避免批次结果丢失；Markdown
+下载和消息区展示保持不变。
+
+验证：前端 TypeScript 生产构建、Web UI 静态回归和专利小 A 相关后端回归通过。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量
