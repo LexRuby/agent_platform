@@ -433,6 +433,17 @@ class TestSrcLeaderTeam:
             "当前选中的长名称仍被截断，无法完整显示"
         )
 
+    def test_patent_extraction_batch_runtime_contract(self):
+        """提取小A必须有前端切片、串行等待和 JSON/Markdown 导出入口。"""
+        batch = _src("utils/patentBatch.ts")
+        hook = _src("hooks/useMessages.ts")
+        chat = _src("components/chat/ChatContent.tsx")
+        assert "PATENT_BATCH_SIZE = 500" in batch
+        assert "PATENT_BATCH_MAX_CHARS" in batch
+        assert "splitPatentExtractionContent" in batch
+        assert "waitForReplyIdle" in hook and "batchPatentExtraction" in hook
+        assert "downloadBatch('json')" in chat and "downloadBatch('md')" in chat
+
     def test_team_panels_present(self):
         """团队互动流程图与团队面板组件必须存在。"""
         assert _src_exists("components/panel/TeamFlowPanel.tsx"), "丢失团队互动流程图组件"

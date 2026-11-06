@@ -235,6 +235,15 @@ export function ChatViewport({
 	const [panelLayout, setPanelLayout] = useState<PanelKey[][]>(loadPanelLayout);
 	// 布局模式（focused/classic），持久化，默认 focused
 	const [layoutMode, setLayoutMode] = useState<LayoutMode>(loadLayoutMode);
+	// 当前 agent 的配置决定是否启用专利提取批处理。
+	const { agents } = useAgents();
+	const agentRecord = useMemo(
+		() => agents.find((a) => a.id === agentId) ?? null,
+		[agents, agentId],
+	);
+	const isPatentExtraction = agentRecord?.data.system_prompt.includes(
+		'agentforge-profile: patent-technology-extraction',
+	) ?? false;
 
 	useEffect(() => {
 		localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(panelLayout));
@@ -274,6 +283,7 @@ export function ChatViewport({
 		restartFlow,
 	} = useMessages(agentId, sessionId, {
 		onTeamUpdated: handleTeamUpdated,
+		batchPatentExtraction: isPatentExtraction,
 	});
 	const {
 		mcps,
@@ -374,11 +384,6 @@ export function ChatViewport({
 
 	// 当前 agent 的记录：判定主理人（大A）/成员（小A）并取显示名。
 	// `useAgents` 在此独立拉取全量列表，与外层页面的实例互不影响。
-	const { agents } = useAgents();
-	const agentRecord = useMemo(
-		() => agents.find((a) => a.id === agentId) ?? null,
-		[agents, agentId],
-	);
 	const isLeader = agentRecord?.agent_type === 'leader';
 	const leaderName = agentRecord?.data.name ?? '主理人';
 
@@ -1197,6 +1202,7 @@ export function ChatViewport({
 										view !== null && !modelsLoading && selectedModel === null
 									}
 									onConfigureModel={() => setCredentialOpen(true)}
+									batchMode={isPatentExtraction}
 									onSend={send}
 									onUserConfirm={onUserConfirm}
 									onInterrupt={interrupt}

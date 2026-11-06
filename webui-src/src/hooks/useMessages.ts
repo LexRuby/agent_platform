@@ -16,6 +16,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { sessionApi, takeFreshlyCreated } from '@/api';
 import { chatApi } from '@/api';
 import { useAudioManager } from '@/context/AudioContext';
+import { splitPatentExtractionContent } from '@/utils/patentBatch';
 import { uuid } from '@/utils/uuid';
 
 /**
@@ -111,6 +112,8 @@ export function useMessages(
 	agentId: string | null,
 	sessionId: string | null,
 	options?: {
+		/** Enable bounded, sequential batching for the patent extraction agent. */
+		batchPatentExtraction?: boolean;
 		/**
 		 * Called when a ``CUSTOM`` event with ``name="team_updated"``
 		 * arrives — the team membership has changed (TeamCreate /
@@ -138,6 +141,7 @@ export function useMessages(
 	// 重新拉取历史（SSE 连接也随之重建），无需切换会话。
 	const [reloadToken, setReloadToken] = useState(0);
 	const [phase, setPhase] = useState<ReplyPhase>('idle');
+	const phaseRef = useRef<ReplyPhase>('idle');
 	const [error, setError] = useState<Error | null>(null);
 	// Pending subagent HITL cards projected onto this (leader) session.
 	const [subagentHitl, setSubagentHitl] = useState<SubagentHitlEntry[]>([]);
@@ -163,6 +167,9 @@ export function useMessages(
 	useEffect(() => {
 		optionsRef.current = options;
 	}, [options]);
+	useEffect(() => {
+		phaseRef.current = phase;
+	}, [phase]);
 	const scheduleUpdate = useCallback(() => {
 		if (rafRef.current !== null) return;
 		rafRef.current = requestAnimationFrame(() => {
@@ -396,7 +403,7 @@ export function useMessages(
 	 */
 	const send = useCallback(
 		async (content: ContentBlock[]) => {
-			if (!agentId || !sessionId) return;
+			if (!agentId || !sessionId) return false;
 
 			const userMsg = UserMsg({ name: 'user', content });
 			msgsRef.current = [...msgsRef.current, userMsg];
@@ -410,9 +417,49 @@ export function useMessages(
 				});
 			} catch (e) {
 				setError(e as Error);
+				return false;
 			}
+			return true;
 		},
 		[agentId, sessionId, scheduleUpdate],
+	);
+
+	const waitForReplyIdle = useCallback(async () => {
+		let sawStreaming = false;
+		const startedAt = Date.now();
+		const deadline = Date.now() + 10 * 60 * 1000;
+		while (Date.now() < deadline) {
+			if (phaseRef.current === 'streaming' || phaseRef.current === 'interrupting') sawStreaming = true;
+			// A very short reply can start and finish between polling ticks;
+			// after a small grace period, idle is also a valid completion.
+			if (phaseRef.current === 'idle' && (sawStreaming || Date.now() - startedAt > 1000)) return;
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		throw new Error('批次处理等待超时');
+	}, []);
+
+	const sendPatentExtractionBatch = useCallback(
+		async (content: ContentBlock[]) => {
+			const chunks = splitPatentExtractionContent(content);
+			if (chunks.length === 1) return send(content);
+			for (const chunk of chunks) {
+				if (!(await send(chunk))) return false;
+				await waitForReplyIdle();
+			}
+			return true;
+		},
+		[send, waitForReplyIdle],
+	);
+
+	const sendWithBatching = useCallback(
+		async (content: ContentBlock[]) => {
+			if (optionsRef.current?.batchPatentExtraction) {
+				await sendPatentExtractionBatch(content);
+				return;
+			}
+			await send(content);
+		},
+		[send, sendPatentExtractionBatch],
 	);
 
 	/**
@@ -580,7 +627,7 @@ export function useMessages(
 		loading,
 		phase: ownsConversation ? phase : ('idle' as ReplyPhase),
 		error: ownsConversation ? error : null,
-		send,
+		send: sendWithBatching,
 		onUserConfirm,
 		onSubagentConfirm,
 		subagentHitl: ownsConversation ? subagentHitl : [],

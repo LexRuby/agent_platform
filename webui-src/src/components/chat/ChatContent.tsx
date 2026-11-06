@@ -6,7 +6,7 @@ import {
 	type TextBlock,
 	type ToolCallBlock,
 } from '@agentscope-ai/agentscope/message';
-import { AlertTriangle, KeyRound, Play, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, Download, FileJson, KeyRound, Play, TriangleAlert } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { Button } from '../ui/button';
@@ -100,6 +100,8 @@ interface ChatContentProps {
 	modelUnavailable?: boolean;
 	/** Opens the model-credential setup flow. */
 	onConfigureModel?: () => void;
+	/** Shows bounded-batch export actions for the patent extraction agent. */
+	batchMode?: boolean;
 }
 
 const ChatContentComponent: React.FC<ChatContentProps> = ({
@@ -125,6 +127,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	onCwdChange,
 	modelUnavailable = false,
 	onConfigureModel,
+	batchMode = false,
 }) => {
 	const { t } = useTranslation();
 	// Only a session that finished loading with nothing in it is empty.
@@ -154,6 +157,28 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 			.filter((tc) => tc.state === 'asking')
 			.map((tc) => ({ replyId: lastMsg.id, toolCall: tc }));
 	}, [msgs]);
+
+	const batchAssistantText = useMemo(
+		() => msgs
+			.filter((message) => message.role === 'assistant')
+			.flatMap((message) => getContentBlocks(message, 'text'))
+			.map((block) => block.text)
+			.join('\n\n'),
+		[msgs],
+	);
+
+	const downloadBatch = (format: 'json' | 'md') => {
+		const body = format === 'json'
+			? JSON.stringify({ result: batchAssistantText }, null, 2)
+			: batchAssistantText;
+		const blob = new Blob([body], { type: format === 'json' ? 'application/json' : 'text/markdown' });
+		const url = URL.createObjectURL(blob);
+		const anchor = document.createElement('a');
+		anchor.href = url;
+		anchor.download = `patent-extraction-result.${format}`;
+		anchor.click();
+		URL.revokeObjectURL(url);
+	};
 
 	// On an empty session the prompt and the input centre together, so every box
 	// down to the message list shrinks to its content instead of filling.
@@ -240,6 +265,16 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 
 			{loading ? null : (
 				<div className="relative min-w-full max-w-full w-full">
+					{batchMode && batchAssistantText && (
+						<div className="mb-2 flex justify-end gap-1.5">
+							<Button variant="outline" size="xs" onClick={() => downloadBatch('json')} title="下载 JSON">
+								<FileJson className="size-3.5" /> JSON
+							</Button>
+							<Button variant="outline" size="xs" onClick={() => downloadBatch('md')} title="下载 Markdown">
+								<Download className="size-3.5" /> Markdown
+							</Button>
+						</div>
+					)}
 					{modelUnavailable ? (
 						<Alert className="mb-2 border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-50">
 							<KeyRound />
