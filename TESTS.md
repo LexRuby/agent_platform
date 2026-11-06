@@ -841,6 +841,19 @@ JSON 或 Markdown。
 无浏览器自动化依赖，因此未伪造“浏览器点击通过”；线上资产和登录链路已做 HTTP
 验证，批处理切片逻辑由构建和静态回归覆盖。
 
+### 50. 专利小 A 后端工具装配与真实回归（2026-11-06）
+
+重启 `agentforge-svc` 加载已测试的工具工厂和能力展示修复。线上能力接口实测：
+
+- 提取 Agent：仅平台基础工具 + `SolidifySkill`，`web_search_enabled=false`。
+- 分析 Agent：平台基础工具、`SolidifySkill`、`search_patents`、
+  `get_patent_details`、`search_journals`、三个专利质量检查工具和
+  `anysearch_search`，`web_search_enabled=true`。
+
+低并发串行真实 smoke 通过：提取 Agent 返回 421 字符，分析 Agent 返回 2891
+字符；两个临时会话均以 HTTP 204 清理。首次运行的沙箱网络失败不计入结果，使用
+受限网络权限复测通过。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量
