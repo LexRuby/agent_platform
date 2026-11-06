@@ -53,6 +53,7 @@ from app.auth import (
 )
 from app.ark_credential import ArkCredential, sync_ark_models
 from app.chat_error_diagnostics import patch_chat_setup_diagnostics
+from app.context_policy import ContextPolicyAgent
 from app.leader_team import LeaderTeamMiddleware, leader_team_router
 from app.local_skill_hub import LocalSkillHub
 from app.prompt_templates import (
@@ -142,6 +143,7 @@ app = create_app(
     # 全局工具：SolidifySkill（技能固化，官方扩展点——每次会话组装
     # toolkit 时工厂产出实例，workspace_manager 见下方注入）
     extra_agent_tools=_solidify_factory,
+    custom_agent_cls=ContextPolicyAgent,
 )
 
 # 官方 app 原始引用：team_archive 等叠加层进程内调用官方端点用
@@ -197,6 +199,22 @@ patch_patent_observations(storage)
 # 运行时技能沉淀 SOP 注入：所有 agent（大A/小A/AgentCreate 成员/
 # 存量）聊天时 system_prompt 自动带技能沉淀环节——不污染存储提示词
 patch_runtime_sop()
+
+# OpenTelemetry 可观测性（AGENTFORGE_OTLP_* 环境变量开关，未配置零开销）：
+# traces → Jaeger（Agent/LLM/工具 + HTTP 入口全链路）、metrics → Prometheus
+# （HTTP RED + LLM 延迟/token 用量）。Agent 中间件走同一 SOP patch 模式，
+# 大A/小A 全覆盖；与 usage_metering（Redis 计量 + 查询 API）互补。
+from app.observability import (  # noqa: E402
+    ObservabilityASGIMiddleware,
+    patch_runtime_observability,
+    setup_observability,
+)
+
+setup_observability(
+    os.environ.get("AGENTFORGE_OTLP_TRACES_ENDPOINT", ""),
+    os.environ.get("AGENTFORGE_OTLP_METRICS_ENDPOINT", ""),
+)
+patch_runtime_observability()
 
 # 提示词模板：列表 API + 注入 /agent/schema/v2（前端据此渲染模板下拉）
 app.include_router(prompt_templates_router)
@@ -255,22 +273,26 @@ from app.spa_static import SPAPageFallbackMiddleware  # noqa: E402
 # SPAPageFallbackMiddleware（鉴权内层）：浏览器刷新 /mcp、/skill 等与
 # API 路径冲突的前端页面时返回 index.html 而不是 JSON；未登录仍先跳 /login
 app = _StartupHook(
-    AuthMiddleware(
-        WorkspaceBoundaryMiddleware(
-            SPAPageFallbackMiddleware(
-                PromptTemplateSchemaMiddleware(
-                    AgentVersionMiddleware(
-                        AgentShareDeleteCleanupMiddleware(
-                            LeaderTeamMiddleware(AgentTypeMiddleware(app)),
-                            storage,
+    # HTTP 入口可观测（最外层）：全请求 server span + RED 指标，
+    # 未启用时直接透传
+    ObservabilityASGIMiddleware(
+        AuthMiddleware(
+            WorkspaceBoundaryMiddleware(
+                SPAPageFallbackMiddleware(
+                    PromptTemplateSchemaMiddleware(
+                        AgentVersionMiddleware(
+                            AgentShareDeleteCleanupMiddleware(
+                                LeaderTeamMiddleware(AgentTypeMiddleware(app)),
+                                storage,
+                            ),
                         ),
                     ),
+                    index_path=str(_web_dir / "index.html"),
                 ),
-                index_path=str(_web_dir / "index.html"),
+                # WorkspaceService is attached by AgentScope's lifespan, after
+                # this middleware stack is constructed. Resolve it per request.
+                lambda: _official_app.state.workspace_service,
             ),
-            # WorkspaceService is attached by AgentScope's lifespan, after
-            # this middleware stack is constructed. Resolve it per request.
-            lambda: _official_app.state.workspace_service,
         ),
     ),
 )
