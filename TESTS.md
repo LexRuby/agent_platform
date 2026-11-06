@@ -820,6 +820,15 @@ Redis seed 5 条消息 → truncate 保留 3 归档 2 → flow-archive 副本
 两个 Agent 的临时会话均实际删除；线上删除接口仍返回已知 HTTP 500，
 原因与第 46 节相同，待会话清理修复部署后消除。
 
+### 48. 大 A / 小 A 选择器线上发布验收（2026-11-06）
+
+本地前端选择器测试 `92 passed, 2 skipped`，生产构建通过；先启动独立
+`30001` 预览供用户登录验收，确认类型切换、分组、最近互动排序和长名称显示后，
+按增量方式将 `webui-src/dist` 更新到线上 `30000` 的 `webui/` 目录。
+
+线上验证：通过 `30000/auth/login` 登录成功，登录后首页返回本次构建的
+`index-BNv1_ixo.js`；`30001` 临时预览随后关闭，未停止或重启线上服务。
+
 ## 维护规则
 
 1. **改哪个模块，跑哪个模块的测试 + 全量**：改 `app/auth.py` → `pytest tests/test_auth_unit.py tests/test_auth_api.py` 后再 `pytest` 全量
