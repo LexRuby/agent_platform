@@ -5,11 +5,16 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import svgr from 'vite-plugin-svgr';
 
+const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000';
+
 export default defineConfig({
 	plugins: [react(), tailwindcss(), svgr()],
 	server: {
 		proxy: {
-			'/api': 'http://localhost:3000',
+			'/api': {
+				target: apiProxyTarget,
+				changeOrigin: true,
+			},
 		},
 	},
 	resolve: {
