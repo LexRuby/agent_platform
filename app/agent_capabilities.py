@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from .patent_search_tools import (
     PATENT_AGENT_PROFILE_MARKER,
+    PATENT_ANALYSIS_PROFILE_MARKER,
     _DEFAULT_TOOL_NAMES,
     _tool_specs,
 )
@@ -104,7 +105,10 @@ async def get_agent_capabilities(
         ),
     ]
     prompt = agent.data.system_prompt or ""
-    is_patent = PATENT_AGENT_PROFILE_MARKER in prompt
+    is_patent = any(
+        marker in prompt
+        for marker in (PATENT_AGENT_PROFILE_MARKER, PATENT_ANALYSIS_PROFILE_MARKER)
+    )
     is_paper = PAPER_AGENT_PROFILE_MARKER in prompt
     if is_patent:
         specs = _tool_specs()
@@ -124,6 +128,15 @@ async def get_agent_capabilities(
                 [(tool.name, tool.description) for tool in patent_quality_tools()],
             ),
         )
+        if PATENT_ANALYSIS_PROFILE_MARKER in prompt:
+            groups.append(
+                _group(
+                    "web-search",
+                    "联网检索",
+                    "专利分析配置",
+                    [(ANYSEARCH_TOOL_NAME, ANYSEARCH_DESCRIPTION)],
+                ),
+            )
 
     if is_paper:
         specs = _tool_specs()
@@ -142,13 +155,13 @@ async def get_agent_capabilities(
 
     notes = ["会话中临时安装的 MCP 和技能会在对应会话内追加。"]
     if is_patent:
-        notes.append("当前专利写作配置没有通用互联网搜索工具。")
+        notes.append("专利分析配置可按需使用专利、期刊和联网检索；提取配置不装检索工具。")
     if is_paper:
         notes.append("论文写作配置优先使用期刊检索，并用 AnySearch 补充和交叉核验。")
     return AgentCapabilitiesResponse(
         agent_id=agent_id,
         agent_name=agent.data.name,
         groups=groups,
-        web_search_enabled=is_paper,
+        web_search_enabled=is_paper or PATENT_ANALYSIS_PROFILE_MARKER in prompt,
         notes=notes,
     )

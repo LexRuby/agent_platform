@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import pytest
 
 from app import agent_capabilities as capabilities
-from app.patent_search_tools import PATENT_AGENT_PROFILE_MARKER
+from app.patent_search_tools import PATENT_AGENT_PROFILE_MARKER, PATENT_ANALYSIS_PROFILE_MARKER
 from app.paper_writing_tools import PAPER_AGENT_PROFILE_MARKER
 
 
@@ -40,7 +40,24 @@ async def test_patent_agent_capabilities_are_visible():
     }
     assert {"Read", "search_patents", "get_patent_details", "check_claim_support"} <= names
     assert body["web_search_enabled"] is False
-    assert any("没有通用互联网搜索" in note for note in body["notes"])
+    assert any("提取配置不装检索工具" in note for note in body["notes"])
+
+
+@pytest.mark.asyncio
+async def test_patent_analysis_capabilities_enable_web_search():
+    capabilities.init_agent_capabilities(_Storage(PATENT_ANALYSIS_PROFILE_MARKER))
+    response = await capabilities.get_agent_capabilities("a1", "alice")
+    body = response.model_dump()
+    names = {
+        tool["name"]
+        for group in body["groups"]
+        for tool in group["tools"]
+    }
+    assert {
+        "search_patents", "get_patent_details", "search_journals",
+        "check_claim_support", "anysearch_search",
+    } <= names
+    assert body["web_search_enabled"] is True
 
 
 @pytest.mark.asyncio
