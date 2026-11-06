@@ -65,6 +65,28 @@ class TestDeployedWebui:
         assert "/@vite/client" not in html, "index.html 引用了 /@vite/client——误部署了开发构建"
 
 
+class TestMessageArtifacts:
+    """智能体在消息中交付的相对文件名必须能直接触发下载。"""
+
+    def test_artifact_download_entrypoint_exists(self):
+        content = _src("components/chat/ChatContent.tsx")
+        helper = _src("utils/messageArtifacts.ts")
+        assert "extractMessageArtifacts" in content
+        assert "workspaceApi.download(agentId, sessionId, path)" in content
+        assert "messageArtifacts" in content
+        assert "!path.startsWith('/')" in helper
+        assert "!path.includes('..')" in helper
+
+    def test_workspace_artifact_tab_lists_and_downloads(self):
+        panel = _src("components/panel/ArtifactPanel.tsx")
+        tabs = _src("components/panel/ResourceTabsPanel.tsx")
+        viewport = _src("pages/chat/ChatViewport.tsx")
+        assert "workspaceApi.directories(agentId, sessionId, path)" in panel
+        assert "workspaceApi.download(agentId, sessionId, path)" in panel
+        assert "key: 'artifacts'" in tabs and "tab === 'artifacts'" in tabs
+        assert "<ArtifactPanel agentId={agentId} sessionId={sessionId}" in viewport
+
+
 class TestSrcChatWidthAlignment:
     """对话列与顶栏同宽对齐（2026-09-07 宽度错位回归锁）。
 

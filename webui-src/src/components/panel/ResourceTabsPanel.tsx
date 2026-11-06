@@ -6,14 +6,14 @@
  * 数据绑定由 ChatViewport 完成，本组件只做 Tab 壳（与 PanelDock
  * 的 descriptor 思路一致，保持布局组件零业务依赖）。
  */
-import { BookText, Database } from 'lucide-react';
+import { Archive, BookText, Database } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
 import MCPSvg from '@/assets/images/mcp.svg?react';
 import { Badge } from '@/components/ui/badge';
 import { useTranslation } from '@/i18n/useI18n';
 
-type Tab = 'mcp' | 'skill' | 'knowledge';
+type Tab = 'mcp' | 'skill' | 'knowledge' | 'artifacts';
 
 interface Props {
         /** MCP Tab 内容（<McpPanel …/>）。 */
@@ -22,6 +22,8 @@ interface Props {
         skill: ReactNode;
         /** 知识库 Tab 内容（<KnowledgeBasePanel …/>）。 */
         knowledge: ReactNode;
+        /** 当前会话/项目工作区的文件产物。 */
+        artifacts: ReactNode;
         /** 知识库 Tab 的工具按钮（参数弹窗），渲染在 Tab 栏右侧。 */
         knowledgeActions?: ReactNode;
         /** 各 Tab 徽章计数（当前会话已加载数量）。 */
@@ -38,6 +40,7 @@ export function ResourceTabsPanel({
         mcpCount = 0,
         skillCount = 0,
         knowledgeCount = 0,
+        artifacts,
 }: Props) {
         const { t } = useTranslation();
         const [tab, setTab] = useState<Tab>('mcp');
@@ -56,6 +59,7 @@ export function ResourceTabsPanel({
                         icon: <Database className="size-3.5" />,
                         count: knowledgeCount,
                 },
+                { key: 'artifacts', label: '产物', icon: <Archive className="size-3.5" />, count: 0 },
         ];
 
         return (
@@ -92,6 +96,7 @@ export function ResourceTabsPanel({
                                 {tab === 'mcp' && mcp}
                                 {tab === 'skill' && skill}
                                 {tab === 'knowledge' && knowledge}
+                                {tab === 'artifacts' && artifacts}
                         </div>
                 </div>
         );

@@ -28,6 +28,7 @@ import { SubagentHitlCard } from '@/components/chat/SubagentHitlCard';
 import { ArchiveDialog } from '@/components/dialog/ArchiveDialog';
 import { CreateCredentialDialog } from '@/components/dialog/CreateCredentialDialog';
 import { DeleteDialog } from '@/components/dialog/DeleteDialog';
+import { ArtifactPanel } from '@/components/panel/ArtifactPanel';
 import { KnowledgeBasePanel } from '@/components/panel/KnowledgeBasePanel';
 import { McpPanel } from '@/components/panel/McpPanel';
 import { PanelDock, type PanelDescriptor, type PanelKey } from '@/components/panel/PanelDock.tsx';
@@ -549,6 +550,7 @@ export function ChatViewport({
 					disabled={!sessionId}
 				/>
 			),
+			artifacts: <ArtifactPanel agentId={agentId} sessionId={sessionId} />,
 		}),
 		[
 			mcps,
@@ -564,6 +566,7 @@ export function ChatViewport({
 			knowledgeBases,
 			knowledgeBasesLoading,
 			selectedKnowledgeConfig,
+			agentId,
 			handleKnowledgeConfigChange,
 			sessionId,
 		],
@@ -1323,6 +1326,7 @@ export function ChatViewport({
 									mcp={resourceContent.mcp}
 									skill={resourceContent.skill}
 									knowledge={resourceContent.knowledge}
+									artifacts={resourceContent.artifacts}
 									knowledgeActions={knowledgeActions}
 									mcpCount={mcps.length}
 									skillCount={skills.length}

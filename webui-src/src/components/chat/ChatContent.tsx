@@ -6,10 +6,11 @@ import {
 	type TextBlock,
 	type ToolCallBlock,
 } from '@agentscope-ai/agentscope/message';
-import { AlertTriangle, Download, FileJson, KeyRound, Play, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, Download, FileJson, FileText, KeyRound, Play, TriangleAlert } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { Button } from '../ui/button';
+import { workspaceApi } from '@/api/workspace';
 import {
         ASMessageBubble,
         TeamHintCompactContext,
@@ -31,6 +32,7 @@ import { Spinner } from '@/components/ui/spinner';
 import type { ReplyPhase } from '@/hooks/useMessages';
 import { useTranslation } from '@/i18n/useI18n';
 import { cn } from '@/lib/utils';
+import { extractMessageArtifacts } from '@/utils/messageArtifacts';
 import { uuid } from '@/utils/uuid';
 
 /** How long a load may run before it is worth showing a spinner. */
@@ -140,6 +142,8 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 	// gone on long enough to be worth reporting. The gap renders blank,
 	// which is invisible at this duration.
 	const [showSpinner, setShowSpinner] = useState(false);
+	const [downloadingArtifact, setDownloadingArtifact] = useState<string | null>(null);
+	const [artifactError, setArtifactError] = useState<string | null>(null);
 	useEffect(() => {
 		if (!loading) {
 			setShowSpinner(false);
@@ -190,6 +194,19 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 		URL.revokeObjectURL(url);
 	};
 
+	const downloadArtifact = async (path: string) => {
+		if (!agentId || !sessionId) return;
+		setDownloadingArtifact(path);
+		setArtifactError(null);
+		try {
+			await workspaceApi.download(agentId, sessionId, path);
+		} catch {
+			setArtifactError(`无法下载 ${path}，请确认文件仍在当前会话工作区内。`);
+		} finally {
+			setDownloadingArtifact(null);
+		}
+	};
+
 	// On an empty session the prompt and the input centre together, so every box
 	// down to the message list shrinks to its content instead of filling.
 	return (
@@ -216,7 +233,7 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 							<MessageScrollerContent>
 								{msgs.map((message) => (
 									<MessageScrollerItem key={message.id} messageId={message.id}>
-										<ASMessageBubble
+									<ASMessageBubble
 											key={message.id}
 											message={message}
 											onUserConfirm={onUserConfirm}
@@ -225,6 +242,30 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 												phase === 'idle' ? onTruncateAt : undefined
 											}
 										/>
+									{message.role === 'assistant' && agentId && sessionId && (() => {
+										const artifacts = extractMessageArtifacts(
+											getContentBlocks(message, 'text').map((block) => block.text).join('\n'),
+										);
+										if (artifacts.length === 0) return null;
+										return (
+											<div className="mt-1 flex flex-wrap gap-1.5 px-2">
+												{artifacts.map((path) => (
+													<Button
+														key={path}
+														variant="outline"
+														size="xs"
+														disabled={downloadingArtifact === path}
+														onClick={() => void downloadArtifact(path)}
+														title={`下载 ${path}`}
+													>
+														<FileText className="size-3.5" />
+														<span className="max-w-64 truncate">{path}</span>
+														<Download className="size-3" />
+													</Button>
+												))}
+											</div>
+										);
+									})()}
 									</MessageScrollerItem>
 								))}
 								{msgs.length > 0 &&
@@ -284,6 +325,9 @@ const ChatContentComponent: React.FC<ChatContentProps> = ({
 								<Download className="size-3.5" /> Markdown
 							</Button>
 						</div>
+					)}
+					{artifactError && (
+						<div className="mb-2 text-right text-xs text-destructive">{artifactError}</div>
 					)}
 					{modelUnavailable ? (
 						<Alert className="mb-2 border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-50">
