@@ -56,6 +56,35 @@ bash scripts/build_webui.sh   # 源码在 webui-src/，产物输出到 webui/
 - `agentforge-svc.service`：主服务（agent_service_app.py，:30000）
 - `agentforge-smart-writing.service`：智能写作 MCP（:30110）
 
+重启主服务：`sudo systemctl restart agentforge-svc`
+
+## 可观测性（Jaeger + Prometheus）
+
+一键部署链路追踪与指标后端（Docker Compose，数据落盘，重启不丢）：
+
+```bash
+bash deploy/observability/start.sh     # 启动（自动拉起容器并等就绪）
+bash deploy/observability/restart.sh   # 重启（trace/指标不丢）
+bash deploy/observability/stop.sh      # 停止（保留数据）
+bash deploy/observability/stop.sh --purge  # 彻底删除（含全部历史数据，慎用）
+```
+
+启动后打开：
+
+- Jaeger UI（调用链）：http://116.204.102.229:16686 ，Service 选 `agentforge`
+- Prometheus（指标）：http://116.204.102.229:9090 ，常用查询
+  `agentforge_http_requests_total`、`agentforge_llm_tokens_total`、`agentforge_llm_latency_seconds_bucket`
+
+说明：
+
+- 平台通过 `.env` 上报：`AGENTFORGE_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces`、
+  `AGENTFORGE_OTLP_METRICS_ENDPOINT=http://127.0.0.1:9090/api/v1/otlp/v1/metrics`；
+  `deploy/observability/start.sh` 会检查并提示缺失的接入配置，留空则零开销
+  （改后需 `sudo systemctl restart agentforge-svc` 生效）
+- Jaeger 用 badger 磁盘存储（命名卷），Prometheus 历史保留 7 天；服务器重启后
+  容器自动拉起（`restart: unless-stopped`），数据完整保留
+- 前置条件：Docker + docker compose v2；无需外网（已用国内镜像源）
+
 ## AgentScope Studio（可视化追踪面板）
 
 ```bash
