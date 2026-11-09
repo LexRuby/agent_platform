@@ -332,14 +332,17 @@ def patch_runtime_sop() -> None:
     模块属性即可让所有后续构造的 ChatService 实例都使用包装类。
     幂等：重复调用不叠加包装。
     """
-    from agentscope.agent import Agent as OfficialAgent
     from agentscope.app._service import _chat
 
     if getattr(_chat.Agent, "_agentforge_sop_injected", False):
         return  # 已 patch（幂等）
 
-    class SopAgent(OfficialAgent):
-        """官方 Agent 包装：system_prompt 追加技能沉淀 SOP（查重）。"""
+    class SopAgent(_chat.Agent):
+        """当前 Agent 包装：system_prompt 追加技能沉淀 SOP（查重）。
+
+        继承当前 ``_chat.Agent`` 而非官方基类——与 observability 等
+        其他运行时 patch 任意顺序组合均不丢层。
+        """
 
         _agentforge_sop_injected = True
 
