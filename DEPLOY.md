@@ -285,7 +285,102 @@ bug（第二轮对话起 setup 失败），详见 TESTS.md 第 21 节。后端�
 
 ***
 
-## 七、参考
+## 七、日常运维手册（2026-11-09 补充）
+
+### 7.1 服务清单与重启命令总表
+
+平台共 **5 个常驻服务**，分两类管理（systemd / Docker）：
+
+| 服务 | 端口 | 作用 | 管理方式 |
+|---|---|---|---|
+| `agentforge-svc` | :30000 | 主服务（Web UI + API） | systemd |
+| `agentforge-smart-writing` | :30110 | 智能写作 MCP Server | systemd |
+| `agentforge-redis` | :6379 | 存储后端（会话/共享索引/凭证摘要） | Docker 单容器 |
+| `agentforge-jaeger` | :16686 / :4318 | 链路追踪（trace 存储 + UI） | Docker Compose |
+| `agentforge-prometheus` | :9090 | 指标（token 用量/延迟/RED） | Docker Compose |
+
+**systemd 服务**（改代码 / 改 `.env` 后重启主服务用这个）：
+
+```bash
+sudo systemctl restart agentforge-svc             # 重启主服务（最常用）
+systemctl status agentforge-svc                   # 查状态
+journalctl -u agentforge-svc -f --since "5 min ago"   # 看实时日志
+
+sudo systemctl restart agentforge-smart-writing   # 重启写作 MCP
+```
+
+**Docker 服务**：
+
+```bash
+docker restart agentforge-redis                   # 重启 Redis（会话数据不丢，落 AOF/RDB）
+```
+
+**可观测性后端**（推荐用脚本，会自动等就绪 + 检查接入配置）：
+
+```bash
+bash deploy/observability/start.sh        # 启动（首次部署 / 清卷后）
+bash deploy/observability/restart.sh      # 重启（trace/指标不丢）
+bash deploy/observability/stop.sh         # 停止（保留数据）
+bash deploy/observability/stop.sh --purge # 彻底删除容器+数据（慎用）
+```
+
+**前端重建**（改 `webui-src/` 源码后）：
+
+```bash
+bash scripts/build_webui.sh               # 构建 + 增量部署到 webui/（无需重启后端）
+```
+
+### 7.2 服务器整机重启后会怎样
+
+**什么都不用手动做。**全部服务自动恢复：
+
+- systemd 服务：开机自启（`enable` 过）
+- 三个 Docker 容器：`restart: unless-stopped` 策略，Docker 守护进程自动拉起
+
+数据完整性（均已落盘）：业务数据（磁盘文件 + Redis 持久化）、Jaeger trace（badger 卷）、
+Prometheus 指标（数据卷）全部保留。重启后等 1-2 分钟服务就绪即可正常使用。
+
+### 7.3 数据都在哪、什么操作会丢什么
+
+| 数据 | 存储位置 | 什么情况会丢 |
+|---|---|---|
+| Agent/会话/技能/发布物/账号 | 磁盘文件 + Redis | 仅磁盘故障（无备份机制） |
+| 链路 trace | Docker 卷 `jaeger-badger` | 仅 `stop.sh --purge`（显式删除） |
+| 指标历史 | Docker 卷 `prometheus-data` | 同上；另外自动保留 7 天滚动过期 |
+| 登录会话（Cookie） | Redis 内存 + 持久化 | `docker restart redis` 后仍有效；Redis 数据目录删除才失效（重新登录即可） |
+
+> 注意：**正常操作没有数据丢失路径**。`stop.sh`（不带 --purge）、`restart.sh`、
+> 服务器重启、主服务重启，全都不丢观测数据。
+
+### 7.4 常见问题（FAQ）
+
+**Q：Jaeger 是什么？**
+CNCF 开源的分布式链路追踪后端，相当于"录像机"——把每次请求的完整调用过程
+（HTTP 入口 → 大A 拆解 → 小A 执行 → LLM/工具调用）以 span 树存下来供回放。
+浏览器打开 `http://<服务器IP>:16686`，Service 选 `agentforge` 即可查看。
+
+**Q：改了 `.env` 为什么不生效？**
+配置只在启动时加载。改完必须 `sudo systemctl restart agentforge-svc`。
+
+**Q：平台界面打不开 / 接口全 401？**
+按顺序排查：`systemctl status agentforge-svc`（服务挂没挂）→
+`docker ps | grep redis`（Redis 活着没）→ `journalctl -u agentforge-svc -n 100`（看报错）。
+
+**Q：可观测性后端没数据？**
+① 容器活着没：`docker ps | grep agentforge-`；② `.env` 里两个上报端点配了没
+（`AGENTFORGE_OTLP_TRACES_ENDPOINT` / `AGENTFORGE_OTLP_METRICS_ENDPOINT`，
+正确值见 README「可观测性」节）；③ 改过 `.env` 要重启主服务。
+
+**Q：内存够用吗？**
+观测后端合计 <50MB（Jaeger 17MB + Prometheus 28MB），且 badger 落盘后
+内存占用恒定不随 trace 数增长，各自有硬上限（512m/256m）。
+
+**Q：磁盘满了怎么清理？**
+`du -xh --max-depth=2 . 2>/dev/null | sort -h | tail -15` 摸底（在 agentforge 目录）；
+Docker 占用 `docker system df && docker system prune`；conda 缓存
+`conda clean --all -y`。Prometheus 指标 7 天自动过期，不用手动清。
+
+## 八、参考
 
 - 完整决策与验证记录：`trae/2026-09-02_AgentScope选型与提速分析.md`（开发机项目根目录）
 

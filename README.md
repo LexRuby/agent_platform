@@ -58,6 +58,9 @@ bash scripts/build_webui.sh   # 源码在 webui-src/，产物输出到 webui/
 
 重启主服务：`sudo systemctl restart agentforge-svc`
 
+> **全部服务的启动/重启/停止命令、服务器重启行为、数据丢失边界与常见问题排查，
+> 见 [DEPLOY.md](DEPLOY.md) 第七节「日常运维手册」。**
+
 ## 可观测性（Jaeger + Prometheus）
 
 一键部署链路追踪与指标后端（Docker Compose，数据落盘，重启不丢）：
