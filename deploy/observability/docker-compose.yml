@@ -1,0 +1,34 @@
+name: agentforge-observability
+
+# Agent Forge 可观测性后端（轻量双组件，适配 ~1GB 可用内存）
+# - jaeger:      traces 后端 + UI（OTLP HTTP 4318 接收，内存存储）
+# - prometheus:  metrics 后端（原生 OTLP write 接收，保留 7 天）
+services:
+  jaeger:
+    # 国内镜像源（原镜像 jaegertracing/all-in-one；此服务器直连 Docker Hub 超时）
+    image: docker.1ms.run/jaegertracing/all-in-one:latest
+    container_name: agentforge-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      # 内存存储：重启即清空（研究场景够用；生产可换 badger/es）
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4318:4318" # OTLP HTTP（traces）
+    mem_limit: 512m
+
+  prometheus:
+    # 国内镜像源（原镜像 prom/prometheus:v2.54.1）
+    image: docker.m.daocloud.io/prom/prometheus:v2.54.1
+    container_name: agentforge-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      # 2.x 的 OTLP 接收是 feature flag（3.0 起才是 --web.enable-otlp-receiver）
+      - --enable-feature=otlp-write-receiver
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090" # UI + OTLP write
+    mem_limit: 256m

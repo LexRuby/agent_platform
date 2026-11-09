@@ -17,6 +17,11 @@ def setup_tracing(studio_url: str) -> bool:
     global _configured
     if _configured or not studio_url:
         return False
+    # 可观测性（app.observability）已装配 SDK provider 时让位，避免
+    # 二次 set_tracer_provider 被忽略后 span 发往错误后端
+    if isinstance(trace.get_tracer_provider(), TracerProvider):
+        _configured = True
+        return False
     provider = TracerProvider()
     provider.add_span_processor(
         BatchSpanProcessor(

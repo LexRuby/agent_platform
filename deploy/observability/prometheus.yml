@@ -1,0 +1,9 @@
+# Prometheus 最小配置：指标经 OTLP write 推送进来（agentforge 服务
+# → http://<host>:9090/api/v1/otlp/v1/metrics），无需抓取任务。
+global:
+  scrape_interval: 30s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

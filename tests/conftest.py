@@ -6,6 +6,19 @@
 - HTTP → starlette TestClient（ASGI 进程内调用，不占端口）
 """
 
+import os as _os
+
+# 可观测性隔离：必须先于任何 app 导入执行。.env 里的 OTLP 端点会被
+# app.settings 的 load_dotenv 注入进程，导致 agent_service_app 导入时
+# 抢占全局 TracerProvider、并把测试 span/指标推到本地 Jaeger/Prometheus。
+# 置空（而非删除）：load_dotenv 默认不覆盖已存在的环境变量。
+for _k in (
+    "AGENTFORGE_OTLP_TRACES_ENDPOINT",
+    "AGENTFORGE_OTLP_METRICS_ENDPOINT",
+    "AGENTFORGE_STUDIO_URL",
+):
+    _os.environ.setdefault(_k, "")
+
 import fakeredis
 import pytest
 from fastapi import FastAPI, Request
