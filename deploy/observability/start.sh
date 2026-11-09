@@ -7,6 +7,12 @@ cd "$(dirname "$0")"
 echo "[1/3] 启动容器（Jaeger + Prometheus）..."
 docker compose up -d
 
+# 修正 badger 数据卷属主（Jaeger 以 uid 10001 运行，新建命名卷默认 root
+# 属主会导致启动失败；幂等，已正确时无副作用）
+docker run --rm -v agentforge-observability_jaeger-badger:/badger --user root \
+  --entrypoint chown docker.1ms.run/jaegertracing/all-in-one:latest \
+  -R 10001:10001 /badger >/dev/null 2>&1 || true
+
 echo "[2/3] 等待就绪..."
 for i in $(seq 1 30); do
   jaeger_ok=0; prom_ok=0

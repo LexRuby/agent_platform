@@ -1,8 +1,8 @@
 name: agentforge-observability
 
 # Agent Forge 可观测性后端（轻量双组件，适配 ~1GB 可用内存）
-# - jaeger:      traces 后端 + UI（OTLP HTTP 4318 接收，内存存储）
-# - prometheus:  metrics 后端（原生 OTLP write 接收，保留 7 天）
+# - jaeger:      traces 后端 + UI（OTLP HTTP 4318 接收，badger 落盘）
+# - prometheus:  metrics 后端（OTLP write 接收，落盘保留 7 天）
 services:
   jaeger:
     # 国内镜像源（原镜像 jaegertracing/all-in-one；此服务器直连 Docker Hub 超时）
@@ -11,7 +11,13 @@ services:
     restart: unless-stopped
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
-      # 内存存储：重启即清空（研究场景够用；生产可换 badger/es）
+      # badger 磁盘存储：trace 落盘持久化，容器/服务器重启不丢
+      SPAN_STORAGE_TYPE: badger
+      BADGER_EPHEMERAL: "false"
+      BADGER_DIRECTORY_VALUE: /badger/data
+      BADGER_DIRECTORY_KEY: /badger/key
+    volumes:
+      - jaeger-badger:/badger
     ports:
       - "16686:16686" # Jaeger UI
       - "4318:4318" # OTLP HTTP（traces）
@@ -29,6 +35,11 @@ services:
       - --enable-feature=otlp-write-receiver
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus # 指标历史落盘（down/重建容器也不丢）
     ports:
       - "9090:9090" # UI + OTLP write
     mem_limit: 256m
+
+volumes:
+  jaeger-badger:
+  prometheus-data:

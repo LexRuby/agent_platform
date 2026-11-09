@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 停止 Agent Forge 可观测性后端（数据保留在容器卷/内存中，stop 不删除）
-# 彻底清理：bash stop.sh --purge（删除容器；Prometheus 历史数据一并丢弃）
+# 停止 Agent Forge 可观测性后端（trace/指标均已落盘，stop 不删除数据）
+# 彻底清理：bash stop.sh --purge（删除容器与数据卷：trace 与指标历史一并丢弃）
 set -euo pipefail
 cd "$(dirname "$0")"
 

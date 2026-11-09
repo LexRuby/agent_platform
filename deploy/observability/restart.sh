@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 重启 Agent Forge 可观测性后端（Prometheus 历史保留；Jaeger 为内存存储会清空）
+# 重启 Agent Forge 可观测性后端（trace 与指标均已落盘，重启不丢）
 # 用法：bash deploy/observability/restart.sh
 set -euo pipefail
 cd "$(dirname "$0")"
