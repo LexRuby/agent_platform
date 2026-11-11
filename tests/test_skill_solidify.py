@@ -547,3 +547,20 @@ class TestRuntimeSopInjection:
             assert received["sp"].startswith("AgentCreate 成员。")
         finally:
             sop_cls.__bases__ = bases
+
+    def test_patch_explicit_base_cls(self):
+        """显式挂载点（custom_agent_cls 场景）：返回包装类且幂等。
+
+        create_app(custom_agent_cls=...) 会让 ChatService.__init__ 固化
+        _agent_cls——patch _chat.Agent 模块属性对该部署形态无效，
+        必须显式包装挂载点类。
+        """
+        from app import skill_solidify
+        from app.context_policy import ContextPolicyAgent
+
+        wrapped = skill_solidify.patch_runtime_sop(ContextPolicyAgent)
+        assert wrapped is not ContextPolicyAgent
+        assert issubclass(wrapped, ContextPolicyAgent)
+        assert getattr(wrapped, "_agentforge_sop_injected", False)
+        # 幂等：对已包装类再 patch 返回原类，不叠加
+        assert skill_solidify.patch_runtime_sop(wrapped) is wrapped

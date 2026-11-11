@@ -350,6 +350,54 @@ def test_patch_agent_disabled_noop(monkeypatch):
     assert _chat.Agent is original
 
 
+def test_patch_explicit_base_cls(monkeypatch):
+    """显式挂载点（custom_agent_cls 场景）：返回包装类并追加中间件。
+
+    ChatService.__init__ 固化 _agent_cls 后，patch _chat.Agent 无效——
+    必须在 create_app 之前包装 custom_agent_cls 并传回。
+    """
+    from agentscope.app._service import _chat
+    from agentscope.middleware import TracingMiddleware
+
+    from app.context_policy import ContextPolicyAgent
+
+    monkeypatch.setattr(obs, "_traces_enabled", True)
+    monkeypatch.setattr(obs, "_metrics_enabled", True)
+    original = _chat.Agent
+
+    wrapped = obs.patch_runtime_observability(ContextPolicyAgent)
+    try:
+        assert wrapped is not ContextPolicyAgent
+        assert issubclass(wrapped, ContextPolicyAgent)
+        assert getattr(wrapped, "_agentforge_observability_injected", False)
+        # 幂等：对已包装类再 patch 返回原类，不叠加
+        assert obs.patch_runtime_observability(wrapped) is wrapped
+        # 显式挂载不碰 _chat.Agent（模块属性不受影响）
+        assert _chat.Agent is original
+
+        # 包装类构造时追加 TracingMiddleware（猴补父类构造拦截）
+        received = {}
+
+        def fake_init(self, *, middlewares=None, **kw):
+            received["middlewares"] = list(middlewares or [])
+
+        monkeypatch.setattr(ContextPolicyAgent, "__init__", fake_init)
+        wrapped(name="x", middlewares=[])
+        assert TracingMiddleware in [type(m) for m in received["middlewares"]]
+    finally:
+        monkeypatch.setattr(obs, "_obs_agent_cls", None)
+
+
+def test_patch_explicit_base_cls_disabled_passthrough(monkeypatch):
+    """未启用时显式挂载点原样透传（调用方可直接传给 create_app）。"""
+    from app.context_policy import ContextPolicyAgent
+
+    monkeypatch.setattr(obs, "_traces_enabled", False)
+    monkeypatch.setattr(obs, "_metrics_enabled", False)
+    out = obs.patch_runtime_observability(ContextPolicyAgent)
+    assert out is ContextPolicyAgent
+
+
 def test_llm_metrics_middleware_passes_agent_filter():
     """LlmMetricsMiddleware 继承官方 MiddlewareBase（is_implemented 过滤）。
 
@@ -361,3 +409,25 @@ def test_llm_metrics_middleware_passes_agent_filter():
     assert m.is_implemented("on_model_call") is True   # 唯一实现钩子
     assert m.is_implemented("on_reply") is False
     assert m.is_implemented("on_reasoning") is False
+
+
+def test_patch_chain_matches_service_app(monkeypatch):
+    """agent_service_app 装配链：SOP → 观测 双层包装共存不丢层。"""
+    from app import skill_solidify
+    from app.context_policy import ContextPolicyAgent
+
+    monkeypatch.setattr(obs, "_traces_enabled", True)
+    monkeypatch.setattr(obs, "_metrics_enabled", True)
+
+    cls = skill_solidify.patch_runtime_sop(ContextPolicyAgent)
+    cls = obs.patch_runtime_observability(cls)
+    try:
+        assert issubclass(cls, ContextPolicyAgent)
+        assert getattr(cls, "_agentforge_sop_injected", False)
+        assert getattr(cls, "_agentforge_observability_injected", False)
+        # MRO 里两层包装都在（任意顺序组合均成立）
+        names = [c.__name__ for c in cls.__mro__]
+        assert "SopAgent" in names
+        assert "ObservabilityAgent" in names
+    finally:
+        monkeypatch.setattr(obs, "_obs_agent_cls", None)

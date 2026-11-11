@@ -243,28 +243,47 @@ def get_obs_agent_cls():
     return _obs_agent_cls
 
 
-def patch_runtime_observability() -> bool:
-    """替换官方 ``_chat.Agent`` 为自动挂观测中间件的包装类。
+def patch_runtime_observability(base_cls: type | None = None) -> bool | type:
+    """挂载观测中间件包装类（Agent/LLM span + LLM 指标）。
+
+    两种挂载方式：
+
+    - ``base_cls=None``（旧行为）：patch ``_chat.Agent`` 模块属性，
+      返回是否 patch。适用于未传 ``custom_agent_cls`` 的官方默认部署。
+    - ``base_cls`` 显式传入：直接包装该类并返回包装类（未启用时
+      原样返回 base_cls）。**必须**用于 ``create_app(custom_agent_cls=
+      ...)`` 场景——ChatService.__init__ 的 ``self._agent_cls =
+      custom_agent_cls or Agent`` 在构造时固化类引用，之后再 patch
+      ``_chat.Agent`` 不会被使用（2026-11-11 排查：Jaeger 只有 HTTP
+      span、LLM 指标为空的根因）。调用方须在 create_app **之前**调用
+      并把返回值传入 custom_agent_cls。
 
     与 patch_runtime_sop 同一模式：包装 ``__init__`` 向 ``middlewares``
     追加 TracingMiddleware + LlmMetricsMiddleware。两类 patch 任意顺序
     组合均成立（各自幂等、互不感知）。仅在可观测性启用时 patch，
-    未启用零开销。返回是否 patch。
+    未启用零开销。
     """
     global _obs_agent_cls
 
     if not observability_enabled():
-        return False
+        return False if base_cls is None else base_cls
 
-    from agentscope.agent import Agent as OfficialAgent
-    from agentscope.app._service import _chat
+    if base_cls is None:
+        from agentscope.app._service import _chat
+
+        if getattr(_chat.Agent, "_agentforge_observability_injected", False):
+            return True  # 已 patch（幂等）
+        target = _chat.Agent
+    else:
+        if getattr(base_cls, "_agentforge_observability_injected", False):
+            return base_cls  # 已包装（幂等）
+        target = base_cls
+
     from agentscope.middleware import TracingMiddleware
 
-    if getattr(_chat.Agent, "_agentforge_observability_injected", False):
-        return True  # 已 patch（幂等）
-
-    class ObservabilityAgent(_chat.Agent):
-        """官方 Agent（可能已是 SOP 包装）再包一层：追加观测中间件。"""
+    class ObservabilityAgent(target):
+        """挂载点（官方 Agent 或 custom_agent_cls，可能已是 SOP 包装）
+        再包一层：追加观测中间件。"""
 
         _agentforge_observability_injected = True
 
@@ -275,10 +294,14 @@ def patch_runtime_observability() -> bool:
                 merged.append(LlmMetricsMiddleware())
             super().__init__(middlewares=merged, **kwargs)
 
-    _chat.Agent = ObservabilityAgent  # type: ignore[assignment]
+    if base_cls is None:
+        from agentscope.app._service import _chat
+
+        _chat.Agent = ObservabilityAgent  # type: ignore[assignment]
     _obs_agent_cls = ObservabilityAgent
     _logger.info("运行时可观测中间件注入已启用（全 agent）")
-    return True
+    # 无参（模块 patch）保持旧 bool 契约；显式挂载点返回包装类
+    return True if base_cls is None else ObservabilityAgent
 
 
 # ---------------------------------------------------------------------------

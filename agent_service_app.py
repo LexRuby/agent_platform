@@ -54,6 +54,11 @@ from app.auth import (
 from app.ark_credential import ArkCredential, sync_ark_models
 from app.chat_error_diagnostics import patch_chat_setup_diagnostics
 from app.context_policy import ContextPolicyAgent
+from app.observability import (
+    ObservabilityASGIMiddleware,
+    patch_runtime_observability,
+    setup_observability,
+)
 from app.leader_team import LeaderTeamMiddleware, leader_team_router
 from app.local_skill_hub import LocalSkillHub
 from app.prompt_templates import (
@@ -97,6 +102,18 @@ _solidify_factory = make_solidify_factory(storage)
 patch_chat_first_workspace_instructions()
 patch_session_defaults()
 patch_chat_setup_diagnostics()
+
+# 运行时 patch 链（必须在 create_app **之前**）：ChatService.__init__ 的
+# ``self._agent_cls = custom_agent_cls or Agent`` 在构造时固化类引用，
+# create_app 之后再 patch ``_chat.Agent`` 不会被使用（2026-11-11 排查：
+# Jaeger 只有 HTTP span、LLM 指标为空、SOP 注入同样失效的根因）。
+# 两层包装正交、可任意顺序组合；未启用观测时原样透传 ContextPolicyAgent。
+setup_observability(
+    os.environ.get("AGENTFORGE_OTLP_TRACES_ENDPOINT", ""),
+    os.environ.get("AGENTFORGE_OTLP_METRICS_ENDPOINT", ""),
+)
+_runtime_agent_cls = patch_runtime_sop(ContextPolicyAgent)
+_runtime_agent_cls = patch_runtime_observability(_runtime_agent_cls)
 
 
 async def _refresh_ark_on_login(username: str) -> None:
@@ -143,7 +160,7 @@ app = create_app(
     # 全局工具：SolidifySkill（技能固化，官方扩展点——每次会话组装
     # toolkit 时工厂产出实例，workspace_manager 见下方注入）
     extra_agent_tools=_solidify_factory,
-    custom_agent_cls=ContextPolicyAgent,
+    custom_agent_cls=_runtime_agent_cls,
 )
 
 # 官方 app 原始引用：team_archive 等叠加层进程内调用官方端点用
@@ -196,25 +213,9 @@ from app.chat_safety import patch_chat_safety  # noqa: E402
 patch_chat_safety()
 patch_patent_observations(storage)
 
-# 运行时技能沉淀 SOP 注入：所有 agent（大A/小A/AgentCreate 成员/
-# 存量）聊天时 system_prompt 自动带技能沉淀环节——不污染存储提示词
-patch_runtime_sop()
-
-# OpenTelemetry 可观测性（AGENTFORGE_OTLP_* 环境变量开关，未配置零开销）：
-# traces → Jaeger（Agent/LLM/工具 + HTTP 入口全链路）、metrics → Prometheus
-# （HTTP RED + LLM 延迟/token 用量）。Agent 中间件走同一 SOP patch 模式，
-# 大A/小A 全覆盖；与 usage_metering（Redis 计量 + 查询 API）互补。
-from app.observability import (  # noqa: E402
-    ObservabilityASGIMiddleware,
-    patch_runtime_observability,
-    setup_observability,
-)
-
-setup_observability(
-    os.environ.get("AGENTFORGE_OTLP_TRACES_ENDPOINT", ""),
-    os.environ.get("AGENTFORGE_OTLP_METRICS_ENDPOINT", ""),
-)
-patch_runtime_observability()
+# 运行时技能沉淀 SOP 注入 + OpenTelemetry 可观测中间件：已在 create_app
+# 之前的 _runtime_agent_cls 包装链完成（见上方 patch 链注释；create_app
+# 之后再 patch _chat.Agent 无效）
 
 # 提示词模板：列表 API + 注入 /agent/schema/v2（前端据此渲染模板下拉）
 app.include_router(prompt_templates_router)

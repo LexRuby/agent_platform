@@ -324,24 +324,38 @@ def apply_runtime_sop(system_prompt: str | None) -> str | None:
     return system_prompt
 
 
-def patch_runtime_sop() -> None:
-    """替换官方 ``_chat.Agent`` 为带 SOP 注入的薄包装类。
+def patch_runtime_sop(base_cls: type | None = None) -> type | None:
+    """包装挂载点为带 SOP 注入的薄包装类，返回包装后的类。
 
-    ``ChatService.__init__`` 中 ``self._agent_cls = custom_agent_cls or
-    Agent`` 引用的是 ``_chat`` 模块命名空间里的 ``Agent``——patch
-    模块属性即可让所有后续构造的 ChatService 实例都使用包装类。
-    幂等：重复调用不叠加包装。
+    两种挂载方式：
+
+    - ``base_cls=None``（旧行为）：patch ``_chat.Agent`` 模块属性，
+      适用于未传 ``custom_agent_cls`` 的官方默认部署。
+    - ``base_cls`` 显式传入：直接包装该类并返回。**必须**用于
+      ``create_app(custom_agent_cls=...)`` 场景——ChatService.__init__
+      的 ``self._agent_cls = custom_agent_cls or Agent`` 在构造时固化
+      类引用，之后再 patch ``_chat.Agent`` 不会被使用（2026-11-11
+      排查：SOP/观测双失效的根因）。调用方须在 create_app **之前**
+      调用并把返回值传入 custom_agent_cls。
+
+    幂等：重复调用（或对已包装类再调用）不叠加包装。
     """
-    from agentscope.app._service import _chat
+    if base_cls is None:
+        from agentscope.app._service import _chat
 
-    if getattr(_chat.Agent, "_agentforge_sop_injected", False):
-        return  # 已 patch（幂等）
+        if getattr(_chat.Agent, "_agentforge_sop_injected", False):
+            return _chat.Agent  # 已 patch（幂等）
+        target = _chat.Agent
+    else:
+        if getattr(base_cls, "_agentforge_sop_injected", False):
+            return base_cls  # 已包装（幂等）
+        target = base_cls
 
-    class SopAgent(_chat.Agent):
-        """当前 Agent 包装：system_prompt 追加技能沉淀 SOP（查重）。
+    class SopAgent(target):
+        """当前挂载点包装：system_prompt 追加技能沉淀 SOP（查重）。
 
-        继承当前 ``_chat.Agent`` 而非官方基类——与 observability 等
-        其他运行时 patch 任意顺序组合均不丢层。
+        继承传入的挂载点而非官方基类——与 observability 等其他
+        运行时 patch 任意顺序组合均不丢层。
         """
 
         _agentforge_sop_injected = True
@@ -352,7 +366,11 @@ def patch_runtime_sop() -> None:
                 **kwargs,
             )
 
-    _chat.Agent = SopAgent  # type: ignore[assignment]
+    if base_cls is None:
+        from agentscope.app._service import _chat
+
+        _chat.Agent = SopAgent  # type: ignore[assignment]
     global _sop_agent_cls  # noqa: PLW0603
     _sop_agent_cls = SopAgent
     _logger.info("运行时技能沉淀 SOP 注入已启用（全 agent）")
+    return SopAgent
