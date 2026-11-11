@@ -20,6 +20,7 @@ import logging
 import time
 from typing import Any, AsyncGenerator, Awaitable, Callable
 
+from agentscope.middleware import MiddlewareBase
 from opentelemetry import metrics as otel_metrics
 from opentelemetry import propagate, trace
 
@@ -174,11 +175,14 @@ def _model_label(input_kwargs: dict) -> str:
     return str(name) if name else type(model).__name__
 
 
-class LlmMetricsMiddleware:
+class LlmMetricsMiddleware(MiddlewareBase):
     """AgentScope 中间件：记录每次 LLM 调用耗时与 token 用量。
 
-    与 TracingMiddleware 同一挂载点（``_chat.Agent`` patch），因此
-    大A/小A、流式/非流式全覆盖。未启用 metrics 时整体短路。
+    继承官方 ``MiddlewareBase``：Agent.__init__ 会对每个中间件调用
+    ``is_implemented(hook)`` 过滤钩子（2026-11-11 线上验证发现普通类
+    缺该方法导致会话装配 AttributeError）。
+    与 TracingMiddleware 同一挂载点，因此大A/小A、流式/非流式全覆盖。
+    未启用 metrics 时整体短路。
     """
 
     async def on_model_call(

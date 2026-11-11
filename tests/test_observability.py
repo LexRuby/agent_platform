@@ -348,3 +348,16 @@ def test_patch_agent_disabled_noop(monkeypatch):
     original = _chat.Agent
     assert obs.patch_runtime_observability() is False
     assert _chat.Agent is original
+
+
+def test_llm_metrics_middleware_passes_agent_filter():
+    """LlmMetricsMiddleware 继承官方 MiddlewareBase（is_implemented 过滤）。
+
+    Agent.__init__ 对每个中间件调用 ``is_implemented(hook)`` 分类钩子；
+    普通类缺该方法导致线上会话装配 AttributeError（2026-11-11）。
+    """
+    m = obs.LlmMetricsMiddleware()
+    assert hasattr(m, "is_implemented")
+    assert m.is_implemented("on_model_call") is True   # 唯一实现钩子
+    assert m.is_implemented("on_reply") is False
+    assert m.is_implemented("on_reasoning") is False
